@@ -3,20 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-
-  <title>Тим</title>
-
-  <!-- PWA -->
-  <link rel="manifest" href="/manifest.webmanifest">
-  <meta name="theme-color" content="#111111">
-
-  <!-- iOS (чтобы выглядело как приложение) -->
-  <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-
-  <!-- Иконки -->
-  <link rel="icon" href="/icon-512.png">
-  <link rel="apple-touch-icon" href="/icon-512.png">
+  <title>ТИМ</title>
 
   <style>
     :root {
@@ -55,33 +42,16 @@
       display: flex;
       align-items: center;
       justify-content: space-between;
-      padding: 12px 12px;
+      padding: 12px;
       background: var(--panel);
       border: 1px solid var(--border);
       border-radius: 14px;
     }
 
     .title {
-      display: flex;
-      align-items: center;
-      gap: 10px;
       font-weight: 700;
-      letter-spacing: 0.5px;
+      font-size: 16px;
     }
-
-    .badge {
-      width: 34px;
-      height: 34px;
-      border-radius: 10px;
-      overflow: hidden;
-      border: 1px solid var(--border);
-      flex: 0 0 auto;
-      background: #222;
-      display: grid;
-      place-items: center;
-    }
-
-    .badge img { width: 100%; height: 100%; object-fit: cover; }
 
     .status {
       font-size: 12px;
@@ -126,12 +96,11 @@
       background: var(--panel);
       border: 1px solid var(--border);
       border-radius: 14px;
-      align-items: center;
     }
 
-    input[type="text"] {
+    input {
       width: 100%;
-      padding: 12px 12px;
+      padding: 12px;
       border-radius: 12px;
       border: 1px solid var(--border);
       background: var(--inputBg);
@@ -148,19 +117,10 @@
       color: var(--btnText);
       font-weight: 700;
       cursor: pointer;
-      flex: 0 0 auto;
     }
 
     button:disabled {
       opacity: 0.6;
-      cursor: not-allowed;
-    }
-
-    .hint {
-      font-size: 12px;
-      color: var(--muted);
-      margin-top: -6px;
-      padding: 0 6px;
     }
   </style>
 </head>
@@ -168,23 +128,13 @@
 <body>
   <div class="container">
     <header>
-      <div class="title">
-        <div class="badge" title="Тим">
-          <img src="/icon-192.png" alt="TIM">
-        </div>
-        <div>
-          <div style="font-size: 16px;">ТИМ</div>
-          <div class="status" id="status">PWA UI • локальный режим</div>
-        </div>
-      </div>
-      <div class="status" id="net">● offline</div>
+      <div class="title">ТИМ</div>
+      <div class="status" id="status">подключен к Worker</div>
     </header>
 
     <div class="chat" id="chat">
-      <div class="msg bot">Привет. Я ТИМ. Пока я просто UI (без подключения к ассистенту). Скоро оживим 😄</div>
+      <div class="msg bot">Привет. Я ТИМ. Теперь я подключен к твоему Worker 🚀</div>
     </div>
-
-    <div class="hint">Enter — отправить • Shift+Enter — новая строка (пока не включено)</div>
 
     <div class="composer">
       <input id="input" type="text" placeholder="Напиши сообщение..." autocomplete="off" />
@@ -192,50 +142,55 @@
     </div>
   </div>
 
-  <script>
-    // Online/offline индикатор
-    const netEl = document.getElementById("net");
-    const statusEl = document.getElementById("status");
+<script>
+const WORKER_URL = "https://gptim24.timashevanatoly10.workers.dev";
+const PWA_TOKEN = "123456789123456789123456789";
 
-    function updateNet() {
-      const online = navigator.onLine;
-      netEl.textContent = online ? "● online" : "● offline";
-      statusEl.textContent = online ? "PWA UI • готов к подключению" : "PWA UI • офлайн (кэш работает)";
-    }
-    window.addEventListener("online", updateNet);
-    window.addEventListener("offline", updateNet);
-    updateNet();
+const chat = document.getElementById("chat");
+const input = document.getElementById("input");
+const send = document.getElementById("send");
 
-    // Чат UI (пока просто эхо, чтобы ты видел, что всё работает)
-    const chat = document.getElementById("chat");
-    const input = document.getElementById("input");
-    const send = document.getElementById("send");
+function addMsg(text, who) {
+  const div = document.createElement("div");
+  div.className = "msg " + (who === "me" ? "me" : "bot");
+  div.textContent = text;
+  chat.appendChild(div);
+  chat.scrollTop = chat.scrollHeight;
+}
 
-    function addMsg(text, who) {
-      const div = document.createElement("div");
-      div.className = "msg " + (who === "me" ? "me" : "bot");
-      div.textContent = text;
-      chat.appendChild(div);
-      chat.scrollTop = chat.scrollHeight;
-    }
+async function handleSend() {
+  const text = input.value.trim();
+  if (!text) return;
 
-    function handleSend() {
-      const text = input.value.trim();
-      if (!text) return;
-      addMsg(text, "me");
-      input.value = "";
-      addMsg("Принято. (Пока без API) — скоро подключим ассистента 😉", "bot");
-    }
+  addMsg(text, "me");
+  input.value = "";
+  send.disabled = true;
 
-    send.addEventListener("click", handleSend);
-    input.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") handleSend();
+  try {
+    const resp = await fetch(WORKER_URL + "/pwa/chat", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-pwa-token": PWA_TOKEN
+      },
+      body: JSON.stringify({ message: text })
     });
 
-    // Регистрация Service Worker
-    if ("serviceWorker" in navigator) {
-      navigator.serviceWorker.register("/sw.js");
-    }
-  </script>
+    const data = await resp.json();
+    addMsg(data.answer || "Нет ответа", "bot");
+
+  } catch (e) {
+    addMsg("Ошибка соединения", "bot");
+  }
+
+  send.disabled = false;
+}
+
+send.addEventListener("click", handleSend);
+input.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") handleSend();
+});
+</script>
+
 </body>
 </html>
