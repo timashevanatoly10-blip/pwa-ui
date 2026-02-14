@@ -1,110 +1,240 @@
-<!DOCTYPE html>
+ <!DOCTYPE html>
 <html lang="ru">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>PWA Assistant</title>
+
+  <title>Тим</title>
+
+  <!-- PWA -->
+  <link rel="manifest" href="/manifest.webmanifest">
+  <meta name="theme-color" content="#111111">
+
+  <!-- iOS (чтобы выглядело как приложение) -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+
+  <!-- Иконки -->
+  <link rel="icon" href="/icon-192.png">
+  <link rel="apple-touch-icon" href="/icon-192.png">
+
   <style>
+    :root {
+      --bg: #111;
+      --panel: #161616;
+      --border: #2a2a2a;
+      --text: #f2f2f2;
+      --muted: #9a9a9a;
+      --btn: #2d6cff;
+      --btnText: #fff;
+      --inputBg: #0f0f0f;
+    }
+
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
     body {
       margin: 0;
       font-family: Arial, sans-serif;
-      background: #111;
-      color: white;
+      background: var(--bg);
+      color: var(--text);
       display: flex;
       justify-content: center;
     }
 
     .container {
       width: 100%;
-      max-width: 600px;
+      max-width: 780px;
+      min-height: 100vh;
       display: flex;
       flex-direction: column;
-      height: 100vh;
+      padding: 14px;
+      gap: 12px;
+    }
+
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 12px;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+    }
+
+    .title {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+    }
+
+    .badge {
+      width: 34px;
+      height: 34px;
+      border-radius: 10px;
+      overflow: hidden;
+      border: 1px solid var(--border);
+      flex: 0 0 auto;
+      background: #222;
+      display: grid;
+      place-items: center;
+    }
+
+    .badge img { width: 100%; height: 100%; object-fit: cover; }
+
+    .status {
+      font-size: 12px;
+      color: var(--muted);
     }
 
     .chat {
       flex: 1;
-      overflow-y: auto;
-      padding: 16px;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 12px;
+      overflow: auto;
     }
 
-    .message {
-      margin-bottom: 12px;
-      padding: 10px;
-      border-radius: 8px;
+    .msg {
+      padding: 10px 12px;
+      border-radius: 12px;
+      margin: 10px 0;
+      max-width: 92%;
+      line-height: 1.35;
+      white-space: pre-wrap;
+      word-wrap: break-word;
     }
 
-    .user {
-      background: #2a2a2a;
-      align-self: flex-end;
+    .me {
+      margin-left: auto;
+      background: #1f2b44;
+      border: 1px solid #26375a;
     }
 
-    .assistant {
-      background: #1e3a8a;
-      align-self: flex-start;
+    .bot {
+      margin-right: auto;
+      background: #1c1c1c;
+      border: 1px solid #2a2a2a;
     }
 
-    .input-area {
+    .composer {
       display: flex;
-      padding: 10px;
-      background: #000;
+      gap: 10px;
+      padding: 12px;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      align-items: center;
     }
 
-    input {
-      flex: 1;
-      padding: 10px;
-      border-radius: 6px;
-      border: none;
+    input[type="text"] {
+      width: 100%;
+      padding: 12px 12px;
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      background: var(--inputBg);
+      color: var(--text);
       outline: none;
+      font-size: 16px;
     }
 
     button {
-      margin-left: 10px;
-      padding: 10px 16px;
+      padding: 12px 14px;
+      border-radius: 12px;
       border: none;
-      border-radius: 6px;
-      background: #2563eb;
-      color: white;
+      background: var(--btn);
+      color: var(--btnText);
+      font-weight: 700;
       cursor: pointer;
+      flex: 0 0 auto;
     }
 
-    button:hover {
-      background: #1d4ed8;
+    button:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+
+    .hint {
+      font-size: 12px;
+      color: var(--muted);
+      margin-top: -6px;
+      padding: 0 6px;
     }
   </style>
 </head>
+
 <body>
   <div class="container">
-    <div id="chat" class="chat"></div>
+    <header>
+      <div class="title">
+        <div class="badge" title="Тим">
+          <img src="/icon-192.png" alt="TIM">
+        </div>
+        <div>
+          <div style="font-size: 16px;">ТИМ</div>
+          <div class="status" id="status">PWA UI • локальный режим</div>
+        </div>
+      </div>
+      <div class="status" id="net">● offline</div>
+    </header>
 
-    <div class="input-area">
-      <input id="input" placeholder="Напиши сообщение..." />
-      <button onclick="send()">Отправить</button>
+    <div class="chat" id="chat">
+      <div class="msg bot">Привет. Я ТИМ. Пока я просто UI (без подключения к ассистенту). Скоро оживим 😄</div>
+    </div>
+
+    <div class="hint">Enter — отправить • Shift+Enter — новая строка (пока не включено)</div>
+
+    <div class="composer">
+      <input id="input" type="text" placeholder="Напиши сообщение..." autocomplete="off" />
+      <button id="send">Отправить</button>
     </div>
   </div>
 
   <script>
+    // Online/offline индикатор
+    const netEl = document.getElementById("net");
+    const statusEl = document.getElementById("status");
+
+    function updateNet() {
+      const online = navigator.onLine;
+      netEl.textContent = online ? "● online" : "● offline";
+      statusEl.textContent = online ? "PWA UI • готов к подключению" : "PWA UI • офлайн (кэш работает)";
+    }
+    window.addEventListener("online", updateNet);
+    window.addEventListener("offline", updateNet);
+    updateNet();
+
+    // Чат UI (пока просто эхо, чтобы ты видел, что всё работает)
     const chat = document.getElementById("chat");
     const input = document.getElementById("input");
+    const send = document.getElementById("send");
 
-    function addMessage(text, role) {
+    function addMsg(text, who) {
       const div = document.createElement("div");
-      div.className = "message " + role;
+      div.className = "msg " + (who === "me" ? "me" : "bot");
       div.textContent = text;
       chat.appendChild(div);
       chat.scrollTop = chat.scrollHeight;
     }
 
-    function send() {
+    function handleSend() {
       const text = input.value.trim();
       if (!text) return;
-
-      addMessage(text, "user");
+      addMsg(text, "me");
       input.value = "";
+      addMsg("Принято. (Пока без API) — скоро подключим ассистента 😉", "bot");
+    }
 
-      setTimeout(() => {
-        addMessage("Ответ ассистента будет здесь.", "assistant");
-      }, 500);
+    send.addEventListener("click", handleSend);
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") handleSend();
+    });
+
+    // Регистрация Service Worker
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("/sw.js");
     }
   </script>
 </body>
