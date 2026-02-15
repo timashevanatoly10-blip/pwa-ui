@@ -1,4 +1,4 @@
- <!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="ru">
 <head>
   <meta charset="UTF-8" />
@@ -15,6 +15,8 @@
       --btn: #2d6cff;
       --btnText: #fff;
       --inputBg: #0f0f0f;
+      --errBg: #2a1212;
+      --errBd: #4a1f1f;
     }
 
     * { box-sizing: border-box; }
@@ -48,15 +50,8 @@
       border-radius: 14px;
     }
 
-    .title {
-      font-weight: 700;
-      font-size: 16px;
-    }
-
-    .status {
-      font-size: 12px;
-      color: var(--muted);
-    }
+    .title { font-weight: 700; font-size: 16px; }
+    .status { font-size: 12px; color: var(--muted); }
 
     .chat {
       flex: 1;
@@ -89,6 +84,12 @@
       border: 1px solid #2a2a2a;
     }
 
+    .err {
+      margin-right: auto;
+      background: var(--errBg);
+      border: 1px solid var(--errBd);
+    }
+
     .composer {
       display: flex;
       gap: 10px;
@@ -119,9 +120,7 @@
       cursor: pointer;
     }
 
-    button:disabled {
-      opacity: 0.6;
-    }
+    button:disabled { opacity: 0.6; }
   </style>
 </head>
 
@@ -129,11 +128,11 @@
   <div class="container">
     <header>
       <div class="title">ТИМ</div>
-      <div class="status" id="status">подключен к Worker</div>
+      <div class="status" id="status">PWA → Worker → OpenAI</div>
     </header>
 
     <div class="chat" id="chat">
-      <div class="msg bot">Привет. Я ТИМ. Теперь я подключен к твоему Worker 🚀</div>
+      <div class="msg bot">Привет. Пишешь сюда — я отправляю в Worker на <b>/chat</b> и возвращаю ответ.</div>
     </div>
 
     <div class="composer">
@@ -143,16 +142,15 @@
   </div>
 
 <script>
-const WORKER_URL = "https://gptim24.timashevanatoly10.workers.dev/chat";
-const PWA_TOKEN = "123456789123456789123456789";
+const WORKER_URL = "https://gptim24.timashevanatoly10.workers.dev";
 
 const chat = document.getElementById("chat");
 const input = document.getElementById("input");
 const send = document.getElementById("send");
 
-function addMsg(text, who) {
+function addMsg(text, cls) {
   const div = document.createElement("div");
-  div.className = "msg " + (who === "me" ? "me" : "bot");
+  div.className = "msg " + cls;
   div.textContent = text;
   chat.appendChild(div);
   chat.scrollTop = chat.scrollHeight;
@@ -167,20 +165,25 @@ async function handleSend() {
   send.disabled = true;
 
   try {
-    const resp = await fetch(WORKER_URL + "/pwa/chat", {
+    const resp = await fetch(WORKER_URL + "/chat", {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-pwa-token": PWA_TOKEN
-      },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ message: text })
     });
 
-    const data = await resp.json();
-    addMsg(data.answer || "Нет ответа", "bot");
+    const raw = await resp.text();
+    let data = {};
+    try { data = JSON.parse(raw); } catch {}
 
+    if (!resp.ok) {
+      addMsg(`HTTP ${resp.status}: ${raw || "error"}`, "err");
+    } else if (data && data.ok) {
+      addMsg(data.answer || "Нет ответа", "bot");
+    } else {
+      addMsg(raw || "Неожиданный ответ", "err");
+    }
   } catch (e) {
-    addMsg("Ошибка соединения", "bot");
+    addMsg("Ошибка сети: " + (e?.message || e), "err");
   }
 
   send.disabled = false;
