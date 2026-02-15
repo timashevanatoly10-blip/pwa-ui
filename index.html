@@ -5,6 +5,19 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ТИМ</title>
 
+  <!-- PWA -->
+  <link rel="manifest" href="/manifest.webmanifest">
+  <meta name="theme-color" content="#111111">
+
+  <!-- iOS standalone -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="ТИМ">
+
+  <!-- Icons -->
+  <link rel="icon" href="/icon-192.png">
+  <link rel="apple-touch-icon" href="/icon-192.png">
+
   <style>
     :root {
       --bg: #111;
@@ -132,7 +145,7 @@
     </header>
 
     <div class="chat" id="chat">
-      <div class="msg bot">Привет. Пишешь сюда — я отправляю в Worker на <b>/chat</b> и возвращаю ответ.</div>
+      <div class="msg bot">Привет. Пишешь сюда — я отправляю в Worker на /chat и возвращаю ответ.</div>
     </div>
 
     <div class="composer">
