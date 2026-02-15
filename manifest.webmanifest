@@ -1,8 +1,7 @@
 {
-  "name": "Домашний помощник",
-  "short_name": "Помощник",
+  "name": "ТИМ",
+  "short_name": "ТИМ",
   "start_url": "/",
-  "scope": "/",
   "display": "standalone",
   "background_color": "#111111",
   "theme_color": "#111111",
