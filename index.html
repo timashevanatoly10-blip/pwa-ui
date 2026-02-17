@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="ru">
 <head>
@@ -19,165 +20,732 @@
   <link rel="apple-touch-icon" href="/icon-192.png">
 
   <style>
-    :root {
-      --bg: #111;
-      --panel: #161616;
-      --border: #2a2a2a;
-      --text: #f2f2f2;
-      --muted: #9a9a9a;
-      --btn: #2d6cff;
-      --btnText: #fff;
-      --inputBg: #0f0f0f;
-      --errBg: #2a1212;
-      --errBd: #4a1f1f;
+    :root{
+      --bg:#111; --panel:#161616; --border:#2a2a2a;
+      --text:#f2f2f2; --muted:#9a9a9a;
+      --btn:#2d6cff; --btnText:#fff;
+      --inputBg:#0f0f0f;
+      --ok:#2f7d32;
+      --danger:#b3261e;
+      --chip:#202020;
+      --chipBd:#303030;
+      --shadow: 0 10px 30px rgba(0,0,0,.35);
+    }
+    *{box-sizing:border-box}
+    html,body{height:100%}
+    body{
+      margin:0; font-family:Arial,sans-serif;
+      background:var(--bg); color:var(--text);
+      display:flex; justify-content:center;
+    }
+    .container{
+      width:100%; max-width:820px; min-height:100vh;
+      display:flex; flex-direction:column;
+      padding:14px; gap:12px;
+    }
+    header{
+      display:flex; align-items:center; justify-content:space-between;
+      padding:12px;
+      background:var(--panel); border:1px solid var(--border);
+      border-radius:14px;
+      gap:10px;
+    }
+    .leftHead{display:flex; align-items:center; gap:10px; min-width:0}
+    .title{font-weight:700; font-size:16px; white-space:nowrap}
+    .crumb{font-size:12px; color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:46vw}
+    .actions{display:flex; gap:8px; align-items:center; flex-wrap:wrap; justify-content:flex-end}
+    button{
+      padding:10px 12px; border-radius:12px; border:none;
+      background:var(--btn); color:var(--btnText);
+      font-weight:700; cursor:pointer;
+    }
+    button:disabled{opacity:.6; cursor:not-allowed}
+    .btnGhost{
+      background:transparent; border:1px solid var(--border); color:var(--text);
+      font-weight:700;
+    }
+    .btnDanger{
+      background:transparent; border:1px solid rgba(179,38,30,.65); color:#ffb4ab;
+    }
+    .btnOk{
+      background:transparent; border:1px solid rgba(47,125,50,.65); color:#b8f5bf;
     }
 
-    * { box-sizing: border-box; }
-    html, body { height: 100%; }
-    body {
-      margin: 0;
-      font-family: Arial, sans-serif;
-      background: var(--bg);
-      color: var(--text);
-      display: flex;
-      justify-content: center;
+    /* Main panel */
+    .panel{
+      flex:1;
+      background:var(--panel); border:1px solid var(--border);
+      border-radius:14px;
+      padding:12px;
+      overflow:auto;
+      position:relative;
     }
 
-    .container {
-      width: 100%;
-      max-width: 780px;
-      min-height: 100vh;
-      display: flex;
-      flex-direction: column;
-      padding: 14px;
-      gap: 12px;
+    /* Lists */
+    .list{display:flex; flex-direction:column; gap:10px}
+    .card{
+      background:var(--chip);
+      border:1px solid var(--chipBd);
+      border-radius:14px;
+      padding:12px;
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:12px;
+    }
+    .card .meta{min-width:0}
+    .card .name{
+      font-weight:800;
+      overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+      max-width:56vw;
+    }
+    .card .sub{
+      font-size:12px; color:var(--muted); margin-top:4px;
+      display:flex; gap:10px; flex-wrap:wrap;
+    }
+    .pill{
+      font-size:12px;
+      padding:4px 8px;
+      border-radius:999px;
+      border:1px solid var(--chipBd);
+      color:var(--muted);
+    }
+    .empty{
+      color:var(--muted);
+      padding:18px;
+      border:1px dashed var(--border);
+      border-radius:14px;
+      text-align:center;
+      line-height:1.4;
     }
 
-    header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 12px;
-      background: var(--panel);
-      border: 1px solid var(--border);
-      border-radius: 14px;
+    /* Item list inside puchok */
+    .itemRow{
+      display:flex; align-items:center; justify-content:space-between;
+      gap:12px;
+      background: #1b1b1b;
+      border:1px solid var(--border);
+      border-radius:14px;
+      padding:10px 12px;
+      cursor:pointer;
+    }
+    .itemRow:hover{border-color:#3a3a3a}
+    .itemLeft{min-width:0}
+    .itemTitle{
+      font-weight:800;
+      overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+      max-width:58vw;
+    }
+    .itemDesc{
+      margin-top:4px;
+      font-size:12px; color:var(--muted);
+      overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+      max-width:66vw;
+    }
+    .tagText{
+      font-size:12px;
+      padding:4px 8px;
+      border-radius:999px;
+      border:1px solid #264266;
+      color:#b7d3ff;
+      background:#17263c;
+      white-space:nowrap;
     }
 
-    .title { font-weight: 700; font-size: 16px; }
-    .status { font-size: 12px; color: var(--muted); }
-
-    .chat {
-      flex: 1;
-      background: var(--panel);
-      border: 1px solid var(--border);
-      border-radius: 14px;
-      padding: 12px;
-      overflow: auto;
+    /* Chat dock */
+    .dock{
+      background:var(--panel);
+      border:1px solid var(--border);
+      border-radius:14px;
+      overflow:hidden;
+      box-shadow: var(--shadow);
+    }
+    .dockHead{
+      display:flex; align-items:center; justify-content:space-between;
+      padding:10px 12px;
+      border-bottom:1px solid var(--border);
+      gap:10px;
+    }
+    .dockTitle{font-weight:800}
+    .dockSmall{font-size:12px; color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:50vw}
+    .dockBody{
+      max-height:38vh;
+      overflow:auto;
+      padding:12px;
+    }
+    .composer{
+      display:flex; gap:10px;
+      padding:12px;
+      border-top:1px solid var(--border);
+      background:rgba(0,0,0,.15);
+    }
+    input{
+      width:100%;
+      padding:12px;
+      border-radius:12px;
+      border:1px solid var(--border);
+      background:var(--inputBg);
+      color:var(--text);
+      outline:none;
+      font-size:16px;
     }
 
-    .msg {
-      padding: 10px 12px;
-      border-radius: 12px;
-      margin: 10px 0;
-      max-width: 92%;
-      line-height: 1.35;
-      white-space: pre-wrap;
-      word-wrap: break-word;
+    /* Messages */
+    .msg{
+      padding:10px 12px;
+      border-radius:12px;
+      margin:10px 0;
+      max-width:92%;
+      line-height:1.35;
+      white-space:pre-wrap;
+      word-wrap:break-word;
+      border:1px solid transparent;
+      position:relative;
     }
-
-    .me {
-      margin-left: auto;
-      background: #1f2b44;
-      border: 1px solid #26375a;
+    .me{margin-left:auto; background:#1f2b44; border-color:#26375a}
+    .bot{margin-right:auto; background:#1c1c1c; border-color:#2a2a2a}
+    .err{margin-right:auto; background:#2a1212; border-color:#4a1f1f}
+    .msgTools{
+      margin-top:8px;
+      display:flex;
+      gap:8px;
+      flex-wrap:wrap;
     }
-
-    .bot {
-      margin-right: auto;
-      background: #1c1c1c;
-      border: 1px solid #2a2a2a;
+    .miniBtn{
+      padding:8px 10px;
+      border-radius:10px;
+      border:1px solid var(--border);
+      background:transparent;
+      color:var(--text);
+      font-weight:700;
+      cursor:pointer;
+      font-size:13px;
     }
+    .miniBtnOk{border-color:rgba(47,125,50,.65); color:#b8f5bf}
+    .miniBtnDanger{border-color:rgba(179,38,30,.65); color:#ffb4ab}
 
-    .err {
-      margin-right: auto;
-      background: var(--errBg);
-      border: 1px solid var(--errBd);
+    /* Modal */
+    .modalWrap{
+      position:fixed;
+      inset:0;
+      background:rgba(0,0,0,.55);
+      display:none;
+      align-items:center;
+      justify-content:center;
+      padding:16px;
+      z-index:9999;
     }
-
-    .composer {
-      display: flex;
-      gap: 10px;
-      padding: 12px;
-      background: var(--panel);
-      border: 1px solid var(--border);
-      border-radius: 14px;
+    .modal{
+      width:min(860px, 100%);
+      background:var(--panel);
+      border:1px solid var(--border);
+      border-radius:16px;
+      overflow:hidden;
+      box-shadow: var(--shadow);
     }
-
-    input {
-      width: 100%;
-      padding: 12px;
-      border-radius: 12px;
-      border: 1px solid var(--border);
-      background: var(--inputBg);
-      color: var(--text);
-      outline: none;
-      font-size: 16px;
+    .modalHead{
+      padding:12px;
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:10px;
+      border-bottom:1px solid var(--border);
     }
-
-    button {
-      padding: 12px 14px;
-      border-radius: 12px;
-      border: none;
-      background: var(--btn);
-      color: var(--btnText);
-      font-weight: 700;
-      cursor: pointer;
+    .modalTitle{
+      font-weight:900;
+      overflow:hidden;
+      text-overflow:ellipsis;
+      white-space:nowrap;
+      max-width:68vw;
     }
-
-    button:disabled { opacity: 0.6; }
+    .modalBody{padding:12px}
+    textarea{
+      width:100%;
+      min-height:46vh;
+      resize:vertical;
+      padding:12px;
+      border-radius:14px;
+      border:1px solid var(--border);
+      background:var(--inputBg);
+      color:var(--text);
+      outline:none;
+      font-size:15px;
+      line-height:1.4;
+    }
+    .row{
+      display:flex;
+      gap:10px;
+      flex-wrap:wrap;
+      margin-top:10px;
+      justify-content:flex-end;
+    }
+    .hint{
+      font-size:12px;
+      color:var(--muted);
+      margin-top:8px;
+      line-height:1.35;
+    }
   </style>
 </head>
 
 <body>
   <div class="container">
     <header>
-      <div class="title">ТИМ</div>
-      <div class="status" id="status">PWA → Worker → OpenAI</div>
+      <div class="leftHead">
+        <button id="backBtn" class="btnGhost" style="display:none;">←</button>
+        <div>
+          <div class="title" id="headTitle">ТИМ</div>
+          <div class="crumb" id="headCrumb">Пучки + чат</div>
+        </div>
+      </div>
+      <div class="actions" id="headActions">
+        <button id="newPuchokBtn">+ Пучок</button>
+        <button id="renamePuchokBtn" class="btnGhost" style="display:none;">Переименовать</button>
+        <button id="addTextBtn" class="btnGhost" style="display:none;">+ Текст</button>
+        <button id="deletePuchokBtn" class="btnDanger" style="display:none;">Удалить</button>
+      </div>
     </header>
 
-    <div class="chat" id="chat">
-      <div class="msg bot">Привет. Пишешь сюда — я отправляю в Worker на /chat и возвращаю ответ.</div>
+    <div class="panel" id="mainPanel">
+      <!-- render here -->
     </div>
 
-    <div class="composer">
-      <input id="input" type="text" placeholder="Напиши сообщение..." autocomplete="off" />
-      <button id="send">Отправить</button>
+    <div class="dock" id="chatDock">
+      <div class="dockHead">
+        <div>
+          <div class="dockTitle">Чат</div>
+          <div class="dockSmall" id="chatHint">Пишешь — отправляю в Worker (/chat). Ответ можно сохранить “В пучок”.</div>
+        </div>
+        <button id="clearChatBtn" class="btnGhost">Очистить</button>
+      </div>
+
+      <div class="dockBody" id="chat"></div>
+
+      <div class="composer">
+        <input id="input" type="text" placeholder="Напиши сообщение..." autocomplete="off" />
+        <button id="send">Отправить</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal for text item -->
+  <div class="modalWrap" id="modalWrap">
+    <div class="modal">
+      <div class="modalHead">
+        <div class="modalTitle" id="modalTitle">Текст</div>
+        <div class="actions">
+          <button id="modalClose" class="btnGhost">Закрыть</button>
+        </div>
+      </div>
+      <div class="modalBody">
+        <textarea id="modalTextarea" spellcheck="false"></textarea>
+        <div class="row">
+          <button id="modalDelete" class="btnDanger">Удалить</button>
+          <button id="modalSave" class="btnOk">Сохранить</button>
+        </div>
+        <div class="hint" id="modalHint">Это обычная заметка (текст-элемент) внутри пучка.</div>
+      </div>
     </div>
   </div>
 
 <script>
+/** ===========================
+ *  CONFIG
+ *  =========================== */
 const WORKER_URL = "https://gptim24.timashevanatoly10.workers.dev";
+const STORAGE_KEY = "tim_puchki_v1";
+
+/** ===========================
+ *  DOM
+ *  =========================== */
+const mainPanel = document.getElementById("mainPanel");
+const backBtn = document.getElementById("backBtn");
+const headTitle = document.getElementById("headTitle");
+const headCrumb = document.getElementById("headCrumb");
+
+const newPuchokBtn = document.getElementById("newPuchokBtn");
+const renamePuchokBtn = document.getElementById("renamePuchokBtn");
+const addTextBtn = document.getElementById("addTextBtn");
+const deletePuchokBtn = document.getElementById("deletePuchokBtn");
 
 const chat = document.getElementById("chat");
 const input = document.getElementById("input");
 const send = document.getElementById("send");
+const clearChatBtn = document.getElementById("clearChatBtn");
+const chatHint = document.getElementById("chatHint");
 
-function addMsg(text, cls) {
-  const div = document.createElement("div");
-  div.className = "msg " + cls;
-  div.textContent = text;
-  chat.appendChild(div);
+const modalWrap = document.getElementById("modalWrap");
+const modalTitle = document.getElementById("modalTitle");
+const modalTextarea = document.getElementById("modalTextarea");
+const modalClose = document.getElementById("modalClose");
+const modalSave = document.getElementById("modalSave");
+const modalDelete = document.getElementById("modalDelete");
+
+/** ===========================
+ *  STATE
+ *  =========================== */
+let db = loadDB();
+let currentPuchokId = null;      // null = list screen
+let openItemId = null;
+let chatHistory = [];            // simple session chat (not persistent yet)
+
+/** ===========================
+ *  HELPERS
+ *  =========================== */
+function nowISO(){ return new Date().toISOString(); }
+function uid(){
+  return Math.random().toString(16).slice(2) + Date.now().toString(16);
+}
+function safeTitleFromText(t){
+  const s = (t || "").toString().trim().replace(/\s+/g," ");
+  return s.length > 48 ? s.slice(0, 48) + "…" : (s || "Без названия");
+}
+function fmtDate(iso){
+  try{
+    const d = new Date(iso);
+    return d.toLocaleString(undefined, { year:"numeric", month:"2-digit", day:"2-digit", hour:"2-digit", minute:"2-digit" });
+  }catch{ return iso; }
+}
+
+/** ===========================
+ *  DB (localStorage)
+ *  =========================== */
+function loadDB(){
+  try{
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if(!raw) return { puchki: [] };
+    const parsed = JSON.parse(raw);
+    if(!parsed || !Array.isArray(parsed.puchki)) return { puchki: [] };
+    // normalize
+    parsed.puchki.forEach(p => { if(!Array.isArray(p.items)) p.items = []; });
+    return parsed;
+  }catch{
+    return { puchki: [] };
+  }
+}
+function saveDB(){
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(db));
+}
+function getPuchok(id){
+  return db.puchki.find(p => p.id === id) || null;
+}
+
+/** ===========================
+ *  UI RENDER
+ *  =========================== */
+function setHeaderForList(){
+  backBtn.style.display = "none";
+  headTitle.textContent = "ТИМ";
+  headCrumb.textContent = "Пучки + чат";
+  renamePuchokBtn.style.display = "none";
+  addTextBtn.style.display = "none";
+  deletePuchokBtn.style.display = "none";
+  newPuchokBtn.style.display = "";
+  chatHint.textContent = "Совет: сначала открой пучок → тогда “В пучок” будет сохранять ответы прямо туда.";
+}
+function setHeaderForPuchok(p){
+  backBtn.style.display = "";
+  headTitle.textContent = "Пучок";
+  headCrumb.textContent = p.title || "Без названия";
+  renamePuchokBtn.style.display = "";
+  addTextBtn.style.display = "";
+  deletePuchokBtn.style.display = "";
+  newPuchokBtn.style.display = "none";
+  chatHint.textContent = "Ты в пучке: ответы бота можно сохранять кнопкой “В пучок”.";
+}
+
+function render(){
+  mainPanel.innerHTML = "";
+  if(!currentPuchokId){
+    setHeaderForList();
+    renderPuchokList();
+  }else{
+    const p = getPuchok(currentPuchokId);
+    if(!p){
+      currentPuchokId = null;
+      render();
+      return;
+    }
+    setHeaderForPuchok(p);
+    renderPuchokInside(p);
+  }
+}
+
+function renderPuchokList(){
+  const wrap = document.createElement("div");
+  wrap.className = "list";
+
+  if(db.puchki.length === 0){
+    const empty = document.createElement("div");
+    empty.className = "empty";
+    empty.innerHTML = "Пока нет пучков.<br>Нажми <b>+ Пучок</b>, потом зайди внутрь и сохраняй туда ответы / заметки.";
+    wrap.appendChild(empty);
+  }else{
+    // newest first
+    const sorted = [...db.puchki].sort((a,b)=> (b.updatedAt||b.createdAt||"").localeCompare(a.updatedAt||a.createdAt||""));
+    for(const p of sorted){
+      const card = document.createElement("div");
+      card.className = "card";
+
+      const meta = document.createElement("div");
+      meta.className = "meta";
+
+      const name = document.createElement("div");
+      name.className = "name";
+      name.textContent = p.title || "Без названия";
+
+      const sub = document.createElement("div");
+      sub.className = "sub";
+      const count = (p.items || []).length;
+      const pill1 = document.createElement("span");
+      pill1.className = "pill";
+      pill1.textContent = `Элементов: ${count}`;
+      const pill2 = document.createElement("span");
+      pill2.className = "pill";
+      pill2.textContent = `Обновлён: ${fmtDate(p.updatedAt || p.createdAt || nowISO())}`;
+      sub.appendChild(pill1);
+      sub.appendChild(pill2);
+
+      meta.appendChild(name);
+      meta.appendChild(sub);
+
+      const btn = document.createElement("button");
+      btn.className = "btnGhost";
+      btn.textContent = "Открыть";
+      btn.addEventListener("click", () => openPuchok(p.id));
+
+      card.appendChild(meta);
+      card.appendChild(btn);
+      wrap.appendChild(card);
+    }
+  }
+
+  mainPanel.appendChild(wrap);
+}
+
+function renderPuchokInside(p){
+  const wrap = document.createElement("div");
+  wrap.className = "list";
+
+  if((p.items || []).length === 0){
+    const empty = document.createElement("div");
+    empty.className = "empty";
+    empty.innerHTML = "Внутри пусто.<br>Нажми <b>+ Текст</b> или сохрани ответ бота кнопкой <b>В пучок</b>.";
+    wrap.appendChild(empty);
+  }else{
+    const sorted = [...p.items].sort((a,b)=> (b.updatedAt||b.createdAt||"").localeCompare(a.updatedAt||a.createdAt||""));
+    for(const it of sorted){
+      const row = document.createElement("div");
+      row.className = "itemRow";
+      row.addEventListener("click", () => openTextItem(p.id, it.id));
+
+      const left = document.createElement("div");
+      left.className = "itemLeft";
+
+      const title = document.createElement("div");
+      title.className = "itemTitle";
+      title.textContent = it.title || "Текст";
+
+      const desc = document.createElement("div");
+      desc.className = "itemDesc";
+      const preview = (it.content || "").toString().trim().replace(/\s+/g," ");
+      desc.textContent = preview ? (preview.length > 90 ? preview.slice(0,90)+"…" : preview) : "Пусто";
+
+      left.appendChild(title);
+      left.appendChild(desc);
+
+      const right = document.createElement("div");
+      right.className = "tagText";
+      right.textContent = "Текст";
+
+      row.appendChild(left);
+      row.appendChild(right);
+      wrap.appendChild(row);
+    }
+  }
+
+  mainPanel.appendChild(wrap);
+}
+
+/** ===========================
+ *  NAV
+ *  =========================== */
+function openPuchok(id){
+  currentPuchokId = id;
+  render();
+}
+function goBack(){
+  currentPuchokId = null;
+  render();
+}
+
+/** ===========================
+ *  CRUD: Puchok
+ *  =========================== */
+function createPuchok(){
+  const name = prompt("Название пучка:", "Новый пучок");
+  if(name === null) return;
+  const p = {
+    id: uid(),
+    title: (name || "").trim() || "Новый пучок",
+    createdAt: nowISO(),
+    updatedAt: nowISO(),
+    items: []
+  };
+  db.puchki.push(p);
+  saveDB();
+  openPuchok(p.id);
+}
+
+function renameCurrentPuchok(){
+  const p = getPuchok(currentPuchokId);
+  if(!p) return;
+  const name = prompt("Новое название пучка:", p.title || "");
+  if(name === null) return;
+  p.title = (name || "").trim() || "Без названия";
+  p.updatedAt = nowISO();
+  saveDB();
+  render();
+}
+
+function deleteCurrentPuchok(){
+  const p = getPuchok(currentPuchokId);
+  if(!p) return;
+  const ok = confirm(`Удалить пучок “${p.title || "Без названия"}”?`);
+  if(!ok) return;
+  db.puchki = db.puchki.filter(x => x.id !== p.id);
+  saveDB();
+  currentPuchokId = null;
+  render();
+}
+
+/** ===========================
+ *  CRUD: Text item
+ *  =========================== */
+function addTextItemToCurrent(initialText = ""){
+  const p = getPuchok(currentPuchokId);
+  if(!p){
+    alert("Сначала открой пучок — тогда можно добавлять туда текст.");
+    return;
+  }
+  const it = {
+    id: uid(),
+    type: "text",
+    title: safeTitleFromText(initialText) || "Текст",
+    content: (initialText || "").toString(),
+    createdAt: nowISO(),
+    updatedAt: nowISO()
+  };
+  p.items.push(it);
+  p.updatedAt = nowISO();
+  saveDB();
+  render();
+  openTextItem(p.id, it.id);
+}
+
+function openTextItem(puchokId, itemId){
+  const p = getPuchok(puchokId);
+  if(!p) return;
+  const it = (p.items || []).find(x => x.id === itemId);
+  if(!it) return;
+
+  openItemId = itemId;
+  modalTitle.textContent = it.title || "Текст";
+  modalTextarea.value = it.content || "";
+  modalWrap.style.display = "flex";
+  setTimeout(()=> modalTextarea.focus(), 50);
+}
+
+function closeModal(){
+  modalWrap.style.display = "none";
+  openItemId = null;
+}
+
+function saveModal(){
+  const p = getPuchok(currentPuchokId);
+  if(!p) return;
+  const it = (p.items || []).find(x => x.id === openItemId);
+  if(!it) return;
+
+  const txt = modalTextarea.value || "";
+  it.content = txt;
+  it.title = safeTitleFromText(txt) || (it.title || "Текст");
+  it.updatedAt = nowISO();
+  p.updatedAt = nowISO();
+  saveDB();
+  closeModal();
+  render();
+}
+
+function deleteModal(){
+  const p = getPuchok(currentPuchokId);
+  if(!p) return;
+  const it = (p.items || []).find(x => x.id === openItemId);
+  if(!it) return;
+
+  const ok = confirm("Удалить этот текст?");
+  if(!ok) return;
+
+  p.items = (p.items || []).filter(x => x.id !== it.id);
+  p.updatedAt = nowISO();
+  saveDB();
+  closeModal();
+  render();
+}
+
+/** ===========================
+ *  CHAT UI
+ *  =========================== */
+function addMsg(text, cls, options = {}){
+  const wrap = document.createElement("div");
+  wrap.className = "msg " + cls;
+
+  const body = document.createElement("div");
+  body.textContent = text;
+  wrap.appendChild(body);
+
+  // tools for bot messages: save into current puchok
+  if(cls === "bot"){
+    const tools = document.createElement("div");
+    tools.className = "msgTools";
+
+    const btnSave = document.createElement("button");
+    btnSave.className = "miniBtn miniBtnOk";
+    btnSave.textContent = "В пучок";
+    btnSave.addEventListener("click", () => {
+      if(!currentPuchokId){
+        alert("Открой пучок — тогда “В пучок” сохранит ответ туда.");
+        return;
+      }
+      addTextItemToCurrent(text);
+    });
+
+    tools.appendChild(btnSave);
+    wrap.appendChild(tools);
+  }
+
+  chat.appendChild(wrap);
   chat.scrollTop = chat.scrollHeight;
 }
 
-async function handleSend() {
+function clearChat(){
+  chatHistory = [];
+  chat.innerHTML = "";
+  addMsg("Чат очищен. Пиши сообщение — я отправлю в Worker (/chat).", "bot");
+}
+
+/** ===========================
+ *  CHAT NETWORK
+ *  =========================== */
+async function handleSend(){
   const text = input.value.trim();
-  if (!text) return;
+  if(!text) return;
 
   addMsg(text, "me");
   input.value = "";
   send.disabled = true;
 
-  try {
+  try{
     const resp = await fetch(WORKER_URL + "/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -186,27 +754,47 @@ async function handleSend() {
 
     const raw = await resp.text();
     let data = {};
-    try { data = JSON.parse(raw); } catch {}
+    try{ data = JSON.parse(raw); }catch{}
 
-    if (!resp.ok) {
+    if(!resp.ok){
       addMsg(`HTTP ${resp.status}: ${raw || "error"}`, "err");
-    } else if (data && data.ok) {
+    }else if(data && data.ok){
       addMsg(data.answer || "Нет ответа", "bot");
-    } else {
+    }else{
       addMsg(raw || "Неожиданный ответ", "err");
     }
-  } catch (e) {
+  }catch(e){
     addMsg("Ошибка сети: " + (e?.message || e), "err");
   }
 
   send.disabled = false;
 }
 
-send.addEventListener("click", handleSend);
-input.addEventListener("keydown", (e) => {
-  if (e.key === "Enter") handleSend();
-});
-</script>
+/** ===========================
+ *  EVENTS
+ *  =========================== */
+backBtn.addEventListener("click", goBack);
+newPuchokBtn.addEventListener("click", createPuchok);
+renamePuchokBtn.addEventListener("click", renameCurrentPuchok);
+deletePuchokBtn.addEventListener("click", deleteCurrentPuchok);
+addTextBtn.addEventListener("click", () => addTextItemToCurrent(""));
 
+send.addEventListener("click", handleSend);
+input.addEventListener("keydown", (e) => { if(e.key === "Enter") handleSend(); });
+clearChatBtn.addEventListener("click", clearChat);
+
+modalClose.addEventListener("click", closeModal);
+modalWrap.addEventListener("click", (e)=>{ if(e.target === modalWrap) closeModal(); });
+modalSave.addEventListener("click", saveModal);
+modalDelete.addEventListener("click", deleteModal);
+
+/** ===========================
+ *  INIT
+ *  =========================== */
+(function init(){
+  render();
+  clearChat();
+})();
+</script>
 </body>
 </html>
