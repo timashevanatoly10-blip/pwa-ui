@@ -53,7 +53,6 @@
     body{
       margin:0; font-family:Arial,sans-serif;
       background:var(--bg); color:var(--text);
-      /* full width */
       display:block;
     }
 
@@ -188,6 +187,7 @@
       overflow:auto;
       position:relative;
       box-shadow: var(--shadow);
+      min-height: 0; /* important for flex */
     }
 
     /* Lists */
@@ -278,13 +278,15 @@
     .tagImg{ border-color:#c8f1d2; color:#176c2c; background:#e9f9ee; }
     .tagAudio{ border-color:#f3c7d0; color:#8a1830; background:#fdecef; }
 
-    /* Chat dock */
+    /* Chat dock (collapsible like Notion) */
     .dock{
       background:var(--panel);
       border:1px solid var(--border);
       border-radius:14px;
       overflow:hidden;
       box-shadow: var(--shadow);
+      min-height: 0;
+      transition: max-height .18s ease;
     }
     .dockHead{
       display:flex; align-items:center; justify-content:space-between;
@@ -299,9 +301,10 @@
       max-width:60vw
     }
     .dockBody{
-      max-height:38vh;
       overflow:auto;
       padding:12px;
+      max-height:38vh;
+      transition: max-height .18s ease, opacity .18s ease;
     }
 
     .composer{
@@ -332,6 +335,39 @@
       box-shadow: 0 8px 18px rgba(45,108,255,.22);
     }
     .sendBtn svg{width:20px; height:20px; display:block}
+
+    /* collapsed state: only composer */
+    .dock.collapsed .dockHead{ display:none; }
+    .dock.collapsed .dockBody{
+      max-height:0;
+      padding:0 12px;
+      opacity:0;
+      pointer-events:none;
+    }
+    .dock.collapsed .composer{
+      border-top:0;
+    }
+    /* expanded state: show */
+    .dock.expanded .dockHead{ display:flex; }
+    .dock.expanded .dockBody{ opacity:1; pointer-events:auto; }
+
+    .collapseBar{
+      display:none;
+      height:18px;
+      align-items:center;
+      justify-content:center;
+      background:#fafbfc;
+      border-top:1px solid var(--border);
+      cursor:pointer;
+      user-select:none;
+    }
+    .collapsePill{
+      width:44px;
+      height:5px;
+      border-radius:999px;
+      background:#d0d5dd;
+    }
+    .dock.expanded .collapseBar{ display:flex; }
 
     /* Messages */
     .msg{
@@ -483,6 +519,23 @@
       box-shadow: 0 0 0 4px rgba(225,29,72,.15);
     }
 
+    /* Edge-to-edge on phone (make it really "to the borders") */
+    @media (max-width: 520px){
+      .container{ padding:0; gap:0; }
+      header, .panel, .dock{
+        border-radius:0;
+        border-left:0;
+        border-right:0;
+      }
+      header{ box-shadow:none; }
+      .panel{ box-shadow:none; }
+      .dock{ box-shadow:none; }
+      header{ padding:12px 12px; }
+      .panel{ padding:12px 12px; }
+      .dockHead{ padding:10px 12px; }
+      .composer{ padding:12px 12px; }
+    }
+
     @media (min-width: 900px){
       .container{ padding:16px 18px; }
     }
@@ -503,7 +556,6 @@
       <div class="actions" id="headActions">
         <button id="newPuchokBtn">+ Пучок</button>
 
-        <!-- compact controls shown inside puchok -->
         <button id="editPuchokBtn" class="iconBtn iconBtnGhost" style="display:none;" title="Переименовать">
           <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
             <path d="M4 20h4l10.5-10.5a2 2 0 0 0 0-3L16.5 4.5a2 2 0 0 0-3 0L3 15v5Z" stroke="#111317" stroke-width="2" stroke-linejoin="round"/>
@@ -529,7 +581,7 @@
 
     <div class="panel" id="mainPanel"></div>
 
-    <div class="dock" id="chatDock">
+    <div class="dock collapsed" id="chatDock">
       <div class="dockHead">
         <div>
           <div class="dockTitle">Чат</div>
@@ -539,6 +591,10 @@
       </div>
 
       <div class="dockBody" id="chat"></div>
+
+      <div class="collapseBar" id="collapseBar" title="Свернуть чат">
+        <div class="collapsePill"></div>
+      </div>
 
       <div class="composer">
         <input id="input" type="text" placeholder="Напиши сообщение..." autocomplete="off" />
@@ -553,6 +609,8 @@
 
   <!-- One picker for everything (images included) -->
   <input id="filePicker" type="file" style="display:none" />
+  <!-- iOS audio fallback: opens system recorder when possible -->
+  <input id="audioPicker" type="file" accept="audio/*" capture style="display:none" />
 
   <!-- Modal (universal) -->
   <div class="modalWrap" id="modalWrap">
@@ -582,7 +640,7 @@
  *  CONFIG
  *  =========================== */
 const WORKER_URL = "https://gptim24.timashevanatoly10.workers.dev";
-const STORAGE_KEY = "tim_puchki_v2"; // same structure as you have
+const STORAGE_KEY = "tim_puchki_v2";
 
 // IndexedDB for blobs
 const IDB_NAME = "tim_puchki_blobs";
@@ -606,6 +664,8 @@ const menuAddFile = document.getElementById("menuAddFile");
 const menuAddAudio = document.getElementById("menuAddAudio");
 const menuDeletePuchok = document.getElementById("menuDeletePuchok");
 
+const chatDock = document.getElementById("chatDock");
+const collapseBar = document.getElementById("collapseBar");
 const chat = document.getElementById("chat");
 const input = document.getElementById("input");
 const send = document.getElementById("send");
@@ -613,6 +673,7 @@ const clearChatBtn = document.getElementById("clearChatBtn");
 const chatHint = document.getElementById("chatHint");
 
 const filePicker = document.getElementById("filePicker");
+const audioPicker = document.getElementById("audioPicker");
 
 const modalWrap = document.getElementById("modalWrap");
 const modalTitle = document.getElementById("modalTitle");
@@ -622,7 +683,6 @@ const modalClose = document.getElementById("modalClose");
 const modalSave = document.getElementById("modalSave");
 const modalDelete = document.getElementById("modalDelete");
 const modalHint = document.getElementById("modalHint");
-const modalRow = document.getElementById("modalRow");
 
 /** ===========================
  *  STATE
@@ -632,10 +692,24 @@ let currentPuchokId = null; // null = list screen
 let openItemId = null;
 let openItemType = null;
 
+// audio state
 let mediaRecorder = null;
 let recChunks = [];
 let isRecording = false;
 let currentAudioAppendTarget = null; // { pId, itemId }
+let pendingAudioTarget = null;        // for iOS capture fallback
+
+/** ===========================
+ *  PLATFORM DETECT
+ *  =========================== */
+function isIOS(){
+  const ua = navigator.userAgent || "";
+  return /iPad|iPhone|iPod/.test(ua) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+}
+function hasMediaRecorder(){
+  return typeof MediaRecorder !== "undefined" && typeof MediaRecorder === "function";
+}
+const AUDIO_MODE = (hasMediaRecorder() && !isIOS()) ? "mediarecorder" : "capture";
 
 /** ===========================
  *  IndexedDB helpers
@@ -685,9 +759,7 @@ async function idbDelete(key){
  *  HELPERS
  *  =========================== */
 function nowISO(){ return new Date().toISOString(); }
-function uid(){
-  return Math.random().toString(16).slice(2) + Date.now().toString(16);
-}
+function uid(){ return Math.random().toString(16).slice(2) + Date.now().toString(16); }
 function safeTitleFromText(t){
   const s = (t || "").toString().trim().replace(/\s+/g," ");
   return s.length > 48 ? s.slice(0, 48) + "…" : (s || "Без названия");
@@ -746,12 +818,8 @@ function loadDB(){
     return { puchki: [] };
   }
 }
-function saveDB(){
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(db));
-}
-function getPuchok(id){
-  return db.puchki.find(p => p.id === id) || null;
-}
+function saveDB(){ localStorage.setItem(STORAGE_KEY, JSON.stringify(db)); }
+function getPuchok(id){ return db.puchki.find(p => p.id === id) || null; }
 function getItem(pId, itemId){
   const p = getPuchok(pId);
   if(!p) return null;
@@ -766,13 +834,28 @@ function closeAddMenu(){
   addMenu.setAttribute("aria-hidden","true");
 }
 function toggleAddMenu(){
-  if(addMenu.style.display === "block"){
-    closeAddMenu();
-  }else{
+  if(addMenu.style.display === "block") closeAddMenu();
+  else{
     addMenu.style.display = "block";
     addMenu.setAttribute("aria-hidden","false");
   }
 }
+
+/** ===========================
+ *  CHAT DOCK COLLAPSE/EXPAND
+ *  =========================== */
+function expandChat(){
+  chatDock.classList.remove("collapsed");
+  chatDock.classList.add("expanded");
+  // scroll to bottom when opening
+  setTimeout(()=> { chat.scrollTop = chat.scrollHeight; }, 10);
+}
+function collapseChat(){
+  chatDock.classList.remove("expanded");
+  chatDock.classList.add("collapsed");
+}
+input.addEventListener("focus", expandChat);
+collapseBar.addEventListener("click", collapseChat);
 
 /** ===========================
  *  UI HEADER
@@ -787,7 +870,6 @@ function setHeaderForList(){
   closeAddMenu();
 
   newPuchokBtn.style.display = "";
-
   chatHint.textContent = "Совет: сначала открой пучок → тогда “В пучок” будет сохранять ответы прямо туда.";
 }
 function setHeaderForPuchok(p){
@@ -1059,7 +1141,7 @@ async function addFileItemToCurrent(file){
   let it;
   if(isImg){
     const thumbKey = `blob:${id}:thumb`;
-    await idbPutBlob(thumbKey, file); // simple thumb = original (fast)
+    await idbPutBlob(thumbKey, file);
     it = {
       id,
       type: "image",
@@ -1091,6 +1173,36 @@ async function addFileItemToCurrent(file){
   openItem(p.id, it.id);
 }
 
+async function appendAudioSegmentFromBlob(pId, itemId, blob, fileName){
+  const p = getPuchok(pId);
+  const it = getItem(pId, itemId);
+  if(!p || !it || it.type !== "audio") return;
+
+  if(!blob || !blob.size){
+    await renderAudioViewer(it, pId);
+    return;
+  }
+
+  const segKey = `blob:${it.id}:seg:${uid()}`;
+  await idbPutBlob(segKey, blob);
+
+  it.segments = it.segments || [];
+  it.segments.push({
+    key: segKey,
+    mime: blob.type || "audio/webm",
+    size: blob.size || 0,
+    createdAt: nowISO(),
+    name: fileName || null
+  });
+
+  it.updatedAt = nowISO();
+  p.updatedAt = nowISO();
+  saveDB();
+
+  await renderAudioViewer(it, pId);
+  render();
+}
+
 async function createAudioItemAndRecord(){
   const p = getPuchok(currentPuchokId);
   if(!p){
@@ -1112,7 +1224,16 @@ async function createAudioItemAndRecord(){
   render();
 
   await openItem(p.id, it.id);
-  await startRecordingToAudioItem(p.id, it.id);
+
+  // Start recording immediately depending on mode
+  if(AUDIO_MODE === "mediarecorder"){
+    await startRecordingToAudioItem(p.id, it.id);
+  }else{
+    // iOS/system recorder
+    pendingAudioTarget = { pId: p.id, itemId: it.id };
+    audioPicker.value = "";
+    audioPicker.click();
+  }
 }
 
 /** ===========================
@@ -1121,6 +1242,8 @@ async function createAudioItemAndRecord(){
 function stopAnyRecordingSafely(){
   try{
     if(mediaRecorder && isRecording){
+      // ask for last chunk first
+      try{ mediaRecorder.requestData(); }catch{}
       mediaRecorder.stop();
     }
   }catch{}
@@ -1134,7 +1257,6 @@ function closeModal(){
   modalViewer.innerHTML = "";
   openItemId = null;
   openItemType = null;
-  // do NOT null currentAudioAppendTarget here; it's handled by onstop
 }
 
 async function openItem(puchokId, itemId){
@@ -1226,7 +1348,9 @@ async function openItem(puchokId, itemId){
   }
 
   if(it.type === "audio"){
-    modalHint.textContent = "Аудио хранится сегментами. “Дозаписать” добавляет новый сегмент.";
+    modalHint.textContent = (AUDIO_MODE === "capture")
+      ? "iOS-режим: запись делается через системный диктофон (capture). “Дозаписать” добавит новый сегмент."
+      : "Запись хранится сегментами. “Дозаписать” добавляет новый сегмент.";
     await renderAudioViewer(it, puchokId);
     return;
   }
@@ -1286,7 +1410,7 @@ async function cleanupItemBlobs(it){
 }
 
 /** ===========================
- *  AUDIO: record + append segments
+ *  AUDIO: MediaRecorder (desktop/android)
  *  =========================== */
 async function ensureMic(){
   if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
@@ -1306,7 +1430,15 @@ async function startRecordingToAudioItem(pId, itemId){
   const p = getPuchok(pId);
   if(!it || !p || it.type !== "audio") return;
 
-  // if already recording something else, stop first
+  if(AUDIO_MODE !== "mediarecorder"){
+    // iOS fallback: use capture picker
+    pendingAudioTarget = { pId, itemId };
+    audioPicker.value = "";
+    audioPicker.click();
+    return;
+  }
+
+  // if already recording, stop
   if(isRecording){
     stopAnyRecordingSafely();
     return;
@@ -1337,29 +1469,21 @@ async function startRecordingToAudioItem(pId, itemId){
     const target = currentAudioAppendTarget;
     currentAudioAppendTarget = null;
 
-    if(!target) return;
+    const chunks = recChunks;
+    recChunks = [];
 
+    if(!target) return;
     const p2 = getPuchok(target.pId);
     const it2 = getItem(target.pId, target.itemId);
     if(!p2 || !it2 || it2.type !== "audio") return;
 
-    const blob = new Blob(recChunks, { type: (mediaRecorder && mediaRecorder.mimeType) ? mediaRecorder.mimeType : "audio/webm" });
-    if(blob.size > 0){
-      const segKey = `blob:${it2.id}:seg:${uid()}`;
-      await idbPutBlob(segKey, blob);
-
-      it2.segments = it2.segments || [];
-      it2.segments.push({ key: segKey, mime: blob.type || "audio/webm", size: blob.size || 0, createdAt: nowISO() });
-      it2.updatedAt = nowISO();
-      p2.updatedAt = nowISO();
-      saveDB();
-    }
-
-    await renderAudioViewer(it2, target.pId);
-    render();
+    const blob = new Blob(chunks, { type: (mediaRecorder && mediaRecorder.mimeType) ? mediaRecorder.mimeType : "audio/webm" });
+    await appendAudioSegmentFromBlob(target.pId, target.itemId, blob, null);
   };
 
-  mediaRecorder.start();
+  // IMPORTANT: timeslice improves stability for repeated recordings in some browsers
+  mediaRecorder.start(1000);
+
   await renderAudioViewer(it, pId);
 }
 
@@ -1387,10 +1511,17 @@ async function renderAudioViewer(it, pId){
   const merged = await buildAudioBlobFromSegments(it);
   const audioURL = merged ? URL.createObjectURL(merged) : "";
 
-  const isThisRec = isRecording && currentAudioAppendTarget && currentAudioAppendTarget.itemId === it.id;
+  const isThisRec = (AUDIO_MODE === "mediarecorder")
+    ? (isRecording && currentAudioAppendTarget && currentAudioAppendTarget.itemId === it.id)
+    : false;
+
   const recUI = isThisRec
     ? `<div class="recBadge"><span class="dot"></span>Запись…</div>`
-    : "";
+    : (AUDIO_MODE === "capture" ? `<div class="hint">iOS: при нажатии “Записать” откроется системная запись.</div>` : "");
+
+  const btnLabel = (AUDIO_MODE === "mediarecorder")
+    ? (isThisRec ? "Стоп" : (segs.length ? "Дозаписать" : "Записать"))
+    : (segs.length ? "Дозаписать" : "Записать");
 
   modalViewer.innerHTML = `
     <div class="fileRow">
@@ -1406,29 +1537,31 @@ async function renderAudioViewer(it, pId){
     </div>
 
     <div class="viewerActions">
-      <button class="btnOk" id="btnRec">${isThisRec ? "Стоп" : (segs.length ? "Дозаписать" : "Записать")}</button>
+      <button class="btnOk" id="btnRec">${btnLabel}</button>
       <button class="btnGhost" id="btnDownload" ${audioURL ? "" : "disabled"}>Скачать</button>
     </div>
 
     <div style="margin-top:10px;">${recUI}</div>
 
     <div class="hint" style="margin-top:10px;">
-      Совет: можно записывать по частям. Каждая “Дозапись” добавляет сегмент.
+      Каждая “Дозапись” — новый сегмент. Это проще и надёжнее, особенно на телефонах.
     </div>
   `;
 
   const audioEl = modalViewer.querySelector("audio");
   if(audioEl && audioURL){
     audioEl.src = audioURL;
-    audioEl.onended = ()=>{};
   }
 
   document.getElementById("btnRec").onclick = async () => {
-    if(isThisRec){
-      stopAnyRecordingSafely();
-      return;
+    if(AUDIO_MODE === "mediarecorder"){
+      if(isThisRec) stopAnyRecordingSafely();
+      else await startRecordingToAudioItem(pId, it.id);
+    }else{
+      pendingAudioTarget = { pId, itemId: it.id };
+      audioPicker.value = "";
+      audioPicker.click();
     }
-    await startRecordingToAudioItem(pId, it.id);
   };
 
   const btnD = document.getElementById("btnDownload");
@@ -1437,7 +1570,8 @@ async function renderAudioViewer(it, pId){
       if(!audioURL) return;
       const a = document.createElement("a");
       a.href = audioURL;
-      a.download = (it.title || "audio") + ".webm";
+      // if iOS capture, often m4a; but merged keeps first mime. keep generic extension
+      a.download = (it.title || "audio") + (merged && merged.type.includes("mp4") ? ".m4a" : ".webm");
       a.click();
     };
   }
@@ -1489,6 +1623,7 @@ async function handleSend(){
   const text = input.value.trim();
   if(!text) return;
 
+  expandChat();
   addMsg(text, "me");
   input.value = "";
   send.disabled = true;
@@ -1562,6 +1697,17 @@ filePicker.addEventListener("change", async () => {
   await addFileItemToCurrent(f);
 });
 
+audioPicker.addEventListener("change", async ()=>{
+  const f = audioPicker.files && audioPicker.files[0];
+  if(!f || !pendingAudioTarget) return;
+
+  const target = pendingAudioTarget;
+  pendingAudioTarget = null;
+
+  // Important: on iOS capture returns File (blob)
+  await appendAudioSegmentFromBlob(target.pId, target.itemId, f, f.name || "audio");
+});
+
 send.addEventListener("click", handleSend);
 input.addEventListener("keydown", (e) => { if(e.key === "Enter") handleSend(); });
 clearChatBtn.addEventListener("click", clearChat);
@@ -1579,8 +1725,11 @@ addMenu.addEventListener("click", (e)=> e.stopPropagation());
  *  INIT
  *  =========================== */
 (function init(){
+  // show correct header buttons based on view
   render();
   clearChat();
+  // start collapsed like Notion
+  collapseChat();
 })();
 </script>
 </body>
