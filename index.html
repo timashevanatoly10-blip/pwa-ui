@@ -53,48 +53,136 @@
     body{
       margin:0; font-family:Arial,sans-serif;
       background:var(--bg); color:var(--text);
-      display:flex; justify-content:center;
+      /* full width */
+      display:block;
     }
+
+    /* iOS safe areas */
+    .safeTop{ padding-top: env(safe-area-inset-top); }
+    .safeBottom{ padding-bottom: env(safe-area-inset-bottom); }
+
     .container{
-      width:100%; max-width:820px; min-height:100vh;
-      display:flex; flex-direction:column;
-      padding:14px; gap:12px;
+      width:100%;
+      min-height:100vh;
+      display:flex;
+      flex-direction:column;
+      padding:12px;
+      gap:12px;
     }
+
     header{
       display:flex; align-items:center; justify-content:space-between;
       padding:12px;
-      background:var(--panel); border:1px solid var(--border);
+      background:var(--panel);
+      border:1px solid var(--border);
       border-radius:14px;
       gap:10px;
       box-shadow: var(--shadow);
     }
+
     .leftHead{display:flex; align-items:center; gap:10px; min-width:0}
     .title{font-weight:800; font-size:16px; white-space:nowrap}
-    .crumb{font-size:12px; color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:46vw}
-    .actions{display:flex; gap:8px; align-items:center; flex-wrap:wrap; justify-content:flex-end}
+    .crumb{font-size:12px; color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:56vw}
+
+    .actions{
+      display:flex;
+      gap:8px;
+      align-items:center;
+      flex-wrap:nowrap;
+      justify-content:flex-end;
+      position:relative; /* for menu */
+    }
+
     button{
-      padding:10px 12px; border-radius:12px; border:none;
-      background:var(--btn); color:var(--btnText);
-      font-weight:800; cursor:pointer;
+      padding:10px 12px;
+      border-radius:12px;
+      border:none;
+      background:var(--btn);
+      color:var(--btnText);
+      font-weight:800;
+      cursor:pointer;
     }
     button:disabled{opacity:.6; cursor:not-allowed}
     .btnGhost{
-      background:transparent; border:1px solid var(--border); color:var(--text);
+      background:transparent;
+      border:1px solid var(--border);
+      color:var(--text);
       font-weight:800;
     }
     .btnDanger{
-      background:transparent; border:1px solid rgba(179,38,30,.45); color:var(--danger);
+      background:transparent;
+      border:1px solid rgba(179,38,30,.45);
+      color:var(--danger);
       font-weight:800;
     }
     .btnOk{
-      background:transparent; border:1px solid rgba(47,125,50,.45); color:var(--ok);
+      background:transparent;
+      border:1px solid rgba(47,125,50,.45);
+      color:var(--ok);
       font-weight:800;
     }
+
+    /* icon buttons (header) */
+    .iconBtn{
+      width:42px;
+      height:42px;
+      padding:0;
+      border-radius:14px;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+    }
+    .iconBtn svg{ width:20px; height:20px; display:block; }
+    .iconBtnGhost{
+      background:transparent;
+      border:1px solid var(--border);
+      color:var(--text);
+    }
+    .iconBtnPrimary{
+      background:var(--btn);
+      border:1px solid rgba(45,108,255,.25);
+      box-shadow: 0 8px 18px rgba(45,108,255,.18);
+    }
+    .iconBtnPrimary svg path{ stroke:#fff; }
+
+    /* Add menu */
+    .menu{
+      position:absolute;
+      top:48px;
+      right:0;
+      width:220px;
+      background:var(--panel);
+      border:1px solid var(--border);
+      border-radius:14px;
+      box-shadow: var(--shadow);
+      overflow:hidden;
+      display:none;
+      z-index:50;
+    }
+    .menu button{
+      width:100%;
+      border:0;
+      border-radius:0;
+      background:transparent;
+      color:var(--text);
+      padding:12px 12px;
+      font-weight:900;
+      text-align:left;
+      cursor:pointer;
+    }
+    .menu button:hover{ background:var(--hover); }
+    .menu .sep{
+      height:1px;
+      background:var(--border);
+      margin:0;
+    }
+    .menu .dangerItem{ color:var(--danger); }
 
     /* Main panel */
     .panel{
       flex:1;
-      background:var(--panel); border:1px solid var(--border);
+      background:var(--panel);
+      border:1px solid var(--border);
       border-radius:14px;
       padding:12px;
       overflow:auto;
@@ -118,7 +206,7 @@
     .card .name{
       font-weight:900;
       overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
-      max-width:56vw;
+      max-width:70vw;
     }
     .card .sub{
       font-size:12px; color:var(--muted); margin-top:4px;
@@ -139,14 +227,14 @@
       border-radius:14px;
       text-align:center;
       line-height:1.4;
-      background: #fff;
+      background:#fff;
     }
 
     /* Item list inside puchok */
     .itemRow{
       display:flex; align-items:center; justify-content:space-between;
       gap:12px;
-      background: #fff;
+      background:#fff;
       border:1px solid var(--border);
       border-radius:14px;
       padding:10px 12px;
@@ -157,27 +245,24 @@
     .thumb{
       width:44px; height:44px; border-radius:12px;
       border:1px solid var(--border);
-      background: #f3f4f6;
+      background:#f3f4f6;
       display:flex; align-items:center; justify-content:center;
       overflow:hidden;
       flex:0 0 auto;
     }
     .thumb img{width:100%; height:100%; object-fit:cover; display:block}
-    .thumb .ico{
-      width:22px; height:22px;
-      opacity:.75;
-    }
+    .thumb .ico{ width:22px; height:22px; opacity:.75; }
     .itemText{min-width:0}
     .itemTitle{
       font-weight:900;
       overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
-      max-width:52vw;
+      max-width:62vw;
     }
     .itemDesc{
       margin-top:4px;
       font-size:12px; color:var(--muted);
       overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
-      max-width:66vw;
+      max-width:72vw;
     }
     .tagText{
       font-size:12px;
@@ -189,15 +274,9 @@
       white-space:nowrap;
       font-weight:800;
     }
-    .tagFile{
-      border-color:#f4d6a6; color:#9a5a00; background:#fff4e1;
-    }
-    .tagImg{
-      border-color:#c8f1d2; color:#176c2c; background:#e9f9ee;
-    }
-    .tagAudio{
-      border-color:#f3c7d0; color:#8a1830; background:#fdecef;
-    }
+    .tagFile{ border-color:#f4d6a6; color:#9a5a00; background:#fff4e1; }
+    .tagImg{ border-color:#c8f1d2; color:#176c2c; background:#e9f9ee; }
+    .tagAudio{ border-color:#f3c7d0; color:#8a1830; background:#fdecef; }
 
     /* Chat dock */
     .dock{
@@ -214,7 +293,11 @@
       gap:10px;
     }
     .dockTitle{font-weight:900}
-    .dockSmall{font-size:12px; color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:50vw}
+    .dockSmall{
+      font-size:12px; color:var(--muted);
+      overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+      max-width:60vw
+    }
     .dockBody{
       max-height:38vh;
       overflow:auto;
@@ -332,10 +415,10 @@
       outline:none;
       font-size:15px;
       line-height:1.4;
-      display:none; /* default hidden, shown for text */
+      display:none;
     }
     .viewer{
-      display:none; /* shown for non-text */
+      display:none;
       width:100%;
       min-height:46vh;
       border-radius:14px;
@@ -366,7 +449,7 @@
     .viewer .fileName{
       font-weight:900;
       overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
-      max-width:56vw;
+      max-width:62vw;
     }
     .viewer .fileSub{font-size:12px; color:var(--muted); margin-top:4px}
     .viewer .viewerActions{display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-end; margin-top:10px}
@@ -384,7 +467,6 @@
       margin-top:8px;
       line-height:1.35;
     }
-
     .recBadge{
       display:inline-flex;
       align-items:center;
@@ -400,11 +482,15 @@
       width:10px;height:10px;border-radius:999px;background:#e11d48;
       box-shadow: 0 0 0 4px rgba(225,29,72,.15);
     }
+
+    @media (min-width: 900px){
+      .container{ padding:16px 18px; }
+    }
   </style>
 </head>
 
 <body>
-  <div class="container">
+  <div class="container safeTop safeBottom">
     <header>
       <div class="leftHead">
         <button id="backBtn" class="btnGhost" style="display:none;">←</button>
@@ -413,17 +499,31 @@
           <div class="crumb" id="headCrumb">Пучки + чат</div>
         </div>
       </div>
+
       <div class="actions" id="headActions">
         <button id="newPuchokBtn">+ Пучок</button>
 
-        <button id="renamePuchokBtn" class="btnGhost" style="display:none;">Переименовать</button>
+        <!-- compact controls shown inside puchok -->
+        <button id="editPuchokBtn" class="iconBtn iconBtnGhost" style="display:none;" title="Переименовать">
+          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M4 20h4l10.5-10.5a2 2 0 0 0 0-3L16.5 4.5a2 2 0 0 0-3 0L3 15v5Z" stroke="#111317" stroke-width="2" stroke-linejoin="round"/>
+            <path d="M13.5 6.5l4 4" stroke="#111317" stroke-width="2" stroke-linecap="round"/>
+          </svg>
+        </button>
 
-        <button id="addTextBtn" class="btnGhost" style="display:none;">+ Текст</button>
-        <button id="addPhotoBtn" class="btnGhost" style="display:none;">+ Фото</button>
-        <button id="addFileBtn" class="btnGhost" style="display:none;">+ Файл</button>
-        <button id="addAudioBtn" class="btnGhost" style="display:none;">+ Аудио</button>
+        <button id="addMenuBtn" class="iconBtn iconBtnPrimary" style="display:none;" title="Добавить">
+          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M12 5v14M5 12h14" stroke="white" stroke-width="2.4" stroke-linecap="round"/>
+          </svg>
+        </button>
 
-        <button id="deletePuchokBtn" class="btnDanger" style="display:none;">Удалить</button>
+        <div id="addMenu" class="menu" role="menu" aria-hidden="true">
+          <button id="menuAddText">Добавить текст</button>
+          <button id="menuAddFile">Добавить файл/фото</button>
+          <button id="menuAddAudio">Добавить аудио</button>
+          <div class="sep"></div>
+          <button id="menuDeletePuchok" class="dangerItem">Удалить пучок</button>
+        </div>
       </div>
     </header>
 
@@ -443,7 +543,6 @@
       <div class="composer">
         <input id="input" type="text" placeholder="Напиши сообщение..." autocomplete="off" />
         <button id="send" class="sendBtn" title="Отправить">
-          <!-- arrow -->
           <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
             <path d="M4.5 12L19 5.5L13 19L11.8 13.7L4.5 12Z" stroke="white" stroke-width="2" stroke-linejoin="round"/>
           </svg>
@@ -452,8 +551,7 @@
     </div>
   </div>
 
-  <!-- Hidden pickers -->
-  <input id="photoPicker" type="file" accept="image/*" style="display:none" />
+  <!-- One picker for everything (images included) -->
   <input id="filePicker" type="file" style="display:none" />
 
   <!-- Modal (universal) -->
@@ -467,7 +565,6 @@
       </div>
       <div class="modalBody">
         <textarea id="modalTextarea" spellcheck="false"></textarea>
-
         <div class="viewer" id="modalViewer"></div>
 
         <div class="row" id="modalRow">
@@ -485,7 +582,7 @@
  *  CONFIG
  *  =========================== */
 const WORKER_URL = "https://gptim24.timashevanatoly10.workers.dev";
-const STORAGE_KEY = "tim_puchki_v2"; // bumped because structure extended
+const STORAGE_KEY = "tim_puchki_v2"; // same structure as you have
 
 // IndexedDB for blobs
 const IDB_NAME = "tim_puchki_blobs";
@@ -500,12 +597,14 @@ const headTitle = document.getElementById("headTitle");
 const headCrumb = document.getElementById("headCrumb");
 
 const newPuchokBtn = document.getElementById("newPuchokBtn");
-const renamePuchokBtn = document.getElementById("renamePuchokBtn");
-const addTextBtn = document.getElementById("addTextBtn");
-const addPhotoBtn = document.getElementById("addPhotoBtn");
-const addFileBtn = document.getElementById("addFileBtn");
-const addAudioBtn = document.getElementById("addAudioBtn");
-const deletePuchokBtn = document.getElementById("deletePuchokBtn");
+
+const editPuchokBtn = document.getElementById("editPuchokBtn");
+const addMenuBtn = document.getElementById("addMenuBtn");
+const addMenu = document.getElementById("addMenu");
+const menuAddText = document.getElementById("menuAddText");
+const menuAddFile = document.getElementById("menuAddFile");
+const menuAddAudio = document.getElementById("menuAddAudio");
+const menuDeletePuchok = document.getElementById("menuDeletePuchok");
 
 const chat = document.getElementById("chat");
 const input = document.getElementById("input");
@@ -513,7 +612,6 @@ const send = document.getElementById("send");
 const clearChatBtn = document.getElementById("clearChatBtn");
 const chatHint = document.getElementById("chatHint");
 
-const photoPicker = document.getElementById("photoPicker");
 const filePicker = document.getElementById("filePicker");
 
 const modalWrap = document.getElementById("modalWrap");
@@ -533,13 +631,11 @@ let db = loadDB();
 let currentPuchokId = null; // null = list screen
 let openItemId = null;
 let openItemType = null;
-let chatHistory = [];
 
-// audio recording state (modal + add)
 let mediaRecorder = null;
 let recChunks = [];
 let isRecording = false;
-let currentAudioAppendTarget = null; // { pId, itemId } when append segment in modal
+let currentAudioAppendTarget = null; // { pId, itemId }
 
 /** ===========================
  *  IndexedDB helpers
@@ -548,9 +644,9 @@ function idbOpen(){
   return new Promise((resolve, reject)=>{
     const req = indexedDB.open(IDB_NAME, 1);
     req.onupgradeneeded = () => {
-      const db = req.result;
-      if(!db.objectStoreNames.contains(IDB_STORE)){
-        db.createObjectStore(IDB_STORE, { keyPath: "key" });
+      const d = req.result;
+      if(!d.objectStoreNames.contains(IDB_STORE)){
+        d.createObjectStore(IDB_STORE, { keyPath: "key" });
       }
     };
     req.onsuccess = ()=> resolve(req.result);
@@ -558,27 +654,27 @@ function idbOpen(){
   });
 }
 async function idbPutBlob(key, blob){
-  const dbi = await idbOpen();
+  const d = await idbOpen();
   return new Promise((resolve, reject)=>{
-    const tx = dbi.transaction(IDB_STORE, "readwrite");
+    const tx = d.transaction(IDB_STORE, "readwrite");
     tx.objectStore(IDB_STORE).put({ key, blob });
     tx.oncomplete = ()=> resolve(true);
     tx.onerror = ()=> reject(tx.error);
   });
 }
 async function idbGetBlob(key){
-  const dbi = await idbOpen();
+  const d = await idbOpen();
   return new Promise((resolve, reject)=>{
-    const tx = dbi.transaction(IDB_STORE, "readonly");
+    const tx = d.transaction(IDB_STORE, "readonly");
     const req = tx.objectStore(IDB_STORE).get(key);
     req.onsuccess = ()=> resolve(req.result ? req.result.blob : null);
     req.onerror = ()=> reject(req.error);
   });
 }
 async function idbDelete(key){
-  const dbi = await idbOpen();
+  const d = await idbOpen();
   return new Promise((resolve, reject)=>{
-    const tx = dbi.transaction(IDB_STORE, "readwrite");
+    const tx = d.transaction(IDB_STORE, "readwrite");
     tx.objectStore(IDB_STORE).delete(key);
     tx.oncomplete = ()=> resolve(true);
     tx.onerror = ()=> reject(tx.error);
@@ -611,7 +707,6 @@ function fmtBytes(bytes){
   return `${n.toFixed(n>=10||i===0?0:1)} ${units[i]}`;
 }
 function icoSVG(kind){
-  // returns inline svg string (small)
   const common = `class="ico" viewBox="0 0 24 24" fill="none"`;
   if(kind==="file"){
     return `<svg ${common}><path d="M7 3h7l3 3v15H7V3Z" stroke="#111317" stroke-width="2"/><path d="M14 3v6h6" stroke="#111317" stroke-width="2"/></svg>`;
@@ -619,7 +714,6 @@ function icoSVG(kind){
   if(kind==="audio"){
     return `<svg ${common}><path d="M12 3v12" stroke="#111317" stroke-width="2"/><path d="M8 7v8" stroke="#111317" stroke-width="2"/><path d="M16 7v8" stroke="#111317" stroke-width="2"/><path d="M5 11v4" stroke="#111317" stroke-width="2"/><path d="M19 11v4" stroke="#111317" stroke-width="2"/></svg>`;
   }
-  // image
   return `<svg ${common}><path d="M4 6h16v12H4V6Z" stroke="#111317" stroke-width="2"/><path d="M8 11l2.5 3 2-2 3.5 4" stroke="#111317" stroke-width="2" stroke-linejoin="round"/><path d="M9 9.5h.01" stroke="#111317" stroke-width="3" stroke-linecap="round"/></svg>`;
 }
 function typeLabel(it){
@@ -627,6 +721,14 @@ function typeLabel(it){
   if(it.type==="file") return { text:"Файл", cls:"tagText tagFile" };
   if(it.type==="audio") return { text:"Аудио", cls:"tagText tagAudio" };
   return { text:"Текст", cls:"tagText" };
+}
+function escapeHTML(s){
+  return (s||"").toString()
+    .replaceAll("&","&amp;")
+    .replaceAll("<","&lt;")
+    .replaceAll(">","&gt;")
+    .replaceAll('"',"&quot;")
+    .replaceAll("'","&#039;");
 }
 
 /** ===========================
@@ -657,6 +759,22 @@ function getItem(pId, itemId){
 }
 
 /** ===========================
+ *  MENU (Add)
+ *  =========================== */
+function closeAddMenu(){
+  addMenu.style.display = "none";
+  addMenu.setAttribute("aria-hidden","true");
+}
+function toggleAddMenu(){
+  if(addMenu.style.display === "block"){
+    closeAddMenu();
+  }else{
+    addMenu.style.display = "block";
+    addMenu.setAttribute("aria-hidden","false");
+  }
+}
+
+/** ===========================
  *  UI HEADER
  *  =========================== */
 function setHeaderForList(){
@@ -664,12 +782,9 @@ function setHeaderForList(){
   headTitle.textContent = "ТИМ";
   headCrumb.textContent = "Пучки + чат";
 
-  renamePuchokBtn.style.display = "none";
-  addTextBtn.style.display = "none";
-  addPhotoBtn.style.display = "none";
-  addFileBtn.style.display = "none";
-  addAudioBtn.style.display = "none";
-  deletePuchokBtn.style.display = "none";
+  editPuchokBtn.style.display = "none";
+  addMenuBtn.style.display = "none";
+  closeAddMenu();
 
   newPuchokBtn.style.display = "";
 
@@ -680,14 +795,10 @@ function setHeaderForPuchok(p){
   headTitle.textContent = "Пучок";
   headCrumb.textContent = p.title || "Без названия";
 
-  renamePuchokBtn.style.display = "";
-  addTextBtn.style.display = "";
-  addPhotoBtn.style.display = "";
-  addFileBtn.style.display = "";
-  addAudioBtn.style.display = "";
-  deletePuchokBtn.style.display = "";
-
   newPuchokBtn.style.display = "none";
+  editPuchokBtn.style.display = "";
+  addMenuBtn.style.display = "";
+  closeAddMenu();
 
   chatHint.textContent = "Ты в пучке: ответы бота можно сохранять кнопкой “В пучок”.";
 }
@@ -773,7 +884,7 @@ function renderPuchokInside(p){
   if((p.items || []).length === 0){
     const empty = document.createElement("div");
     empty.className = "empty";
-    empty.innerHTML = "Внутри пусто.<br>Нажми <b>+ Текст</b>, <b>+ Фото</b>, <b>+ Файл</b> или <b>+ Аудио</b>.";
+    empty.innerHTML = "Внутри пусто.<br>Нажми <b>+</b> сверху справа → добавь текст / файл / аудио.";
     wrap.appendChild(empty);
   }else{
     const sorted = [...p.items].sort((a,b)=> (b.updatedAt||b.createdAt||"").localeCompare(a.updatedAt||a.createdAt||""));
@@ -789,7 +900,6 @@ function renderPuchokInside(p){
       thumb.className = "thumb";
 
       if(it.type === "image" && it.thumbKey){
-        // async thumb load
         thumb.innerHTML = `<span style="color:#98a2b3;font-size:12px;font-weight:900">…</span>`;
         (async()=>{
           const b = await idbGetBlob(it.thumbKey);
@@ -861,6 +971,7 @@ function openPuchok(id){
   render();
 }
 function goBack(){
+  closeAddMenu();
   currentPuchokId = null;
   render();
 }
@@ -882,7 +993,6 @@ function createPuchok(){
   saveDB();
   openPuchok(p.id);
 }
-
 function renameCurrentPuchok(){
   const p = getPuchok(currentPuchokId);
   if(!p) return;
@@ -893,14 +1003,13 @@ function renameCurrentPuchok(){
   saveDB();
   render();
 }
-
 async function deleteCurrentPuchok(){
   const p = getPuchok(currentPuchokId);
   if(!p) return;
+  closeAddMenu();
   const ok = confirm(`Удалить пучок “${p.title || "Без названия"}”?`);
   if(!ok) return;
 
-  // cleanup blobs for all items
   for(const it of (p.items || [])){
     await cleanupItemBlobs(it);
   }
@@ -935,23 +1044,22 @@ function addTextItemToCurrent(initialText = ""){
   openItem(p.id, it.id);
 }
 
-async function addFileItemToCurrent(file, kind){
+async function addFileItemToCurrent(file){
   const p = getPuchok(currentPuchokId);
   if(!p){
     alert("Сначала открой пучок — тогда можно добавлять туда элементы.");
     return;
   }
+
+  const isImg = (file.type || "").startsWith("image/");
   const id = uid();
   const blobKey = `blob:${id}:main`;
   await idbPutBlob(blobKey, file);
 
   let it;
-  if(kind === "image"){
-    // Make a small thumb (cheap: same blob; ok for now)
+  if(isImg){
     const thumbKey = `blob:${id}:thumb`;
-    // simple thumb = original (fast); later можно сделать реальный ресайз
-    await idbPutBlob(thumbKey, file);
-
+    await idbPutBlob(thumbKey, file); // simple thumb = original (fast)
     it = {
       id,
       type: "image",
@@ -963,7 +1071,7 @@ async function addFileItemToCurrent(file, kind){
       createdAt: nowISO(),
       updatedAt: nowISO()
     };
-  } else {
+  }else{
     it = {
       id,
       type: "file",
@@ -1003,23 +1111,30 @@ async function createAudioItemAndRecord(){
   saveDB();
   render();
 
-  // open modal and start recording immediately
   await openItem(p.id, it.id);
   await startRecordingToAudioItem(p.id, it.id);
 }
 
 /** ===========================
- *  ITEM OPEN / MODAL
+ *  MODAL / OPEN ITEM
  *  =========================== */
+function stopAnyRecordingSafely(){
+  try{
+    if(mediaRecorder && isRecording){
+      mediaRecorder.stop();
+    }
+  }catch{}
+}
+
 function closeModal(){
-  stopAnyRecordingSafely(true);
+  stopAnyRecordingSafely();
   modalWrap.style.display = "none";
   modalTextarea.style.display = "none";
   modalViewer.style.display = "none";
   modalViewer.innerHTML = "";
   openItemId = null;
   openItemType = null;
-  currentAudioAppendTarget = null;
+  // do NOT null currentAudioAppendTarget here; it's handled by onstop
 }
 
 async function openItem(puchokId, itemId){
@@ -1035,15 +1150,12 @@ async function openItem(puchokId, itemId){
   modalHint.textContent = "";
   modalViewer.innerHTML = "";
 
-  // default buttons
   modalDelete.style.display = "";
   modalSave.style.display = "none";
-  modalRow.style.justifyContent = "flex-end";
 
   if(it.type === "text"){
     modalTextarea.style.display = "block";
     modalViewer.style.display = "none";
-
     modalTextarea.value = it.content || "";
     modalSave.style.display = "";
     modalHint.textContent = "Текст можно редактировать и сохранять.";
@@ -1057,7 +1169,7 @@ async function openItem(puchokId, itemId){
   modalWrap.style.display = "flex";
 
   if(it.type === "image"){
-    modalHint.textContent = "Фото хранится локально на устройстве (IndexedDB).";
+    modalHint.textContent = "Фото хранится локально (IndexedDB).";
     const b = await idbGetBlob(it.blobKey);
     if(!b){
       modalViewer.innerHTML = `<div class="empty">Файл не найден в хранилище.</div>`;
@@ -1078,13 +1190,11 @@ async function openItem(puchokId, itemId){
       a.download = it.title || "image";
       a.click();
     };
-    // revoke later when closing
-    modalWrap.addEventListener("click", () => {}, { once:true });
     return;
   }
 
   if(it.type === "file"){
-    modalHint.textContent = "Файл хранится локально на устройстве (IndexedDB).";
+    modalHint.textContent = "Файл хранится локально (IndexedDB).";
     const b = await idbGetBlob(it.blobKey);
     if(!b){
       modalViewer.innerHTML = `<div class="empty">Файл не найден в хранилище.</div>`;
@@ -1116,19 +1226,10 @@ async function openItem(puchokId, itemId){
   }
 
   if(it.type === "audio"){
-    modalHint.textContent = "Аудио хранится сегментами. Можно дозаписывать сколько угодно (пока хватает места на устройстве).";
+    modalHint.textContent = "Аудио хранится сегментами. “Дозаписать” добавляет новый сегмент.";
     await renderAudioViewer(it, puchokId);
     return;
   }
-}
-
-function escapeHTML(s){
-  return (s||"").toString()
-    .replaceAll("&","&amp;")
-    .replaceAll("<","&lt;")
-    .replaceAll(">","&gt;")
-    .replaceAll('"',"&quot;")
-    .replaceAll("'","&#039;");
 }
 
 /** ===========================
@@ -1138,8 +1239,7 @@ function saveModal(){
   const p = getPuchok(currentPuchokId);
   if(!p) return;
   const it = (p.items || []).find(x => x.id === openItemId);
-  if(!it) return;
-  if(it.type !== "text") return;
+  if(!it || it.type !== "text") return;
 
   const txt = modalTextarea.value || "";
   it.content = txt;
@@ -1160,7 +1260,7 @@ async function deleteModal(){
   const ok = confirm("Удалить этот элемент?");
   if(!ok) return;
 
-  stopAnyRecordingSafely(true);
+  stopAnyRecordingSafely();
   await cleanupItemBlobs(it);
 
   p.items = (p.items || []).filter(x => x.id !== it.id);
@@ -1186,7 +1286,7 @@ async function cleanupItemBlobs(it){
 }
 
 /** ===========================
- *  AUDIO: recording + append segments
+ *  AUDIO: record + append segments
  *  =========================== */
 async function ensureMic(){
   if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
@@ -1195,36 +1295,30 @@ async function ensureMic(){
   }
   try{
     return await navigator.mediaDevices.getUserMedia({ audio: true });
-  }catch(e){
+  }catch{
     alert("Нет доступа к микрофону.");
     return null;
   }
 }
 
-function stopAnyRecordingSafely(silent){
-  try{
-    if(mediaRecorder && isRecording){
-      mediaRecorder.stop();
-    }
-  }catch(e){
-    if(!silent) alert("Не удалось остановить запись.");
-  }
-}
-
 async function startRecordingToAudioItem(pId, itemId){
-  const p = getPuchok(pId);
   const it = getItem(pId, itemId);
-  if(!p || !it || it.type !== "audio") return;
+  const p = getPuchok(pId);
+  if(!it || !p || it.type !== "audio") return;
+
+  // if already recording something else, stop first
+  if(isRecording){
+    stopAnyRecordingSafely();
+    return;
+  }
 
   const stream = await ensureMic();
   if(!stream) return;
 
-  // choose mime
   let mime = "";
   if(MediaRecorder.isTypeSupported("audio/webm;codecs=opus")) mime = "audio/webm;codecs=opus";
   else if(MediaRecorder.isTypeSupported("audio/webm")) mime = "audio/webm";
   else if(MediaRecorder.isTypeSupported("audio/mp4")) mime = "audio/mp4";
-  else mime = "";
 
   recChunks = [];
   mediaRecorder = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
@@ -1237,54 +1331,49 @@ async function startRecordingToAudioItem(pId, itemId){
 
   mediaRecorder.onstop = async () => {
     isRecording = false;
-    // stop tracks
+
     try{ stream.getTracks().forEach(t=>t.stop()); }catch{}
 
     const target = currentAudioAppendTarget;
     currentAudioAppendTarget = null;
 
     if(!target) return;
+
     const p2 = getPuchok(target.pId);
     const it2 = getItem(target.pId, target.itemId);
     if(!p2 || !it2 || it2.type !== "audio") return;
 
     const blob = new Blob(recChunks, { type: (mediaRecorder && mediaRecorder.mimeType) ? mediaRecorder.mimeType : "audio/webm" });
-    if(blob.size === 0){
-      await renderAudioViewer(it2, target.pId);
-      return;
+    if(blob.size > 0){
+      const segKey = `blob:${it2.id}:seg:${uid()}`;
+      await idbPutBlob(segKey, blob);
+
+      it2.segments = it2.segments || [];
+      it2.segments.push({ key: segKey, mime: blob.type || "audio/webm", size: blob.size || 0, createdAt: nowISO() });
+      it2.updatedAt = nowISO();
+      p2.updatedAt = nowISO();
+      saveDB();
     }
 
-    const segKey = `blob:${it2.id}:seg:${uid()}`;
-    await idbPutBlob(segKey, blob);
-
-    it2.segments = it2.segments || [];
-    it2.segments.push({ key: segKey, mime: blob.type || "audio/webm", size: blob.size || 0, createdAt: nowISO() });
-    it2.updatedAt = nowISO();
-    p2.updatedAt = nowISO();
-    saveDB();
-
     await renderAudioViewer(it2, target.pId);
-    render(); // update list row info
+    render();
   };
 
-  // Start
   mediaRecorder.start();
-
-  // Update viewer
-  const itView = getItem(pId, itemId);
-  await renderAudioViewer(itView, pId);
+  await renderAudioViewer(it, pId);
 }
 
 async function buildAudioBlobFromSegments(it){
   const segs = it.segments || [];
   if(segs.length === 0) return null;
+
   const blobs = [];
   for(const s of segs){
     const b = await idbGetBlob(s.key);
     if(b) blobs.push(b);
   }
   if(blobs.length === 0) return null;
-  // if mixed mime, browser still plays many times; we assume same type
+
   const mime = blobs[0].type || (segs[0].mime || "audio/webm");
   return new Blob(blobs, { type: mime });
 }
@@ -1295,14 +1384,11 @@ async function renderAudioViewer(it, pId){
   const segs = it.segments || [];
   const total = segs.reduce((s,x)=> s + (x.size || 0), 0);
 
-  // Build playable blob URL (on demand)
-  let audioURL = "";
   const merged = await buildAudioBlobFromSegments(it);
-  if(merged){
-    audioURL = URL.createObjectURL(merged);
-  }
+  const audioURL = merged ? URL.createObjectURL(merged) : "";
 
-  const recUI = isRecording && currentAudioAppendTarget && currentAudioAppendTarget.itemId === it.id
+  const isThisRec = isRecording && currentAudioAppendTarget && currentAudioAppendTarget.itemId === it.id;
+  const recUI = isThisRec
     ? `<div class="recBadge"><span class="dot"></span>Запись…</div>`
     : "";
 
@@ -1320,16 +1406,14 @@ async function renderAudioViewer(it, pId){
     </div>
 
     <div class="viewerActions">
-      <button class="btnOk" id="btnRec">${isRecording && currentAudioAppendTarget && currentAudioAppendTarget.itemId === it.id ? "Стоп" : (segs.length ? "Дозаписать" : "Записать")}</button>
+      <button class="btnOk" id="btnRec">${isThisRec ? "Стоп" : (segs.length ? "Дозаписать" : "Записать")}</button>
       <button class="btnGhost" id="btnDownload" ${audioURL ? "" : "disabled"}>Скачать</button>
     </div>
 
-    <div style="margin-top:10px;">
-      ${recUI}
-    </div>
+    <div style="margin-top:10px;">${recUI}</div>
 
     <div class="hint" style="margin-top:10px;">
-      Запись хранится локально на устройстве. Для одного аудио можно делать много сегментов.
+      Совет: можно записывать по частям. Каждая “Дозапись” добавляет сегмент.
     </div>
   `;
 
@@ -1340,7 +1424,7 @@ async function renderAudioViewer(it, pId){
   }
 
   document.getElementById("btnRec").onclick = async () => {
-    if(isRecording && currentAudioAppendTarget && currentAudioAppendTarget.itemId === it.id){
+    if(isThisRec){
       stopAnyRecordingSafely();
       return;
     }
@@ -1394,7 +1478,6 @@ function addMsg(text, cls){
 }
 
 function clearChat(){
-  chatHistory = [];
   chat.innerHTML = "";
   addMsg("Чат очищен. Пиши сообщение — я отправлю в Worker (/chat).", "bot");
 }
@@ -1440,36 +1523,43 @@ async function handleSend(){
  *  =========================== */
 backBtn.addEventListener("click", goBack);
 newPuchokBtn.addEventListener("click", createPuchok);
-renamePuchokBtn.addEventListener("click", renameCurrentPuchok);
-deletePuchokBtn.addEventListener("click", deleteCurrentPuchok);
 
-addTextBtn.addEventListener("click", () => addTextItemToCurrent(""));
-
-addPhotoBtn.addEventListener("click", () => {
-  if(!currentPuchokId){ alert("Сначала открой пучок."); return; }
-  photoPicker.value = "";
-  photoPicker.click();
+editPuchokBtn.addEventListener("click", () => {
+  closeAddMenu();
+  renameCurrentPuchok();
 });
-addFileBtn.addEventListener("click", () => {
+
+addMenuBtn.addEventListener("click", (e)=>{
+  e.stopPropagation();
+  toggleAddMenu();
+});
+
+menuAddText.addEventListener("click", ()=>{
+  closeAddMenu();
+  addTextItemToCurrent("");
+});
+
+menuAddFile.addEventListener("click", ()=>{
+  closeAddMenu();
   if(!currentPuchokId){ alert("Сначала открой пучок."); return; }
   filePicker.value = "";
   filePicker.click();
 });
-addAudioBtn.addEventListener("click", async () => {
+
+menuAddAudio.addEventListener("click", async ()=>{
+  closeAddMenu();
   if(!currentPuchokId){ alert("Сначала открой пучок."); return; }
   await createAudioItemAndRecord();
 });
 
-photoPicker.addEventListener("change", async () => {
-  const f = photoPicker.files && photoPicker.files[0];
-  if(!f) return;
-  await addFileItemToCurrent(f, "image");
+menuDeletePuchok.addEventListener("click", async ()=>{
+  await deleteCurrentPuchok();
 });
 
 filePicker.addEventListener("change", async () => {
   const f = filePicker.files && filePicker.files[0];
   if(!f) return;
-  await addFileItemToCurrent(f, "file");
+  await addFileItemToCurrent(f);
 });
 
 send.addEventListener("click", handleSend);
@@ -1480,6 +1570,10 @@ modalClose.addEventListener("click", closeModal);
 modalWrap.addEventListener("click", (e)=>{ if(e.target === modalWrap) closeModal(); });
 modalSave.addEventListener("click", saveModal);
 modalDelete.addEventListener("click", deleteModal);
+
+// close menus when clicking outside
+document.addEventListener("click", ()=> closeAddMenu());
+addMenu.addEventListener("click", (e)=> e.stopPropagation());
 
 /** ===========================
  *  INIT
