@@ -1,81 +1,1459 @@
-<!-- ✅ ПАТЧ: “умный плеер” для сегментов (единый таймлайн + корректный seek + авто-переход)
-ВСТАВЬ/ЗАМЕНИ по месту в твоём исходнике. Я даю точечные куски.
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ТИМ</title>
 
-1) ДОБАВЬ CSS (в <style> в конец, перед @media или после — не важно)
--->
-<style>
-/* --- Smart Audio UI --- */
-.audioUI{
-  margin-top:12px;
-  padding:12px;
-  border:1px solid var(--border);
-  border-radius:14px;
-  background:#fff;
-}
-.audioTop{
-  display:flex;
-  align-items:center;
-  justify-content:space-between;
-  gap:10px;
-}
-.audioBtns{
-  display:flex;
-  gap:8px;
-  align-items:center;
-}
-.audioTime{
-  font-variant-numeric: tabular-nums;
-  font-size:13px;
-  color:var(--muted);
-  font-weight:900;
-  white-space:nowrap;
-}
-.audioRange{
-  width:100%;
-  margin-top:10px;
-}
-.audioRange input[type="range"]{
-  width:100%;
-}
-.audioMetaLine{
-  margin-top:8px;
-  font-size:12px;
-  color:var(--muted);
-  display:flex;
-  gap:10px;
-  flex-wrap:wrap;
-}
-</style>
+  <!-- PWA -->
+  <link rel="manifest" href="/manifest.webmanifest">
+  <meta name="theme-color" content="#f5f6f8">
+
+  <!-- iOS standalone -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="ТИМ">
+
+  <!-- Icons -->
+  <link rel="icon" href="/icon-192.png">
+  <link rel="apple-touch-icon" href="/icon-192.png">
+
+  <style>
+    :root{
+      /* LIGHT THEME */
+      --bg:#f5f6f8;
+      --panel:#ffffff;
+      --border:#d8dbe0;
+
+      --text:#111317;
+      --muted:#667085;
+
+      --btn:#2d6cff;
+      --btnText:#fff;
+
+      --inputBg:#f1f3f5;
+
+      --ok:#2f7d32;
+      --danger:#b3261e;
+
+      --chip:#f7f7f9;
+      --chipBd:#e3e6eb;
+
+      --shadow: 0 10px 30px rgba(16,24,40,.18);
+
+      --msgMeBg:#e8f0ff;
+      --msgMeBd:#cfe0ff;
+      --msgBotBg:#f6f7f9;
+      --msgBotBd:#e3e6eb;
+
+      --hover:#f0f2f5;
+    }
+    *{box-sizing:border-box}
+    html,body{height:100%}
+    body{
+      margin:0; font-family:Arial,sans-serif;
+      background:var(--bg); color:var(--text);
+      display:block;
+    }
+
+    /* iOS safe areas */
+    .safeTop{ padding-top: env(safe-area-inset-top); }
+    .safeBottom{ padding-bottom: env(safe-area-inset-bottom); }
+
+    .container{
+      width:100%;
+      min-height:100vh;
+      display:flex;
+      flex-direction:column;
+      padding:12px;
+      gap:12px;
+    }
+
+    header{
+      display:flex; align-items:center; justify-content:space-between;
+      padding:12px;
+      background:var(--panel);
+      border:1px solid var(--border);
+      border-radius:14px;
+      gap:10px;
+      box-shadow: var(--shadow);
+    }
+
+    .leftHead{display:flex; align-items:center; gap:10px; min-width:0}
+    .title{font-weight:800; font-size:16px; white-space:nowrap}
+    .crumb{font-size:12px; color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:56vw}
+
+    .actions{
+      display:flex;
+      gap:8px;
+      align-items:center;
+      flex-wrap:nowrap;
+      justify-content:flex-end;
+      position:relative; /* for menu */
+    }
+
+    button{
+      padding:10px 12px;
+      border-radius:12px;
+      border:none;
+      background:var(--btn);
+      color:var(--btnText);
+      font-weight:800;
+      cursor:pointer;
+    }
+    button:disabled{opacity:.6; cursor:not-allowed}
+    .btnGhost{
+      background:transparent;
+      border:1px solid var(--border);
+      color:var(--text);
+      font-weight:800;
+    }
+    .btnDanger{
+      background:transparent;
+      border:1px solid rgba(179,38,30,.45);
+      color:var(--danger);
+      font-weight:800;
+    }
+    .btnOk{
+      background:transparent;
+      border:1px solid rgba(47,125,50,.45);
+      color:var(--ok);
+      font-weight:800;
+    }
+
+    /* icon buttons (header) */
+    .iconBtn{
+      width:42px;
+      height:42px;
+      padding:0;
+      border-radius:14px;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+    }
+    .iconBtn svg{ width:20px; height:20px; display:block; }
+    .iconBtnGhost{
+      background:transparent;
+      border:1px solid var(--border);
+      color:var(--text);
+    }
+    .iconBtnPrimary{
+      background:var(--btn);
+      border:1px solid rgba(45,108,255,.25);
+      box-shadow: 0 8px 18px rgba(45,108,255,.18);
+    }
+    .iconBtnPrimary svg path{ stroke:#fff; }
+
+    /* Add menu */
+    .menu{
+      position:absolute;
+      top:48px;
+      right:0;
+      width:220px;
+      background:var(--panel);
+      border:1px solid var(--border);
+      border-radius:14px;
+      box-shadow: var(--shadow);
+      overflow:hidden;
+      display:none;
+      z-index:50;
+    }
+    .menu button{
+      width:100%;
+      border:0;
+      border-radius:0;
+      background:transparent;
+      color:var(--text);
+      padding:12px 12px;
+      font-weight:900;
+      text-align:left;
+      cursor:pointer;
+    }
+    .menu button:hover{ background:var(--hover); }
+    .menu .sep{
+      height:1px;
+      background:var(--border);
+      margin:0;
+    }
+    .menu .dangerItem{ color:var(--danger); }
+
+    /* Main panel */
+    .panel{
+      flex:1;
+      background:var(--panel);
+      border:1px solid var(--border);
+      border-radius:14px;
+      padding:12px;
+      overflow:auto;
+      position:relative;
+      box-shadow: var(--shadow);
+      min-height: 0; /* important for flex */
+    }
+
+    /* Lists */
+    .list{display:flex; flex-direction:column; gap:10px}
+    .card{
+      background:var(--chip);
+      border:1px solid var(--chipBd);
+      border-radius:14px;
+      padding:12px;
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:12px;
+    }
+    .card .meta{min-width:0}
+    .card .name{
+      font-weight:900;
+      overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+      max-width:70vw;
+    }
+    .card .sub{
+      font-size:12px; color:var(--muted); margin-top:4px;
+      display:flex; gap:10px; flex-wrap:wrap;
+    }
+    .pill{
+      font-size:12px;
+      padding:4px 8px;
+      border-radius:999px;
+      border:1px solid var(--chipBd);
+      color:var(--muted);
+      background:#fff;
+    }
+    .empty{
+      color:var(--muted);
+      padding:18px;
+      border:1px dashed var(--border);
+      border-radius:14px;
+      text-align:center;
+      line-height:1.4;
+      background:#fff;
+    }
+
+    /* Item list inside puchok */
+    .itemRow{
+      display:flex; align-items:center; justify-content:space-between;
+      gap:12px;
+      background:#fff;
+      border:1px solid var(--border);
+      border-radius:14px;
+      padding:10px 12px;
+      cursor:pointer;
+    }
+    .itemRow:hover{background:var(--hover)}
+    .itemLeft{min-width:0; display:flex; gap:10px; align-items:center}
+    .thumb{
+      width:44px; height:44px; border-radius:12px;
+      border:1px solid var(--border);
+      background:#f3f4f6;
+      display:flex; align-items:center; justify-content:center;
+      overflow:hidden;
+      flex:0 0 auto;
+    }
+    .thumb img{width:100%; height:100%; object-fit:cover; display:block}
+    .thumb .ico{ width:22px; height:22px; opacity:.75; }
+    .itemText{min-width:0}
+    .itemTitle{
+      font-weight:900;
+      overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+      max-width:62vw;
+    }
+    .itemDesc{
+      margin-top:4px;
+      font-size:12px; color:var(--muted);
+      overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+      max-width:72vw;
+    }
+    .tagText{
+      font-size:12px;
+      padding:4px 8px;
+      border-radius:999px;
+      border:1px solid #cfe0ff;
+      color:#1f4fd6;
+      background:#e8f0ff;
+      white-space:nowrap;
+      font-weight:800;
+    }
+    .tagFile{ border-color:#f4d6a6; color:#9a5a00; background:#fff4e1; }
+    .tagImg{ border-color:#c8f1d2; color:#176c2c; background:#e9f9ee; }
+    .tagAudio{ border-color:#f3c7d0; color:#8a1830; background:#fdecef; }
+
+    /* Chat dock (collapsible like Notion) */
+    .dock{
+      background:var(--panel);
+      border:1px solid var(--border);
+      border-radius:14px;
+      overflow:hidden;
+      box-shadow: var(--shadow);
+      min-height: 0;
+      transition: max-height .18s ease;
+    }
+    .dockHead{
+      display:flex; align-items:center; justify-content:space-between;
+      padding:10px 12px;
+      border-bottom:1px solid var(--border);
+      gap:10px;
+    }
+    .dockTitle{font-weight:900}
+    .dockSmall{
+      font-size:12px; color:var(--muted);
+      overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+      max-width:60vw
+    }
+    .dockBody{
+      overflow:auto;
+      padding:12px;
+      max-height:38vh;
+      transition: max-height .18s ease, opacity .18s ease;
+    }
+
+    .composer{
+      display:flex; gap:10px;
+      padding:12px;
+      border-top:1px solid var(--border);
+      background:#fafbfc;
+      align-items:center;
+    }
+    input{
+      width:100%;
+      padding:12px 14px;
+      border-radius:14px;
+      border:1px solid var(--border);
+      background:var(--inputBg);
+      color:var(--text);
+      outline:none;
+      font-size:16px;
+    }
+    .sendBtn{
+      width:44px; height:44px;
+      padding:0;
+      border-radius:999px;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      flex:0 0 auto;
+      box-shadow: 0 8px 18px rgba(45,108,255,.22);
+    }
+    .sendBtn svg{width:20px; height:20px; display:block}
+
+    /* collapsed state: only composer */
+    .dock.collapsed .dockHead{ display:none; }
+    .dock.collapsed .dockBody{
+      max-height:0;
+      padding:0 12px;
+      opacity:0;
+      pointer-events:none;
+    }
+    .dock.collapsed .composer{
+      border-top:0;
+    }
+    /* expanded state: show */
+    .dock.expanded .dockHead{ display:flex; }
+    .dock.expanded .dockBody{ opacity:1; pointer-events:auto; }
+
+    .collapseBar{
+      display:none;
+      height:18px;
+      align-items:center;
+      justify-content:center;
+      background:#fafbfc;
+      border-top:1px solid var(--border);
+      cursor:pointer;
+      user-select:none;
+    }
+    .collapsePill{
+      width:44px;
+      height:5px;
+      border-radius:999px;
+      background:#d0d5dd;
+    }
+    .dock.expanded .collapseBar{ display:flex; }
+
+    /* Messages */
+    .msg{
+      padding:10px 12px;
+      border-radius:14px;
+      margin:10px 0;
+      max-width:92%;
+      line-height:1.35;
+      white-space:pre-wrap;
+      word-wrap:break-word;
+      border:1px solid transparent;
+      position:relative;
+      background:#fff;
+    }
+    .me{margin-left:auto; background:var(--msgMeBg); border-color:var(--msgMeBd)}
+    .bot{margin-right:auto; background:var(--msgBotBg); border-color:var(--msgBotBd)}
+    .err{margin-right:auto; background:#fff1f1; border-color:#ffd0d0; color:#7a0b0b}
+    .msgTools{
+      margin-top:8px;
+      display:flex;
+      gap:8px;
+      flex-wrap:wrap;
+    }
+    .miniBtn{
+      padding:8px 10px;
+      border-radius:12px;
+      border:1px solid var(--border);
+      background:#fff;
+      color:var(--text);
+      font-weight:900;
+      cursor:pointer;
+      font-size:13px;
+    }
+    .miniBtnOk{border-color:rgba(47,125,50,.35); color:var(--ok)}
+    .miniBtnDanger{border-color:rgba(179,38,30,.35); color:var(--danger)}
+
+    /* Modal */
+    .modalWrap{
+      position:fixed;
+      inset:0;
+      background:rgba(0,0,0,.45);
+      display:none;
+      align-items:center;
+      justify-content:center;
+      padding:16px;
+      z-index:9999;
+    }
+    .modal{
+      width:min(860px, 100%);
+      background:var(--panel);
+      border:1px solid var(--border);
+      border-radius:16px;
+      overflow:hidden;
+      box-shadow: var(--shadow);
+    }
+    .modalHead{
+      padding:12px;
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:10px;
+      border-bottom:1px solid var(--border);
+    }
+    .modalTitle{
+      font-weight:900;
+      overflow:hidden;
+      text-overflow:ellipsis;
+      white-space:nowrap;
+      max-width:68vw;
+    }
+    .modalBody{padding:12px}
+    textarea{
+      width:100%;
+      min-height:46vh;
+      resize:vertical;
+      padding:12px;
+      border-radius:14px;
+      border:1px solid var(--border);
+      background:var(--inputBg);
+      color:var(--text);
+      outline:none;
+      font-size:15px;
+      line-height:1.4;
+      display:none;
+    }
+    .viewer{
+      display:none;
+      width:100%;
+      min-height:46vh;
+      border-radius:14px;
+      border:1px solid var(--border);
+      background:#fff;
+      overflow:auto;
+      padding:12px;
+    }
+    .viewer img{
+      max-width:100%;
+      height:auto;
+      border-radius:12px;
+      border:1px solid var(--border);
+      display:block;
+      margin:0 auto;
+    }
+    .viewer .fileRow{
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:10px;
+      padding:12px;
+      border:1px solid var(--border);
+      border-radius:14px;
+      background:#fff;
+    }
+    .viewer .fileMeta{min-width:0}
+    .viewer .fileName{
+      font-weight:900;
+      overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+      max-width:62vw;
+    }
+    .viewer .fileSub{font-size:12px; color:var(--muted); margin-top:4px}
+    .viewer .viewerActions{display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-end; margin-top:10px}
+
+    .row{
+      display:flex;
+      gap:10px;
+      flex-wrap:wrap;
+      margin-top:10px;
+      justify-content:flex-end;
+    }
+    .hint{
+      font-size:12px;
+      color:var(--muted);
+      margin-top:8px;
+      line-height:1.35;
+    }
+    .recBadge{
+      display:inline-flex;
+      align-items:center;
+      gap:8px;
+      font-weight:900;
+      color:#7a0b0b;
+      background:#fff1f1;
+      border:1px solid #ffd0d0;
+      padding:8px 10px;
+      border-radius:999px;
+    }
+    .dot{
+      width:10px;height:10px;border-radius:999px;background:#e11d48;
+      box-shadow: 0 0 0 4px rgba(225,29,72,.15);
+    }
+
+    /* Smart audio UI */
+    .audioBox{
+      margin-top:12px;
+      border:1px solid var(--border);
+      border-radius:14px;
+      padding:12px;
+      background:#fafbfc;
+    }
+    .audioTop{
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:10px;
+      flex-wrap:wrap;
+    }
+    .audioTime{
+      font-size:12px;
+      color:var(--muted);
+      font-weight:900;
+      display:flex;
+      gap:8px;
+      align-items:center;
+      white-space:nowrap;
+    }
+    .audioControls{
+      display:flex;
+      gap:8px;
+      align-items:center;
+      flex-wrap:wrap;
+      justify-content:flex-end;
+    }
+    .audioPlayBtn{
+      width:44px;height:44px;
+      border-radius:999px;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      padding:0;
+      box-shadow: 0 8px 18px rgba(45,108,255,.22);
+    }
+    .audioPlayBtn svg{width:20px;height:20px;display:block}
+    .audioSliderWrap{
+      margin-top:10px;
+      display:flex;
+      gap:10px;
+      align-items:center;
+    }
+    .audioSliderWrap input[type="range"]{
+      width:100%;
+      padding:0;
+      height:28px;
+      background:transparent;
+      border:0;
+    }
+
+    /* Edge-to-edge on phone (make it really "to the borders") */
+    @media (max-width: 520px){
+      .container{ padding:0; gap:0; }
+      header, .panel, .dock{
+        border-radius:0;
+        border-left:0;
+        border-right:0;
+      }
+      header{ box-shadow:none; }
+      .panel{ box-shadow:none; }
+      .dock{ box-shadow:none; }
+      header{ padding:12px 12px; }
+      .panel{ padding:12px 12px; }
+      .dockHead{ padding:10px 12px; }
+      .composer{ padding:12px 12px; }
+    }
+
+    @media (min-width: 900px){
+      .container{ padding:16px 18px; }
+    }
+  </style>
+</head>
+
+<body>
+  <div class="container safeTop safeBottom">
+    <header>
+      <div class="leftHead">
+        <button id="backBtn" class="btnGhost" style="display:none;">←</button>
+        <div>
+          <div class="title" id="headTitle">ТИМ</div>
+          <div class="crumb" id="headCrumb">Пучки + чат</div>
+        </div>
+      </div>
+
+      <div class="actions" id="headActions">
+        <button id="newPuchokBtn">+ Пучок</button>
+
+        <button id="editPuchokBtn" class="iconBtn iconBtnGhost" style="display:none;" title="Переименовать">
+          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M4 20h4l10.5-10.5a2 2 0 0 0 0-3L16.5 4.5a2 2 0 0 0-3 0L3 15v5Z" stroke="#111317" stroke-width="2" stroke-linejoin="round"/>
+            <path d="M13.5 6.5l4 4" stroke="#111317" stroke-width="2" stroke-linecap="round"/>
+          </svg>
+        </button>
+
+        <button id="addMenuBtn" class="iconBtn iconBtnPrimary" style="display:none;" title="Добавить">
+          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M12 5v14M5 12h14" stroke="white" stroke-width="2.4" stroke-linecap="round"/>
+          </svg>
+        </button>
+
+        <div id="addMenu" class="menu" role="menu" aria-hidden="true">
+          <button id="menuAddText">Добавить текст</button>
+          <button id="menuAddFile">Добавить файл/фото</button>
+          <button id="menuAddAudio">Добавить аудио</button>
+          <div class="sep"></div>
+          <button id="menuDeletePuchok" class="dangerItem">Удалить пучок</button>
+        </div>
+      </div>
+    </header>
+
+    <div class="panel" id="mainPanel"></div>
+
+    <div class="dock collapsed" id="chatDock">
+      <div class="dockHead">
+        <div>
+          <div class="dockTitle">Чат</div>
+          <div class="dockSmall" id="chatHint">Пишешь — отправляю в Worker (/chat). Ответ можно сохранить “В пучок”.</div>
+        </div>
+        <button id="clearChatBtn" class="btnGhost">Очистить</button>
+      </div>
+
+      <div class="dockBody" id="chat"></div>
+
+      <div class="collapseBar" id="collapseBar" title="Свернуть чат">
+        <div class="collapsePill"></div>
+      </div>
+
+      <div class="composer">
+        <input id="input" type="text" placeholder="Напиши сообщение..." autocomplete="off" />
+        <button id="send" class="sendBtn" title="Отправить">
+          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M4.5 12L19 5.5L13 19L11.8 13.7L4.5 12Z" stroke="white" stroke-width="2" stroke-linejoin="round"/>
+          </svg>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- One picker for everything (images included) -->
+  <input id="filePicker" type="file" style="display:none" />
+  <!-- iOS audio fallback -->
+  <input id="audioPicker" type="file" accept="audio/*" capture="microphone" style="display:none" />
+
+  <!-- Modal (universal) -->
+  <div class="modalWrap" id="modalWrap">
+    <div class="modal">
+      <div class="modalHead">
+        <div class="modalTitle" id="modalTitle">Элемент</div>
+        <div class="actions">
+          <button id="modalClose" class="btnGhost">Закрыть</button>
+        </div>
+      </div>
+      <div class="modalBody">
+        <textarea id="modalTextarea" spellcheck="false"></textarea>
+        <div class="viewer" id="modalViewer"></div>
+
+        <div class="row" id="modalRow">
+          <button id="modalDelete" class="btnDanger">Удалить</button>
+          <button id="modalSave" class="btnOk">Сохранить</button>
+        </div>
+
+        <div class="hint" id="modalHint">—</div>
+      </div>
+    </div>
+  </div>
 
 <script>
-/* =========================================================
-   2) ДОБАВЬ хелперы (в JS, рядом с fmtBytes / fmtDate)
-   ========================================================= */
+/** ===========================
+ *  CONFIG
+ *  =========================== */
+const WORKER_URL = "https://gptim24.timashevanatoly10.workers.dev";
+const STORAGE_KEY = "tim_puchki_v2";
+
+// IndexedDB for blobs
+const IDB_NAME = "tim_puchki_blobs";
+const IDB_STORE = "blobs";
+
+/** ===========================
+ *  DOM
+ *  =========================== */
+const mainPanel = document.getElementById("mainPanel");
+const backBtn = document.getElementById("backBtn");
+const headTitle = document.getElementById("headTitle");
+const headCrumb = document.getElementById("headCrumb");
+
+const newPuchokBtn = document.getElementById("newPuchokBtn");
+
+const editPuchokBtn = document.getElementById("editPuchokBtn");
+const addMenuBtn = document.getElementById("addMenuBtn");
+const addMenu = document.getElementById("addMenu");
+const menuAddText = document.getElementById("menuAddText");
+const menuAddFile = document.getElementById("menuAddFile");
+const menuAddAudio = document.getElementById("menuAddAudio");
+const menuDeletePuchok = document.getElementById("menuDeletePuchok");
+
+const chatDock = document.getElementById("chatDock");
+const collapseBar = document.getElementById("collapseBar");
+const chat = document.getElementById("chat");
+const input = document.getElementById("input");
+const send = document.getElementById("send");
+const clearChatBtn = document.getElementById("clearChatBtn");
+const chatHint = document.getElementById("chatHint");
+
+const filePicker = document.getElementById("filePicker");
+const audioPicker = document.getElementById("audioPicker");
+
+const modalWrap = document.getElementById("modalWrap");
+const modalTitle = document.getElementById("modalTitle");
+const modalTextarea = document.getElementById("modalTextarea");
+const modalViewer = document.getElementById("modalViewer");
+const modalClose = document.getElementById("modalClose");
+const modalSave = document.getElementById("modalSave");
+const modalDelete = document.getElementById("modalDelete");
+const modalHint = document.getElementById("modalHint");
+
+/** ===========================
+ *  STATE
+ *  =========================== */
+let db = loadDB();
+let currentPuchokId = null; // null = list screen
+let openItemId = null;
+let openItemType = null;
+
+// audio record state
+let mediaRecorder = null;
+let recChunks = [];
+let isRecording = false;
+let currentAudioAppendTarget = null; // { pId, itemId }
+let pendingAudioTarget = null;        // for iOS capture fallback
+
+// smart player state
+let smartAudioEl = null;              // hidden <audio>
+let smartAudioURL = null;
+let smartPlayer = null;               // { pId, itemId, segIndex, isPlaying, totalDur, segMap, uiRefs... }
+let smartTick = null;
+
+/** ===========================
+ *  PLATFORM DETECT
+ *  =========================== */
+function isIOS(){
+  const ua = navigator.userAgent || "";
+  return /iPad|iPhone|iPod/.test(ua) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+}
+function hasMediaRecorder(){
+  return typeof MediaRecorder !== "undefined" && typeof MediaRecorder === "function";
+}
+const AUDIO_MODE = (hasMediaRecorder() && !isIOS()) ? "mediarecorder" : "capture";
+
+/** ===========================
+ *  IndexedDB helpers
+ *  =========================== */
+function idbOpen(){
+  return new Promise((resolve, reject)=>{
+    const req = indexedDB.open(IDB_NAME, 1);
+    req.onupgradeneeded = () => {
+      const d = req.result;
+      if(!d.objectStoreNames.contains(IDB_STORE)){
+        d.createObjectStore(IDB_STORE, { keyPath: "key" });
+      }
+    };
+    req.onsuccess = ()=> resolve(req.result);
+    req.onerror = ()=> reject(req.error);
+  });
+}
+async function idbPutBlob(key, blob){
+  const d = await idbOpen();
+  return new Promise((resolve, reject)=>{
+    const tx = d.transaction(IDB_STORE, "readwrite");
+    tx.objectStore(IDB_STORE).put({ key, blob });
+    tx.oncomplete = ()=> resolve(true);
+    tx.onerror = ()=> reject(tx.error);
+  });
+}
+async function idbGetBlob(key){
+  const d = await idbOpen();
+  return new Promise((resolve, reject)=>{
+    const tx = d.transaction(IDB_STORE, "readonly");
+    const req = tx.objectStore(IDB_STORE).get(key);
+    req.onsuccess = ()=> resolve(req.result ? req.result.blob : null);
+    req.onerror = ()=> reject(req.error);
+  });
+}
+async function idbDelete(key){
+  const d = await idbOpen();
+  return new Promise((resolve, reject)=>{
+    const tx = d.transaction(IDB_STORE, "readwrite");
+    tx.objectStore(IDB_STORE).delete(key);
+    tx.oncomplete = ()=> resolve(true);
+    tx.onerror = ()=> reject(tx.error);
+  });
+}
+
+/** ===========================
+ *  HELPERS
+ *  =========================== */
+function nowISO(){ return new Date().toISOString(); }
+function uid(){ return Math.random().toString(16).slice(2) + Date.now().toString(16); }
+function safeTitleFromText(t){
+  const s = (t || "").toString().trim().replace(/\s+/g," ");
+  return s.length > 48 ? s.slice(0, 48) + "…" : (s || "Без названия");
+}
+function fmtDate(iso){
+  try{
+    const d = new Date(iso);
+    return d.toLocaleString(undefined, { year:"numeric", month:"2-digit", day:"2-digit", hour:"2-digit", minute:"2-digit" });
+  }catch{ return iso; }
+}
+function fmtBytes(bytes){
+  const b = Number(bytes || 0);
+  if(!b) return "0 B";
+  const units = ["B","KB","MB","GB"];
+  let i = 0; let n = b;
+  while(n >= 1024 && i < units.length-1){ n/=1024; i++; }
+  return `${n.toFixed(n>=10||i===0?0:1)} ${units[i]}`;
+}
 function fmtTime(sec){
   const s = Math.max(0, Number(sec || 0));
   const m = Math.floor(s / 60);
   const r = Math.floor(s % 60);
-  const hh = Math.floor(m / 60);
-  const mm = m % 60;
-  if(hh > 0) return `${hh}:${String(mm).padStart(2,"0")}:${String(r).padStart(2,"0")}`;
-  return `${mm}:${String(r).padStart(2,"0")}`;
+  return `${m}:${String(r).padStart(2,"0")}`;
+}
+function icoSVG(kind){
+  const common = `class="ico" viewBox="0 0 24 24" fill="none"`;
+  if(kind==="file"){
+    return `<svg ${common}><path d="M7 3h7l3 3v15H7V3Z" stroke="#111317" stroke-width="2"/><path d="M14 3v6h6" stroke="#111317" stroke-width="2"/></svg>`;
+  }
+  if(kind==="audio"){
+    return `<svg ${common}><path d="M12 3v12" stroke="#111317" stroke-width="2"/><path d="M8 7v8" stroke="#111317" stroke-width="2"/><path d="M16 7v8" stroke="#111317" stroke-width="2"/><path d="M5 11v4" stroke="#111317" stroke-width="2"/><path d="M19 11v4" stroke="#111317" stroke-width="2"/></svg>`;
+  }
+  return `<svg ${common}><path d="M4 6h16v12H4V6Z" stroke="#111317" stroke-width="2"/><path d="M8 11l2.5 3 2-2 3.5 4" stroke="#111317" stroke-width="2" stroke-linejoin="round"/><path d="M9 9.5h.01" stroke="#111317" stroke-width="3" stroke-linecap="round"/></svg>`;
+}
+function typeLabel(it){
+  if(it.type==="image") return { text:"Фото", cls:"tagText tagImg" };
+  if(it.type==="file") return { text:"Файл", cls:"tagText tagFile" };
+  if(it.type==="audio") return { text:"Аудио", cls:"tagText tagAudio" };
+  return { text:"Текст", cls:"tagText" };
+}
+function escapeHTML(s){
+  return (s||"").toString()
+    .replaceAll("&","&amp;")
+    .replaceAll("<","&lt;")
+    .replaceAll(">","&gt;")
+    .replaceAll('"',"&quot;")
+    .replaceAll("'","&#039;");
 }
 
+/** ===========================
+ *  DB (localStorage metadata)
+ *  =========================== */
+function loadDB(){
+  try{
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if(!raw) return { puchki: [] };
+    const parsed = JSON.parse(raw);
+    if(!parsed || !Array.isArray(parsed.puchki)) return { puchki: [] };
+    parsed.puchki.forEach(p => { if(!Array.isArray(p.items)) p.items = []; });
+    return parsed;
+  }catch{
+    return { puchki: [] };
+  }
+}
+function saveDB(){ localStorage.setItem(STORAGE_KEY, JSON.stringify(db)); }
+function getPuchok(id){ return db.puchki.find(p => p.id === id) || null; }
+function getItem(pId, itemId){
+  const p = getPuchok(pId);
+  if(!p) return null;
+  return (p.items || []).find(x => x.id === itemId) || null;
+}
+
+/** ===========================
+ *  MENU (Add)
+ *  =========================== */
+function closeAddMenu(){
+  addMenu.style.display = "none";
+  addMenu.setAttribute("aria-hidden","true");
+}
+function toggleAddMenu(){
+  if(addMenu.style.display === "block") closeAddMenu();
+  else{
+    addMenu.style.display = "block";
+    addMenu.setAttribute("aria-hidden","false");
+  }
+}
+
+/** ===========================
+ *  CHAT DOCK COLLAPSE/EXPAND
+ *  =========================== */
+function expandChat(){
+  chatDock.classList.remove("collapsed");
+  chatDock.classList.add("expanded");
+  setTimeout(()=> { chat.scrollTop = chat.scrollHeight; }, 10);
+}
+function collapseChat(){
+  chatDock.classList.remove("expanded");
+  chatDock.classList.add("collapsed");
+}
+input.addEventListener("focus", expandChat);
+collapseBar.addEventListener("click", collapseChat);
+
+/** ===========================
+ *  UI HEADER
+ *  =========================== */
+function setHeaderForList(){
+  backBtn.style.display = "none";
+  headTitle.textContent = "ТИМ";
+  headCrumb.textContent = "Пучки + чат";
+
+  editPuchokBtn.style.display = "none";
+  addMenuBtn.style.display = "none";
+  closeAddMenu();
+
+  newPuchokBtn.style.display = "";
+  chatHint.textContent = "Совет: сначала открой пучок → тогда “В пучок” будет сохранять ответы прямо туда.";
+}
+function setHeaderForPuchok(p){
+  backBtn.style.display = "";
+  headTitle.textContent = "Пучок";
+  headCrumb.textContent = p.title || "Без названия";
+
+  newPuchokBtn.style.display = "none";
+  editPuchokBtn.style.display = "";
+  addMenuBtn.style.display = "";
+  closeAddMenu();
+
+  chatHint.textContent = "Ты в пучке: ответы бота можно сохранять кнопкой “В пучок”.";
+}
+
+/** ===========================
+ *  UI RENDER
+ *  =========================== */
+function render(){
+  mainPanel.innerHTML = "";
+  if(!currentPuchokId){
+    setHeaderForList();
+    renderPuchokList();
+  }else{
+    const p = getPuchok(currentPuchokId);
+    if(!p){
+      currentPuchokId = null;
+      render();
+      return;
+    }
+    setHeaderForPuchok(p);
+    renderPuchokInside(p);
+  }
+}
+
+function renderPuchokList(){
+  const wrap = document.createElement("div");
+  wrap.className = "list";
+
+  if(db.puchki.length === 0){
+    const empty = document.createElement("div");
+    empty.className = "empty";
+    empty.innerHTML = "Пока нет пучков.<br>Нажми <b>+ Пучок</b>, потом зайди внутрь и сохраняй туда ответы / заметки / файлы / аудио.";
+    wrap.appendChild(empty);
+  }else{
+    const sorted = [...db.puchki].sort((a,b)=> (b.updatedAt||b.createdAt||"").localeCompare(a.updatedAt||a.createdAt||""));
+    for(const p of sorted){
+      const card = document.createElement("div");
+      card.className = "card";
+
+      const meta = document.createElement("div");
+      meta.className = "meta";
+
+      const name = document.createElement("div");
+      name.className = "name";
+      name.textContent = p.title || "Без названия";
+
+      const sub = document.createElement("div");
+      sub.className = "sub";
+      const count = (p.items || []).length;
+
+      const pill1 = document.createElement("span");
+      pill1.className = "pill";
+      pill1.textContent = `Элементов: ${count}`;
+
+      const pill2 = document.createElement("span");
+      pill2.className = "pill";
+      pill2.textContent = `Обновлён: ${fmtDate(p.updatedAt || p.createdAt || nowISO())}`;
+
+      sub.appendChild(pill1);
+      sub.appendChild(pill2);
+
+      meta.appendChild(name);
+      meta.appendChild(sub);
+
+      const btn = document.createElement("button");
+      btn.className = "btnGhost";
+      btn.textContent = "Открыть";
+      btn.addEventListener("click", () => openPuchok(p.id));
+
+      card.appendChild(meta);
+      card.appendChild(btn);
+      wrap.appendChild(card);
+    }
+  }
+
+  mainPanel.appendChild(wrap);
+}
+
+function renderPuchokInside(p){
+  const wrap = document.createElement("div");
+  wrap.className = "list";
+
+  if((p.items || []).length === 0){
+    const empty = document.createElement("div");
+    empty.className = "empty";
+    empty.innerHTML = "Внутри пусто.<br>Нажми <b>+</b> сверху справа → добавь текст / файл / аудио.";
+    wrap.appendChild(empty);
+  }else{
+    const sorted = [...p.items].sort((a,b)=> (b.updatedAt||b.createdAt||"").localeCompare(a.updatedAt||a.createdAt||""));
+    for(const it of sorted){
+      const row = document.createElement("div");
+      row.className = "itemRow";
+      row.addEventListener("click", () => openItem(p.id, it.id));
+
+      const left = document.createElement("div");
+      left.className = "itemLeft";
+
+      const thumb = document.createElement("div");
+      thumb.className = "thumb";
+
+      if(it.type === "image" && it.thumbKey){
+        thumb.innerHTML = `<span style="color:#98a2b3;font-size:12px;font-weight:900">…</span>`;
+        (async()=>{
+          const b = await idbGetBlob(it.thumbKey);
+          if(b){
+            const url = URL.createObjectURL(b);
+            const img = document.createElement("img");
+            img.src = url;
+            img.onload = ()=> URL.revokeObjectURL(url);
+            thumb.innerHTML = "";
+            thumb.appendChild(img);
+          }else{
+            thumb.innerHTML = icoSVG("image");
+          }
+        })();
+      }else{
+        thumb.innerHTML = icoSVG(it.type==="file" ? "file" : it.type==="audio" ? "audio" : "image");
+      }
+
+      const textWrap = document.createElement("div");
+      textWrap.className = "itemText";
+
+      const title = document.createElement("div");
+      title.className = "itemTitle";
+      title.textContent = it.title || "Элемент";
+
+      const desc = document.createElement("div");
+      desc.className = "itemDesc";
+
+      if(it.type === "text"){
+        const preview = (it.content || "").toString().trim().replace(/\s+/g," ");
+        desc.textContent = preview ? (preview.length > 90 ? preview.slice(0,90)+"…" : preview) : "Пусто";
+      }else if(it.type === "image"){
+        desc.textContent = `${fmtBytes(it.size)} • ${fmtDate(it.createdAt || it.updatedAt || nowISO())}`;
+      }else if(it.type === "file"){
+        desc.textContent = `${fmtBytes(it.size)} • ${it.mime || "file"} • ${fmtDate(it.createdAt || it.updatedAt || nowISO())}`;
+      }else if(it.type === "audio"){
+        const segs = (it.segments || []).length;
+        const totalBytes = (it.segments || []).reduce((s,x)=> s + (x.size || 0), 0);
+        const totalDur = (it.segments || []).reduce((s,x)=> s + (Number(x.duration)||0), 0);
+        desc.textContent = totalDur > 0
+          ? `Длина: ${fmtTime(totalDur)} • Сегментов: ${segs} • ${fmtBytes(totalBytes)}`
+          : `Сегментов: ${segs} • ${fmtBytes(totalBytes)} • ${fmtDate(it.createdAt || it.updatedAt || nowISO())}`;
+      }else{
+        desc.textContent = fmtDate(it.createdAt || it.updatedAt || nowISO());
+      }
+
+      textWrap.appendChild(title);
+      textWrap.appendChild(desc);
+
+      left.appendChild(thumb);
+      left.appendChild(textWrap);
+
+      const right = document.createElement("div");
+      const t = typeLabel(it);
+      right.className = t.cls;
+      right.textContent = t.text;
+
+      row.appendChild(left);
+      row.appendChild(right);
+      wrap.appendChild(row);
+    }
+  }
+
+  mainPanel.appendChild(wrap);
+}
+
+/** ===========================
+ *  NAV
+ *  =========================== */
+function openPuchok(id){
+  currentPuchokId = id;
+  render();
+}
+function goBack(){
+  closeAddMenu();
+  currentPuchokId = null;
+  render();
+}
+
+/** ===========================
+ *  CRUD: Puchok
+ *  =========================== */
+function createPuchok(){
+  const name = prompt("Название пучка:", "Новый пучок");
+  if(name === null) return;
+  const p = {
+    id: uid(),
+    title: (name || "").trim() || "Новый пучок",
+    createdAt: nowISO(),
+    updatedAt: nowISO(),
+    items: []
+  };
+  db.puchki.push(p);
+  saveDB();
+  openPuchok(p.id);
+}
+function renameCurrentPuchok(){
+  const p = getPuchok(currentPuchokId);
+  if(!p) return;
+  const name = prompt("Новое название пучка:", p.title || "");
+  if(name === null) return;
+  p.title = (name || "").trim() || "Без названия";
+  p.updatedAt = nowISO();
+  saveDB();
+  render();
+}
+async function deleteCurrentPuchok(){
+  const p = getPuchok(currentPuchokId);
+  if(!p) return;
+  closeAddMenu();
+  const ok = confirm(`Удалить пучок “${p.title || "Без названия"}”?`);
+  if(!ok) return;
+
+  for(const it of (p.items || [])){
+    await cleanupItemBlobs(it);
+  }
+
+  db.puchki = db.puchki.filter(x => x.id !== p.id);
+  saveDB();
+  currentPuchokId = null;
+  render();
+}
+
+/** ===========================
+ *  CRUD: Items
+ *  =========================== */
+function addTextItemToCurrent(initialText = ""){
+  const p = getPuchok(currentPuchokId);
+  if(!p){
+    alert("Сначала открой пучок — тогда можно добавлять туда элементы.");
+    return;
+  }
+  const it = {
+    id: uid(),
+    type: "text",
+    title: safeTitleFromText(initialText) || "Текст",
+    content: (initialText || "").toString(),
+    createdAt: nowISO(),
+    updatedAt: nowISO()
+  };
+  p.items.push(it);
+  p.updatedAt = nowISO();
+  saveDB();
+  render();
+  openItem(p.id, it.id);
+}
+
+async function addFileItemToCurrent(file){
+  const p = getPuchok(currentPuchokId);
+  if(!p){
+    alert("Сначала открой пучок — тогда можно добавлять туда элементы.");
+    return;
+  }
+
+  const isImg = (file.type || "").startsWith("image/");
+  const id = uid();
+  const blobKey = `blob:${id}:main`;
+  await idbPutBlob(blobKey, file);
+
+  let it;
+  if(isImg){
+    const thumbKey = `blob:${id}:thumb`;
+    await idbPutBlob(thumbKey, file);
+    it = {
+      id,
+      type: "image",
+      title: file.name ? file.name : "Фото",
+      blobKey,
+      thumbKey,
+      mime: file.type || "image/*",
+      size: file.size || 0,
+      createdAt: nowISO(),
+      updatedAt: nowISO()
+    };
+  }else{
+    it = {
+      id,
+      type: "file",
+      title: file.name || "Файл",
+      blobKey,
+      mime: file.type || "application/octet-stream",
+      size: file.size || 0,
+      createdAt: nowISO(),
+      updatedAt: nowISO()
+    };
+  }
+
+  p.items.push(it);
+  p.updatedAt = nowISO();
+  saveDB();
+  render();
+  openItem(p.id, it.id);
+}
+
+/** ===========================
+ *  Modal helpers (stop smart player)
+ *  =========================== */
+function stopSmartPlayer(){
+  try{
+    if(smartTick){ clearInterval(smartTick); smartTick = null; }
+    if(smartAudioEl){
+      smartAudioEl.pause();
+      smartAudioEl.src = "";
+    }
+    if(smartAudioURL){
+      try{ URL.revokeObjectURL(smartAudioURL); }catch{}
+      smartAudioURL = null;
+    }
+  }catch{}
+  smartPlayer = null;
+}
+
+/** ===========================
+ *  MODAL / OPEN ITEM
+ *  =========================== */
+function stopAnyRecordingSafely(){
+  try{
+    if(mediaRecorder && isRecording){
+      try{ mediaRecorder.requestData(); }catch{}
+      mediaRecorder.stop();
+    }
+  }catch{}
+}
+
+function closeModal(){
+  stopAnyRecordingSafely();
+  stopSmartPlayer();
+
+  modalWrap.style.display = "none";
+  modalTextarea.style.display = "none";
+  modalViewer.style.display = "none";
+  modalViewer.innerHTML = "";
+  openItemId = null;
+  openItemType = null;
+}
+
+async function openItem(puchokId, itemId){
+  const p = getPuchok(puchokId);
+  if(!p) return;
+  const it = (p.items || []).find(x => x.id === itemId);
+  if(!it) return;
+
+  stopSmartPlayer();
+
+  openItemId = itemId;
+  openItemType = it.type;
+
+  modalTitle.textContent = it.title || "Элемент";
+  modalHint.textContent = "";
+  modalViewer.innerHTML = "";
+
+  modalDelete.style.display = "";
+  modalSave.style.display = "none";
+
+  if(it.type === "text"){
+    modalTextarea.style.display = "block";
+    modalViewer.style.display = "none";
+    modalTextarea.value = it.content || "";
+    modalSave.style.display = "";
+    modalHint.textContent = "Текст можно редактировать и сохранять.";
+    modalWrap.style.display = "flex";
+    setTimeout(()=> modalTextarea.focus(), 50);
+    return;
+  }
+
+  modalTextarea.style.display = "none";
+  modalViewer.style.display = "block";
+  modalWrap.style.display = "flex";
+
+  if(it.type === "image"){
+    modalHint.textContent = "Фото хранится локально (IndexedDB).";
+    const b = await idbGetBlob(it.blobKey);
+    if(!b){
+      modalViewer.innerHTML = `<div class="empty">Файл не найден в хранилище.</div>`;
+      return;
+    }
+    const url = URL.createObjectURL(b);
+    modalViewer.innerHTML = `
+      <img src="${url}" alt="Фото" />
+      <div class="viewerActions">
+        <button class="btnGhost" id="btnOpenNewTab">Открыть</button>
+        <button class="btnGhost" id="btnDownload">Скачать</button>
+      </div>
+    `;
+    document.getElementById("btnOpenNewTab").onclick = () => window.open(url, "_blank");
+    document.getElementById("btnDownload").onclick = () => {
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = it.title || "image";
+      a.click();
+    };
+    return;
+  }
+
+  if(it.type === "file"){
+    modalHint.textContent = "Файл хранится локально (IndexedDB).";
+    const b = await idbGetBlob(it.blobKey);
+    if(!b){
+      modalViewer.innerHTML = `<div class="empty">Файл не найден в хранилище.</div>`;
+      return;
+    }
+    const url = URL.createObjectURL(b);
+    modalViewer.innerHTML = `
+      <div class="fileRow">
+        <div class="fileMeta">
+          <div class="fileName">${escapeHTML(it.title || "Файл")}</div>
+          <div class="fileSub">${escapeHTML(it.mime || "file")} • ${fmtBytes(it.size)}</div>
+        </div>
+        <div class="tagText tagFile">Файл</div>
+      </div>
+      <div class="viewerActions">
+        <button class="btnGhost" id="btnOpenNewTab">Открыть</button>
+        <button class="btnGhost" id="btnDownload">Скачать</button>
+      </div>
+      <div class="hint">Открытие зависит от типа файла и возможностей браузера. Если не откроется — используй “Скачать”.</div>
+    `;
+    document.getElementById("btnOpenNewTab").onclick = () => window.open(url, "_blank");
+    document.getElementById("btnDownload").onclick = () => {
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = it.title || "file";
+      a.click();
+    };
+    return;
+  }
+
+  if(it.type === "audio"){
+    modalHint.textContent = (AUDIO_MODE === "capture")
+      ? "iOS-режим: запись идёт через системную запись. “Дозаписать” добавит кусок, плеер будет как один файл."
+      : "Запись хранится сегментами, но плеер показывает как один файл. “Дозаписать” добавляет кусок.";
+    await renderAudioViewerSmart(it, puchokId);
+    return;
+  }
+}
+
+/** ===========================
+ *  MODAL SAVE/DELETE
+ *  =========================== */
+function saveModal(){
+  const p = getPuchok(currentPuchokId);
+  if(!p) return;
+  const it = (p.items || []).find(x => x.id === openItemId);
+  if(!it || it.type !== "text") return;
+
+  const txt = modalTextarea.value || "";
+  it.content = txt;
+  it.title = safeTitleFromText(txt) || (it.title || "Текст");
+  it.updatedAt = nowISO();
+  p.updatedAt = nowISO();
+  saveDB();
+  closeModal();
+  render();
+}
+
+async function deleteModal(){
+  const p = getPuchok(currentPuchokId);
+  if(!p) return;
+  const it = (p.items || []).find(x => x.id === openItemId);
+  if(!it) return;
+
+  const ok = confirm("Удалить этот элемент?");
+  if(!ok) return;
+
+  stopAnyRecordingSafely();
+  stopSmartPlayer();
+  await cleanupItemBlobs(it);
+
+  p.items = (p.items || []).filter(x => x.id !== it.id);
+  p.updatedAt = nowISO();
+  saveDB();
+  closeModal();
+  render();
+}
+
+async function cleanupItemBlobs(it){
+  try{
+    if(it.type === "image"){
+      if(it.blobKey) await idbDelete(it.blobKey);
+      if(it.thumbKey) await idbDelete(it.thumbKey);
+    } else if(it.type === "file"){
+      if(it.blobKey) await idbDelete(it.blobKey);
+    } else if(it.type === "audio"){
+      for(const s of (it.segments || [])){
+        if(s && s.key) await idbDelete(s.key);
+      }
+    }
+  }catch{}
+}
+
+/** ===========================
+ *  AUDIO: durations
+ *  =========================== */
 async function getBlobDuration(blob){
-  // Быстрый способ получить duration через hidden <audio>
   return new Promise((resolve)=>{
     try{
-      const url = URL.createObjectURL(blob);
       const a = document.createElement("audio");
       a.preload = "metadata";
+      const url = URL.createObjectURL(blob);
       a.src = url;
       a.onloadedmetadata = () => {
         const d = Number(a.duration);
-        URL.revokeObjectURL(url);
-        resolve(Number.isFinite(d) ? d : 0);
+        try{ URL.revokeObjectURL(url); }catch{}
+        resolve(isFinite(d) && d>0 ? d : 0);
       };
       a.onerror = () => {
-        URL.revokeObjectURL(url);
+        try{ URL.revokeObjectURL(url); }catch{}
         resolve(0);
       };
     }catch{
@@ -84,31 +1462,23 @@ async function getBlobDuration(blob){
   });
 }
 
-/* =========================================================
-   3) ДОБАВЬ state для умного плеера (рядом с audio state)
-   ========================================================= */
-let smartPlayer = null;
-// smartPlayer = { audioEl, segUrls:[], pId,itemId, segIndex, cumulative:[], totalDur, raf }
-
-/* =========================================================
-   4) ОБНОВИ appendAudioSegmentFromBlob()
-   (замени полностью твою функцию appendAudioSegmentFromBlob на эту)
-   ========================================================= */
+/** ===========================
+ *  AUDIO: add segments
+ *  =========================== */
 async function appendAudioSegmentFromBlob(pId, itemId, blob, fileName){
   const p = getPuchok(pId);
   const it = getItem(pId, itemId);
   if(!p || !it || it.type !== "audio") return;
 
   if(!blob || !blob.size){
-    await renderAudioViewer(it, pId);
+    await renderAudioViewerSmart(it, pId);
     return;
   }
 
-  // ⬇️ вычисляем duration сегмента (важно для общего таймлайна)
-  const dur = await getBlobDuration(blob);
-
   const segKey = `blob:${it.id}:seg:${uid()}`;
   await idbPutBlob(segKey, blob);
+
+  const dur = await getBlobDuration(blob);
 
   it.segments = it.segments || [];
   it.segments.push({
@@ -124,322 +1494,636 @@ async function appendAudioSegmentFromBlob(pId, itemId, blob, fileName){
   p.updatedAt = nowISO();
   saveDB();
 
-  await renderAudioViewer(it, pId);
+  await renderAudioViewerSmart(it, pId);
   render();
 }
 
-/* =========================================================
-   5) ДОБАВЬ cleanup smart player в closeModal()
-   (внутри твоего closeModal() ДО modalWrap.style.display="none" добавь вызов)
-   ========================================================= */
-function cleanupSmartPlayer(){
-  try{
-    if(smartPlayer){
-      if(smartPlayer.raf) cancelAnimationFrame(smartPlayer.raf);
-      if(smartPlayer.audioEl){
-        try{ smartPlayer.audioEl.pause(); }catch{}
-        smartPlayer.audioEl.src = "";
-      }
-      if(Array.isArray(smartPlayer.segUrls)){
-        for(const u of smartPlayer.segUrls){
-          try{ URL.revokeObjectURL(u); }catch{}
-        }
-      }
-    }
-  }catch{}
-  smartPlayer = null;
+async function createAudioItemAndRecord(){
+  const p = getPuchok(currentPuchokId);
+  if(!p){
+    alert("Сначала открой пучок — тогда можно добавлять туда элементы.");
+    return;
+  }
+  const id = uid();
+  const it = {
+    id,
+    type: "audio",
+    title: `Аудио ${new Date().toLocaleDateString()}`,
+    segments: [],
+    createdAt: nowISO(),
+    updatedAt: nowISO()
+  };
+  p.items.push(it);
+  p.updatedAt = nowISO();
+  saveDB();
+  render();
+
+  await openItem(p.id, it.id);
+
+  if(AUDIO_MODE === "mediarecorder"){
+    await startRecordingToAudioItem(p.id, it.id);
+  }else{
+    pendingAudioTarget = { pId: p.id, itemId: it.id };
+    audioPicker.value = "";
+    audioPicker.click();
+  }
 }
 
-// В твоём closeModal() добавь первой строкой:
-/// cleanupSmartPlayer();
+/** ===========================
+ *  AUDIO: MediaRecorder (desktop/android)
+ *  =========================== */
+async function ensureMic(){
+  if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
+    alert("Запись аудио не поддерживается в этом браузере.");
+    return null;
+  }
+  try{
+    return await navigator.mediaDevices.getUserMedia({ audio: true });
+  }catch{
+    alert("Нет доступа к микрофону.");
+    return null;
+  }
+}
 
+async function startRecordingToAudioItem(pId, itemId){
+  const it = getItem(pId, itemId);
+  const p = getPuchok(pId);
+  if(!it || !p || it.type !== "audio") return;
 
-/* =========================================================
-   6) ЗАМЕНИ renderAudioViewer() на “умный плеер”
-   (замени полностью твою renderAudioViewer на эту)
-   ========================================================= */
-async function renderAudioViewer(it, pId){
-  if(!it || it.type !== "audio") return;
+  if(AUDIO_MODE !== "mediarecorder"){
+    pendingAudioTarget = { pId, itemId };
+    audioPicker.value = "";
+    audioPicker.click();
+    return;
+  }
 
-  cleanupSmartPlayer(); // чтобы не было утечек при перерисовках
+  if(isRecording){
+    stopAnyRecordingSafely();
+    return;
+  }
+
+  const stream = await ensureMic();
+  if(!stream) return;
+
+  let mime = "";
+  if(MediaRecorder.isTypeSupported("audio/webm;codecs=opus")) mime = "audio/webm;codecs=opus";
+  else if(MediaRecorder.isTypeSupported("audio/webm")) mime = "audio/webm";
+  else if(MediaRecorder.isTypeSupported("audio/mp4")) mime = "audio/mp4";
+
+  recChunks = [];
+  mediaRecorder = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+  isRecording = true;
+  currentAudioAppendTarget = { pId, itemId };
+
+  mediaRecorder.ondataavailable = (ev) => {
+    if(ev.data && ev.data.size > 0) recChunks.push(ev.data);
+  };
+
+  mediaRecorder.onstop = async () => {
+    isRecording = false;
+    try{ stream.getTracks().forEach(t=>t.stop()); }catch{}
+
+    const target = currentAudioAppendTarget;
+    currentAudioAppendTarget = null;
+
+    const chunks = recChunks;
+    recChunks = [];
+
+    if(!target) return;
+
+    const blob = new Blob(chunks, { type: (mediaRecorder && mediaRecorder.mimeType) ? mediaRecorder.mimeType : "audio/webm" });
+    await appendAudioSegmentFromBlob(target.pId, target.itemId, blob, null);
+  };
+
+  // timeslice makes repeated recordings more stable
+  mediaRecorder.start(1000);
+
+  // refresh viewer
+  await renderAudioViewerSmart(it, pId);
+}
+
+/** ===========================
+ *  AUDIO: download (merge)
+ *  =========================== */
+async function buildAudioBlobFromSegments(it){
+  const segs = it.segments || [];
+  if(segs.length === 0) return null;
+
+  const blobs = [];
+  for(const s of segs){
+    const b = await idbGetBlob(s.key);
+    if(b) blobs.push(b);
+  }
+  if(blobs.length === 0) return null;
+
+  const mime = blobs[0].type || (segs[0].mime || "audio/webm");
+  return new Blob(blobs, { type: mime });
+}
+
+/** ===========================
+ *  SMART PLAYER (segments as one timeline)
+ *  =========================== */
+function ensureHiddenAudioEl(){
+  if(!smartAudioEl){
+    smartAudioEl = document.createElement("audio");
+    smartAudioEl.preload = "auto";
+    smartAudioEl.style.display = "none";
+    document.body.appendChild(smartAudioEl);
+  }
+}
+
+function computeSegMap(it){
+  const segs = it.segments || [];
+  let cur = 0;
+  const map = segs.map((s, idx)=>{
+    const d = Number(s.duration || 0);
+    const start = cur;
+    const end = cur + d;
+    cur = end;
+    return { idx, start, end, dur: d, key: s.key, mime: s.mime || "" };
+  });
+  return { map, total: cur };
+}
+
+function findSegmentByGlobalTime(segMap, t){
+  const tt = Math.max(0, Number(t || 0));
+  // if total is 0 => no durations, fallback to first
+  if(!segMap || !segMap.length) return { idx:0, offset:0 };
+  for(const m of segMap){
+    if(tt >= m.start && tt < m.end){
+      return { idx: m.idx, offset: tt - m.start };
+    }
+  }
+  // if t at end -> last segment end
+  const last = segMap[segMap.length-1];
+  if(tt >= last.end) return { idx: last.idx, offset: Math.max(0, last.dur - 0.001) };
+  return { idx: 0, offset: 0 };
+}
+
+async function loadSegmentToAudio(it, segIndex, offsetSec){
+  ensureHiddenAudioEl();
 
   const segs = it.segments || [];
-  const totalBytes = segs.reduce((s,x)=> s + (x.size || 0), 0);
+  const seg = segs[segIndex];
+  if(!seg) return false;
 
-  // Если duration у каких-то сегментов 0 (старые записи) — дозаполним лениво
-  // (важно: делаем это ДО UI, чтобы таймлайн был правильным)
-  let needSave = false;
+  const blob = await idbGetBlob(seg.key);
+  if(!blob) return false;
+
+  // revoke previous
+  if(smartAudioURL){
+    try{ URL.revokeObjectURL(smartAudioURL); }catch{}
+    smartAudioURL = null;
+  }
+
+  smartAudioURL = URL.createObjectURL(blob);
+  smartAudioEl.src = smartAudioURL;
+
+  // Wait canplay enough for setting currentTime reliably
+  await new Promise((resolve)=>{
+    const done = ()=>{ cleanup(); resolve(true); };
+    const cleanup = ()=>{
+      smartAudioEl.removeEventListener("loadedmetadata", done);
+      smartAudioEl.removeEventListener("canplay", done);
+      smartAudioEl.removeEventListener("error", done);
+    };
+    smartAudioEl.addEventListener("loadedmetadata", done, { once:true });
+    smartAudioEl.addEventListener("canplay", done, { once:true });
+    smartAudioEl.addEventListener("error", done, { once:true });
+  });
+
+  try{
+    const off = Math.max(0, Number(offsetSec || 0));
+    if(isFinite(off)) smartAudioEl.currentTime = off;
+  }catch{}
+
+  return true;
+}
+
+function updateSmartUI(){
+  if(!smartPlayer) return;
+  const sp = smartPlayer;
+
+  // compute global time
+  const segMap = sp.segMap || [];
+  const curSeg = segMap.find(x => x.idx === sp.segIndex);
+  const local = smartAudioEl ? Number(smartAudioEl.currentTime || 0) : 0;
+  const globalT = curSeg ? (curSeg.start + local) : 0;
+
+  // slider max might change after durations updated
+  const total = sp.totalDur || 0;
+  if(sp.ui.slider){
+    // avoid jitter while dragging
+    if(!sp.ui.dragging){
+      sp.ui.slider.max = String(Math.max(0, total));
+      sp.ui.slider.value = String(Math.min(Math.max(0, globalT), total));
+    }
+  }
+  if(sp.ui.curTime) sp.ui.curTime.textContent = fmtTime(globalT);
+  if(sp.ui.totalTime) sp.ui.totalTime.textContent = fmtTime(total);
+
+  // set play icon
+  if(sp.ui.playBtn){
+    const isP = sp.isPlaying && smartAudioEl && !smartAudioEl.paused;
+    sp.ui.playBtn.innerHTML = isP ? sp.ui.icons.pause : sp.ui.icons.play;
+  }
+}
+
+async function smartPlayFromGlobal(it, pId, globalT, autoplay){
+  const sp = smartPlayer;
+  if(!sp) return;
+
+  // durations unknown? do best effort: if totalDur==0 -> just play first segment at 0
+  const pos = findSegmentByGlobalTime(sp.segMap || [], globalT);
+  sp.segIndex = pos.idx;
+
+  const ok = await loadSegmentToAudio(it, sp.segIndex, pos.offset);
+  if(!ok) return;
+
+  // attach ended handler once
+  smartAudioEl.onended = async () => {
+    if(!smartPlayer) return;
+    const sp2 = smartPlayer;
+    const next = sp2.segIndex + 1;
+    const segs = it.segments || [];
+    if(next >= segs.length){
+      sp2.isPlaying = false;
+      updateSmartUI();
+      return;
+    }
+    sp2.segIndex = next;
+    const ok2 = await loadSegmentToAudio(it, sp2.segIndex, 0);
+    if(!ok2){ sp2.isPlaying = false; updateSmartUI(); return; }
+    try{
+      sp2.isPlaying = true;
+      await smartAudioEl.play();
+    }catch{
+      sp2.isPlaying = false;
+    }
+    updateSmartUI();
+  };
+
+  if(autoplay){
+    try{
+      sp.isPlaying = true;
+      await smartAudioEl.play();
+    }catch{
+      sp.isPlaying = false;
+    }
+  }
+  updateSmartUI();
+}
+
+async function ensureDurations(it){
+  const segs = it.segments || [];
+  let changed = false;
   for(const s of segs){
-    if(!s.duration || s.duration <= 0){
+    if(!s.duration || Number(s.duration) <= 0){
       const b = await idbGetBlob(s.key);
       if(b){
         const d = await getBlobDuration(b);
         if(d > 0){
           s.duration = d;
-          needSave = true;
+          changed = true;
         }
       }
     }
   }
-  if(needSave){
+  if(changed){
+    const p = getPuchok(currentPuchokId);
     it.updatedAt = nowISO();
-    const p = getPuchok(pId);
     if(p) p.updatedAt = nowISO();
     saveDB();
   }
+}
 
-  const totalDur = segs.reduce((s,x)=> s + (Number(x.duration)||0), 0);
+async function renderAudioViewerSmart(it, pId){
+  if(!it || it.type !== "audio") return;
+
+  // ensure durations for good total time/seek
+  await ensureDurations(it);
+
+  const segs = it.segments || [];
+  const totalBytes = segs.reduce((s,x)=> s + (x.size || 0), 0);
+
+  const { map, total } = computeSegMap(it);
 
   const isThisRec = (AUDIO_MODE === "mediarecorder")
     ? (isRecording && currentAudioAppendTarget && currentAudioAppendTarget.itemId === it.id)
     : false;
 
-  const recUI = isThisRec
-    ? `<div class="recBadge"><span class="dot"></span>Запись…</div>`
-    : (AUDIO_MODE === "capture" ? `<div class="hint">iOS: “Записать” откроет системную запись (capture).</div>` : "");
-
-  const btnLabel = (AUDIO_MODE === "mediarecorder")
+  const btnRecLabel = (AUDIO_MODE === "mediarecorder")
     ? (isThisRec ? "Стоп" : (segs.length ? "Дозаписать" : "Записать"))
     : (segs.length ? "Дозаписать" : "Записать");
 
+  const recUI = isThisRec
+    ? `<div class="recBadge"><span class="dot"></span>Запись…</div>`
+    : (AUDIO_MODE === "capture" ? `<div class="hint">iOS: при нажатии “Записать” откроется системная запись.</div>` : "");
+
+  // Build UI
   modalViewer.innerHTML = `
     <div class="fileRow">
       <div class="fileMeta">
         <div class="fileName">${escapeHTML(it.title || "Аудио")}</div>
-        <div class="fileSub">Сегментов: ${segs.length} • ${fmtBytes(totalBytes)}</div>
+        <div class="fileSub">
+          ${total > 0 ? `Длина: ${fmtTime(total)} • ` : ``}
+          Сегментов: ${segs.length} • ${fmtBytes(totalBytes)}
+        </div>
       </div>
       <div class="tagText tagAudio">Аудио</div>
     </div>
 
-    <div class="audioUI">
+    <div class="audioBox">
       <div class="audioTop">
-        <div class="audioBtns">
-          <button class="btnOk" id="btnPlayPause" ${segs.length ? "" : "disabled"}>▶︎</button>
-          <button class="btnOk" id="btnRec">${btnLabel}</button>
+        <div class="audioTime">
+          <span id="spCur">0:00</span>
+          <span style="opacity:.7">/</span>
+          <span id="spTot">${fmtTime(total)}</span>
         </div>
-        <div class="audioTime" id="audioTime">${fmtTime(0)} / ${fmtTime(totalDur)}</div>
+        <div class="audioControls">
+          <button class="audioPlayBtn" id="spPlay" ${segs.length ? "" : "disabled"} title="Play/Pause"></button>
+          <button class="btnOk" id="btnRec">${btnRecLabel}</button>
+          <button class="btnGhost" id="btnDownload" ${segs.length ? "" : "disabled"}>Скачать</button>
+        </div>
       </div>
 
-      <div class="audioRange">
-        <input id="audioSeek" type="range" min="0" max="${Math.max(0, totalDur)}" step="0.01" value="0" ${segs.length ? "" : "disabled"} />
+      <div class="audioSliderWrap">
+        <input type="range" id="spSlider" min="0" max="${Math.max(0,total)}" step="0.05" value="0" ${segs.length ? "" : "disabled"} />
       </div>
 
-      <div class="audioMetaLine">
-        <span>Длина: <b>${fmtTime(totalDur)}</b></span>
-        <span>Режим: <b>${AUDIO_MODE}</b></span>
+      <div style="margin-top:10px;">${recUI}</div>
+
+      <div class="hint" style="margin-top:10px;">
+        Это выглядит как <b>один файл</b>: перемотка и время общие, “Дозаписать” просто увеличивает запись.
       </div>
-    </div>
-
-    <div class="viewerActions">
-      <button class="btnGhost" id="btnDownload" ${segs.length ? "" : "disabled"}>Скачать</button>
-    </div>
-
-    <div style="margin-top:10px;">${recUI}</div>
-
-    <div class="hint" style="margin-top:10px;">
-      Это “умный” общий плеер: один таймлайн на все сегменты, можно мотать в любое место — он сам перекинет на нужный сегмент.
     </div>
   `;
 
-  // --- подготовим сегментные URL + cumulative
-  const segUrls = [];
-  const cumulative = []; // start time каждого сегмента
-  let acc = 0;
+  // icons
+  const playIcon = `
+    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="M9 7l10 5-10 5V7Z" stroke="white" stroke-width="2" stroke-linejoin="round"/>
+    </svg>
+  `;
+  const pauseIcon = `
+    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="M7 6v12M17 6v12" stroke="white" stroke-width="2.6" stroke-linecap="round"/>
+    </svg>
+  `;
 
-  for(const s of segs){
-    cumulative.push(acc);
-    const b = await idbGetBlob(s.key);
-    if(b){
-      segUrls.push(URL.createObjectURL(b));
-    }else{
-      segUrls.push(""); // на всякий случай
-    }
-    acc += (Number(s.duration)||0);
-  }
-
-  // --- создаём скрытый audio-движок (без controls)
-  const audioEl = document.createElement("audio");
-  audioEl.preload = "auto";
-
+  // init smart player state
+  ensureHiddenAudioEl();
   smartPlayer = {
-    audioEl,
-    segUrls,
     pId,
     itemId: it.id,
     segIndex: 0,
-    cumulative,
-    totalDur,
-    raf: null
+    isPlaying: false,
+    segMap: map,
+    totalDur: total,
+    ui: {
+      curTime: document.getElementById("spCur"),
+      totalTime: document.getElementById("spTot"),
+      slider: document.getElementById("spSlider"),
+      playBtn: document.getElementById("spPlay"),
+      dragging: false,
+      icons: { play: playIcon, pause: pauseIcon }
+    }
   };
 
-  function findSegByGlobalTime(t){
-    const T = Math.max(0, Math.min(smartPlayer.totalDur, Number(t||0)));
-    // простой поиск (сегментов мало — нормально)
-    let idx = 0;
-    for(let i=0;i<smartPlayer.cumulative.length;i++){
-      const start = smartPlayer.cumulative[i];
-      const end = start + (Number(segs[i]?.duration)||0);
-      if(T >= start && (T < end || i === smartPlayer.cumulative.length-1)){
-        idx = i;
-        break;
-      }
-    }
-    const local = T - smartPlayer.cumulative[idx];
-    return { idx, local, global: T };
+  // set initial play btn icon
+  smartPlayer.ui.playBtn.innerHTML = playIcon;
+
+  // periodic UI update (more reliable than relying only on timeupdate across iOS)
+  if(smartTick) clearInterval(smartTick);
+  smartTick = setInterval(updateSmartUI, 150);
+
+  // If there are segments, preload first at 0 (no autoplay)
+  if(segs.length){
+    await smartPlayFromGlobal(it, pId, 0, false);
+  }else{
+    updateSmartUI();
   }
 
-  async function switchTo(idx, localTime, autoplay){
-    idx = Math.max(0, Math.min(idx, segs.length-1));
-    smartPlayer.segIndex = idx;
+  // Slider events
+  const slider = smartPlayer.ui.slider;
+  slider.addEventListener("pointerdown", ()=> { if(smartPlayer) smartPlayer.ui.dragging = true; });
+  slider.addEventListener("pointerup", async ()=> {
+    if(!smartPlayer) return;
+    smartPlayer.ui.dragging = false;
+    const t = Number(slider.value || 0);
+    const shouldPlay = smartPlayer.isPlaying && smartAudioEl && !smartAudioEl.paused;
+    await smartPlayFromGlobal(it, pId, t, shouldPlay);
+  });
+  slider.addEventListener("input", ()=> {
+    // live update time while dragging
+    if(!smartPlayer) return;
+    const t = Number(slider.value || 0);
+    if(smartPlayer.ui.curTime) smartPlayer.ui.curTime.textContent = fmtTime(t);
+  });
 
-    const url = smartPlayer.segUrls[idx];
-    if(!url){
-      // сегмент не найден — стоп
-      try{ smartPlayer.audioEl.pause(); }catch{}
+  // Play button
+  document.getElementById("spPlay").onclick = async ()=>{
+    if(!smartPlayer) return;
+    if(!segs.length) return;
+
+    const isP = smartPlayer.isPlaying && smartAudioEl && !smartAudioEl.paused;
+    if(isP){
+      try{ smartAudioEl.pause(); }catch{}
+      smartPlayer.isPlaying = false;
+      updateSmartUI();
       return;
     }
 
-    const wasPlaying = !smartPlayer.audioEl.paused;
-    // смена src сбрасывает currentTime
-    smartPlayer.audioEl.src = url;
-
-    // iOS/Safari иногда требует подождать canplay
-    await new Promise((resolve)=>{
-      const a = smartPlayer.audioEl;
-      const done = ()=>{ a.removeEventListener("canplay", done); resolve(); };
-      a.addEventListener("canplay", done, { once:true });
-      // если canplay не прилетит — всё равно продолжим (fallback)
-      setTimeout(()=>{ try{ a.removeEventListener("canplay", done); }catch{} resolve(); }, 400);
-      a.load();
-    });
-
-    try{
-      smartPlayer.audioEl.currentTime = Math.max(0, Number(localTime||0));
-    }catch{}
-
-    if(autoplay || wasPlaying){
-      try{ await smartPlayer.audioEl.play(); }catch{}
-    }
-  }
-
-  function updateUI(){
-    if(!smartPlayer) return;
-    const seek = document.getElementById("audioSeek");
-    const timeEl = document.getElementById("audioTime");
-    const btnPP = document.getElementById("btnPlayPause");
-    if(!seek || !timeEl || !btnPP) return;
-
-    const idx = smartPlayer.segIndex;
-    const g = smartPlayer.cumulative[idx] + (smartPlayer.audioEl.currentTime || 0);
-    const clamped = Math.max(0, Math.min(smartPlayer.totalDur, g));
-
-    // не дёргаем ползунок, пока пользователь тащит
-    if(!seek.__dragging){
-      seek.value = String(clamped);
-    }
-
-    timeEl.textContent = `${fmtTime(clamped)} / ${fmtTime(smartPlayer.totalDur)}`;
-    btnPP.textContent = smartPlayer.audioEl.paused ? "▶︎" : "⏸";
-  }
-
-  function startRAF(){
-    if(!smartPlayer) return;
-    const loop = ()=>{
-      if(!smartPlayer) return;
-      updateUI();
-      smartPlayer.raf = requestAnimationFrame(loop);
-    };
-    if(smartPlayer.raf) cancelAnimationFrame(smartPlayer.raf);
-    smartPlayer.raf = requestAnimationFrame(loop);
-  }
-
-  // авто-переход на следующий сегмент
-  audioEl.addEventListener("ended", async ()=>{
-    if(!smartPlayer) return;
-    const next = smartPlayer.segIndex + 1;
-    if(next < segs.length){
-      await switchTo(next, 0, true);
-    }else{
-      // конец всего аудио
-      updateUI();
-    }
-  });
-
-  // если во время играет — апдейтим
-  audioEl.addEventListener("timeupdate", updateUI);
-  audioEl.addEventListener("play", updateUI);
-  audioEl.addEventListener("pause", updateUI);
-
-  // стартуем с первого сегмента
-  if(segs.length){
-    await switchTo(0, 0, false);
-  }
-  startRAF();
-  updateUI();
-
-  // --- UI events
-  document.getElementById("btnPlayPause").onclick = async ()=>{
-    if(!smartPlayer || !segs.length) return;
-    try{
-      if(smartPlayer.audioEl.paused){
-        await smartPlayer.audioEl.play();
-      }else{
-        smartPlayer.audioEl.pause();
-      }
-    }catch{}
-    updateUI();
+    // play from current slider position
+    const t = Number(smartPlayer.ui.slider.value || 0);
+    await smartPlayFromGlobal(it, pId, t, true);
   };
 
-  const seekEl = document.getElementById("audioSeek");
-  seekEl.onpointerdown = ()=> { seekEl.__dragging = true; };
-  seekEl.onpointerup   = async ()=> {
-    seekEl.__dragging = false;
-    const t = Number(seekEl.value||0);
-    const pos = findSegByGlobalTime(t);
-    await switchTo(pos.idx, pos.local, !smartPlayer.audioEl.paused);
-    updateUI();
-  };
-  seekEl.oninput = ()=>{
-    // показываем время во время перетаскивания
-    const t = Number(seekEl.value||0);
-    const timeEl = document.getElementById("audioTime");
-    if(timeEl) timeEl.textContent = `${fmtTime(t)} / ${fmtTime(smartPlayer.totalDur)}`;
-  };
-
-  // Record / append
+  // Record button
   document.getElementById("btnRec").onclick = async ()=>{
     if(AUDIO_MODE === "mediarecorder"){
-      if(isThisRec) stopAnyRecordingSafely();
-      else await startRecordingToAudioItem(pId, it.id);
+      // if already recording this item => stop
+      if(isThisRec){
+        stopAnyRecordingSafely();
+        return;
+      }
+      await startRecordingToAudioItem(pId, it.id);
+      return;
     }else{
       pendingAudioTarget = { pId, itemId: it.id };
       audioPicker.value = "";
       audioPicker.click();
+      return;
     }
   };
 
-  // Download (как у тебя было: “склеить” blob’ами)
-  document.getElementById("btnDownload").onclick = async ()=>{
-    if(!segs.length) return;
-    const merged = await buildAudioBlobFromSegments(it);
-    if(!merged) return;
-    const url = URL.createObjectURL(merged);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = (it.title || "audio") + (merged.type.includes("mp4") ? ".m4a" : ".webm");
-    a.click();
-    setTimeout(()=>{ try{ URL.revokeObjectURL(url); }catch{} }, 4000);
-  };
+  // Download button
+  const btnD = document.getElementById("btnDownload");
+  if(btnD){
+    btnD.onclick = async () => {
+      const merged = await buildAudioBlobFromSegments(it);
+      if(!merged) return;
+      const url = URL.createObjectURL(merged);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = (it.title || "audio") + (merged.type.includes("mp4") ? ".m4a" : ".webm");
+      a.click();
+      setTimeout(()=>{ try{ URL.revokeObjectURL(url); }catch{} }, 3000);
+    };
+  }
 }
 
-/* =========================================================
-   7) ВАЖНО: в closeModal() добавь cleanupSmartPlayer()
-   Пример (твоя функция, только первая строка новая):
-   =========================================================
-function closeModal(){
-  cleanupSmartPlayer();
-  stopAnyRecordingSafely();
-  ...
+/** ===========================
+ *  CHAT UI
+ *  =========================== */
+function addMsg(text, cls){
+  const wrap = document.createElement("div");
+  wrap.className = "msg " + cls;
+
+  const body = document.createElement("div");
+  body.textContent = text;
+  wrap.appendChild(body);
+
+  if(cls === "bot"){
+    const tools = document.createElement("div");
+    tools.className = "msgTools";
+
+    const btnSave = document.createElement("button");
+    btnSave.className = "miniBtn miniBtnOk";
+    btnSave.textContent = "В пучок";
+    btnSave.addEventListener("click", () => {
+      if(!currentPuchokId){
+        alert("Открой пучок — тогда “В пучок” сохранит ответ туда.");
+        return;
+      }
+      addTextItemToCurrent(text);
+    });
+
+    tools.appendChild(btnSave);
+    wrap.appendChild(tools);
+  }
+
+  chat.appendChild(wrap);
+  chat.scrollTop = chat.scrollHeight;
 }
-========================================================= */
+
+function clearChat(){
+  chat.innerHTML = "";
+  addMsg("Чат очищен. Пиши сообщение — я отправлю в Worker (/chat).", "bot");
+}
+
+/** ===========================
+ *  CHAT NETWORK
+ *  =========================== */
+async function handleSend(){
+  const text = input.value.trim();
+  if(!text) return;
+
+  expandChat();
+  addMsg(text, "me");
+  input.value = "";
+  send.disabled = true;
+
+  try{
+    const resp = await fetch(WORKER_URL + "/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: text })
+    });
+
+    const raw = await resp.text();
+    let data = {};
+    try{ data = JSON.parse(raw); }catch{}
+
+    if(!resp.ok){
+      addMsg(`HTTP ${resp.status}: ${raw || "error"}`, "err");
+    }else if(data && data.ok){
+      addMsg(data.answer || "Нет ответа", "bot");
+    }else{
+      addMsg(raw || "Неожиданный ответ", "err");
+    }
+  }catch(e){
+    addMsg("Ошибка сети: " + (e?.message || e), "err");
+  }
+
+  send.disabled = false;
+}
+
+/** ===========================
+ *  EVENTS
+ *  =========================== */
+backBtn.addEventListener("click", goBack);
+newPuchokBtn.addEventListener("click", createPuchok);
+
+editPuchokBtn.addEventListener("click", () => {
+  closeAddMenu();
+  renameCurrentPuchok();
+});
+
+addMenuBtn.addEventListener("click", (e)=>{
+  e.stopPropagation();
+  toggleAddMenu();
+});
+
+menuAddText.addEventListener("click", ()=>{
+  closeAddMenu();
+  addTextItemToCurrent("");
+});
+
+menuAddFile.addEventListener("click", ()=>{
+  closeAddMenu();
+  if(!currentPuchokId){ alert("Сначала открой пучок."); return; }
+  filePicker.value = "";
+  filePicker.click();
+});
+
+menuAddAudio.addEventListener("click", async ()=>{
+  closeAddMenu();
+  if(!currentPuchokId){ alert("Сначала открой пучок."); return; }
+  await createAudioItemAndRecord();
+});
+
+menuDeletePuchok.addEventListener("click", async ()=>{
+  await deleteCurrentPuchok();
+});
+
+filePicker.addEventListener("change", async () => {
+  const f = filePicker.files && filePicker.files[0];
+  if(!f) return;
+  await addFileItemToCurrent(f);
+});
+
+audioPicker.addEventListener("change", async ()=>{
+  const f = audioPicker.files && audioPicker.files[0];
+  if(!f || !pendingAudioTarget) return;
+
+  const target = pendingAudioTarget;
+  pendingAudioTarget = null;
+
+  await appendAudioSegmentFromBlob(target.pId, target.itemId, f, f.name || "audio");
+});
+
+send.addEventListener("click", handleSend);
+input.addEventListener("keydown", (e) => { if(e.key === "Enter") handleSend(); });
+clearChatBtn.addEventListener("click", clearChat);
+
+modalClose.addEventListener("click", closeModal);
+modalWrap.addEventListener("click", (e)=>{ if(e.target === modalWrap) closeModal(); });
+modalSave.addEventListener("click", saveModal);
+modalDelete.addEventListener("click", deleteModal);
+
+// close menus when clicking outside
+document.addEventListener("click", ()=> closeAddMenu());
+addMenu.addEventListener("click", (e)=> e.stopPropagation());
+
+/** ===========================
+ *  INIT
+ *  =========================== */
+(function init(){
+  render();
+  clearChat();
+  collapseChat();
+})();
 </script>
+</body>
+</html>
