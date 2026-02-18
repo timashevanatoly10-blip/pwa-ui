@@ -20,7 +20,6 @@
 
   <style>
     :root{
-      /* LIGHT THEME */
       --bg:#f5f6f8;
       --panel:#ffffff;
       --border:#d8dbe0;
@@ -56,7 +55,6 @@
       display:block;
     }
 
-    /* iOS safe areas */
     .safeTop{ padding-top: env(safe-area-inset-top); }
     .safeBottom{ padding-bottom: env(safe-area-inset-bottom); }
 
@@ -89,7 +87,7 @@
       align-items:center;
       flex-wrap:nowrap;
       justify-content:flex-end;
-      position:relative; /* for menu */
+      position:relative;
     }
 
     button{
@@ -121,7 +119,6 @@
       font-weight:800;
     }
 
-    /* icon buttons (header) */
     .iconBtn{
       width:42px;
       height:42px;
@@ -144,7 +141,6 @@
     }
     .iconBtnPrimary svg path{ stroke:#fff; }
 
-    /* Add menu */
     .menu{
       position:absolute;
       top:48px;
@@ -177,7 +173,6 @@
     }
     .menu .dangerItem{ color:var(--danger); }
 
-    /* Main panel */
     .panel{
       flex:1;
       background:var(--panel);
@@ -187,10 +182,9 @@
       overflow:auto;
       position:relative;
       box-shadow: var(--shadow);
-      min-height: 0; /* important for flex */
+      min-height: 0;
     }
 
-    /* Lists */
     .list{display:flex; flex-direction:column; gap:10px}
     .card{
       background:var(--chip);
@@ -230,7 +224,6 @@
       background:#fff;
     }
 
-    /* Item list inside puchok */
     .itemRow{
       display:flex; align-items:center; justify-content:space-between;
       gap:12px;
@@ -336,7 +329,6 @@
     }
     .sendBtn svg{width:20px; height:20px; display:block}
 
-    /* collapsed state: only composer */
     .dock.collapsed .dockHead{ display:none; }
     .dock.collapsed .dockBody{
       max-height:0;
@@ -344,10 +336,7 @@
       opacity:0;
       pointer-events:none;
     }
-    .dock.collapsed .composer{
-      border-top:0;
-    }
-    /* expanded state: show */
+    .dock.collapsed .composer{ border-top:0; }
     .dock.expanded .dockHead{ display:flex; }
     .dock.expanded .dockBody{ opacity:1; pointer-events:auto; }
 
@@ -369,7 +358,6 @@
     }
     .dock.expanded .collapseBar{ display:flex; }
 
-    /* Messages */
     .msg{
       padding:10px 12px;
       border-radius:14px;
@@ -404,7 +392,6 @@
     .miniBtnOk{border-color:rgba(47,125,50,.35); color:var(--ok)}
     .miniBtnDanger{border-color:rgba(179,38,30,.35); color:var(--danger)}
 
-    /* Modal */
     .modalWrap{
       position:fixed;
       inset:0;
@@ -520,7 +507,7 @@
     }
 
     /* Smart audio UI */
-    .audioBox{
+    .audioBar{
       margin-top:12px;
       border:1px solid var(--border);
       border-radius:14px;
@@ -534,47 +521,38 @@
       gap:10px;
       flex-wrap:wrap;
     }
+    .audioBtns{display:flex; gap:8px; flex-wrap:wrap}
+    .audioBtn{
+      padding:10px 12px;
+      border-radius:12px;
+      border:1px solid var(--border);
+      background:#fff;
+      color:var(--text);
+      font-weight:900;
+      cursor:pointer;
+    }
+    .audioBtnPrimary{
+      border-color: rgba(45,108,255,.35);
+      color:#1f4fd6;
+      background:#e8f0ff;
+    }
     .audioTime{
       font-size:12px;
       color:var(--muted);
       font-weight:900;
-      display:flex;
-      gap:8px;
-      align-items:center;
       white-space:nowrap;
     }
-    .audioControls{
-      display:flex;
-      gap:8px;
-      align-items:center;
-      flex-wrap:wrap;
-      justify-content:flex-end;
-    }
-    .audioPlayBtn{
-      width:44px;height:44px;
-      border-radius:999px;
-      display:flex;
-      align-items:center;
-      justify-content:center;
-      padding:0;
-      box-shadow: 0 8px 18px rgba(45,108,255,.22);
-    }
-    .audioPlayBtn svg{width:20px;height:20px;display:block}
     .audioSliderWrap{
       margin-top:10px;
       display:flex;
       gap:10px;
       align-items:center;
     }
-    .audioSliderWrap input[type="range"]{
+    .audioSlider{
       width:100%;
-      padding:0;
-      height:28px;
-      background:transparent;
-      border:0;
     }
 
-    /* Edge-to-edge on phone (make it really "to the borders") */
+    /* Edge-to-edge on phone */
     @media (max-width: 520px){
       .container{ padding:0; gap:0; }
       header, .panel, .dock{
@@ -662,12 +640,12 @@
     </div>
   </div>
 
-  <!-- One picker for everything (images included) -->
+  <!-- One picker for everything -->
   <input id="filePicker" type="file" style="display:none" />
-  <!-- iOS audio fallback -->
-  <input id="audioPicker" type="file" accept="audio/*" capture="microphone" style="display:none" />
+  <!-- Audio fallback (iOS / no MediaRecorder) -->
+  <input id="audioPicker" type="file" accept="audio/*,video/*" capture="microphone" style="display:none" />
 
-  <!-- Modal (universal) -->
+  <!-- Modal -->
   <div class="modalWrap" id="modalWrap">
     <div class="modal">
       <div class="modalHead">
@@ -743,25 +721,31 @@ const modalHint = document.getElementById("modalHint");
  *  STATE
  *  =========================== */
 let db = loadDB();
-let currentPuchokId = null; // null = list screen
+let currentPuchokId = null;
 let openItemId = null;
 let openItemType = null;
 
-// audio record state
+// Recording state
 let mediaRecorder = null;
 let recChunks = [];
 let isRecording = false;
 let currentAudioAppendTarget = null; // { pId, itemId }
-let pendingAudioTarget = null;        // for iOS capture fallback
+let pendingAudioTarget = null;       // for capture fallback
 
-// smart player state
-let smartAudioEl = null;              // hidden <audio>
-let smartAudioURL = null;
-let smartPlayer = null;               // { pId, itemId, segIndex, isPlaying, totalDur, segMap, uiRefs... }
-let smartTick = null;
+// Smart audio player state (per opened audio item)
+let audioCtx = null;
+let activeSource = null;
+let activePlayingItemId = null;
+let playStartCtxTime = 0;
+let playStartOffset = 0;
+let currentOffset = 0;
+let rafId = null;
+
+// Cache decoded/merged buffers + wav blobs per item
+const audioCache = {}; // { [itemId]: { sig, buffer, duration, wavBlob } }
 
 /** ===========================
- *  PLATFORM DETECT
+ *  PLATFORM / FEATURE DETECT
  *  =========================== */
 function isIOS(){
   const ua = navigator.userAgent || "";
@@ -770,7 +754,15 @@ function isIOS(){
 function hasMediaRecorder(){
   return typeof MediaRecorder !== "undefined" && typeof MediaRecorder === "function";
 }
-const AUDIO_MODE = (hasMediaRecorder() && !isIOS()) ? "mediarecorder" : "capture";
+function canUseWebAudio(){
+  return typeof (window.AudioContext || window.webkitAudioContext) !== "undefined";
+}
+function chooseAudioMode(){
+  // We TRY MediaRecorder everywhere it exists (including iOS 18+).
+  // If not available -> fallback to capture picker.
+  return hasMediaRecorder() ? "mediarecorder" : "capture";
+}
+let AUDIO_MODE = chooseAudioMode();
 
 /** ===========================
  *  IndexedDB helpers
@@ -839,11 +831,11 @@ function fmtBytes(bytes){
   while(n >= 1024 && i < units.length-1){ n/=1024; i++; }
   return `${n.toFixed(n>=10||i===0?0:1)} ${units[i]}`;
 }
-function fmtTime(sec){
-  const s = Math.max(0, Number(sec || 0));
-  const m = Math.floor(s / 60);
-  const r = Math.floor(s % 60);
-  return `${m}:${String(r).padStart(2,"0")}`;
+function fmtTimeSec(sec){
+  sec = Math.max(0, Number(sec || 0));
+  const m = Math.floor(sec/60);
+  const s = Math.floor(sec%60);
+  return `${m}:${s.toString().padStart(2,"0")}`;
 }
 function icoSVG(kind){
   const common = `class="ico" viewBox="0 0 24 24" fill="none"`;
@@ -1085,11 +1077,8 @@ function renderPuchokInside(p){
         desc.textContent = `${fmtBytes(it.size)} • ${it.mime || "file"} • ${fmtDate(it.createdAt || it.updatedAt || nowISO())}`;
       }else if(it.type === "audio"){
         const segs = (it.segments || []).length;
-        const totalBytes = (it.segments || []).reduce((s,x)=> s + (x.size || 0), 0);
-        const totalDur = (it.segments || []).reduce((s,x)=> s + (Number(x.duration)||0), 0);
-        desc.textContent = totalDur > 0
-          ? `Длина: ${fmtTime(totalDur)} • Сегментов: ${segs} • ${fmtBytes(totalBytes)}`
-          : `Сегментов: ${segs} • ${fmtBytes(totalBytes)} • ${fmtDate(it.createdAt || it.updatedAt || nowISO())}`;
+        const total = (it.segments || []).reduce((s,x)=> s + (x.size || 0), 0);
+        desc.textContent = `Сегментов: ${segs} • ${fmtBytes(total)} • ${fmtDate(it.createdAt || it.updatedAt || nowISO())}`;
       }else{
         desc.textContent = fmtDate(it.createdAt || it.updatedAt || nowISO());
       }
@@ -1242,22 +1231,63 @@ async function addFileItemToCurrent(file){
   openItem(p.id, it.id);
 }
 
-/** ===========================
- *  Modal helpers (stop smart player)
- *  =========================== */
-function stopSmartPlayer(){
-  try{
-    if(smartTick){ clearInterval(smartTick); smartTick = null; }
-    if(smartAudioEl){
-      smartAudioEl.pause();
-      smartAudioEl.src = "";
-    }
-    if(smartAudioURL){
-      try{ URL.revokeObjectURL(smartAudioURL); }catch{}
-      smartAudioURL = null;
-    }
-  }catch{}
-  smartPlayer = null;
+async function appendAudioSegmentFromBlob(pId, itemId, blob, fileName){
+  const p = getPuchok(pId);
+  const it = getItem(pId, itemId);
+  if(!p || !it || it.type !== "audio") return;
+
+  if(!blob || !blob.size){
+    await renderAudioViewer(it, pId);
+    return;
+  }
+
+  const segKey = `blob:${it.id}:seg:${uid()}`;
+  await idbPutBlob(segKey, blob);
+
+  it.segments = it.segments || [];
+  it.segments.push({
+    key: segKey,
+    mime: blob.type || "application/octet-stream",
+    size: blob.size || 0,
+    createdAt: nowISO(),
+    name: fileName || null
+  });
+
+  it.updatedAt = nowISO();
+  p.updatedAt = nowISO();
+  saveDB();
+
+  // Bust cache for this item
+  delete audioCache[it.id];
+
+  await renderAudioViewer(it, pId);
+  render();
+}
+
+async function createAudioItemAndRecord(){
+  const p = getPuchok(currentPuchokId);
+  if(!p){
+    alert("Сначала открой пучок — тогда можно добавлять туда элементы.");
+    return;
+  }
+  const id = uid();
+  const it = {
+    id,
+    type: "audio",
+    title: `Аудио ${new Date().toLocaleDateString()}`,
+    segments: [],
+    createdAt: nowISO(),
+    updatedAt: nowISO()
+  };
+  p.items.push(it);
+  p.updatedAt = nowISO();
+  saveDB();
+  render();
+
+  await openItem(p.id, it.id);
+
+  // Start immediately
+  await startRecordingToAudioItem(p.id, it.id);
 }
 
 /** ===========================
@@ -1272,10 +1302,21 @@ function stopAnyRecordingSafely(){
   }catch{}
 }
 
+function stopSmartPlayback(){
+  try{
+    if(activeSource){
+      try{ activeSource.stop(0); }catch{}
+    }
+  }catch{}
+  activeSource = null;
+  activePlayingItemId = null;
+  if(rafId) cancelAnimationFrame(rafId);
+  rafId = null;
+}
+
 function closeModal(){
   stopAnyRecordingSafely();
-  stopSmartPlayer();
-
+  stopSmartPlayback();
   modalWrap.style.display = "none";
   modalTextarea.style.display = "none";
   modalViewer.style.display = "none";
@@ -1290,7 +1331,8 @@ async function openItem(puchokId, itemId){
   const it = (p.items || []).find(x => x.id === itemId);
   if(!it) return;
 
-  stopSmartPlayer();
+  // stop playback if switching items
+  stopSmartPlayback();
 
   openItemId = itemId;
   openItemType = it.type;
@@ -1375,10 +1417,11 @@ async function openItem(puchokId, itemId){
   }
 
   if(it.type === "audio"){
-    modalHint.textContent = (AUDIO_MODE === "capture")
-      ? "iOS-режим: запись идёт через системную запись. “Дозаписать” добавит кусок, плеер будет как один файл."
-      : "Запись хранится сегментами, но плеер показывает как один файл. “Дозаписать” добавляет кусок.";
-    await renderAudioViewerSmart(it, puchokId);
+    const modeTxt = (AUDIO_MODE === "mediarecorder")
+      ? "Запись: MediaRecorder (браузер)."
+      : "Запись: системная (capture), если браузер не поддерживает MediaRecorder.";
+    modalHint.textContent = `${modeTxt} Воспроизведение/таймлайн: умный плеер. Скачивание: WAV (одним файлом).`;
+    await renderAudioViewer(it, puchokId);
     return;
   }
 }
@@ -1412,7 +1455,7 @@ async function deleteModal(){
   if(!ok) return;
 
   stopAnyRecordingSafely();
-  stopSmartPlayer();
+  stopSmartPlayback();
   await cleanupItemBlobs(it);
 
   p.items = (p.items || []).filter(x => x.id !== it.id);
@@ -1433,104 +1476,13 @@ async function cleanupItemBlobs(it){
       for(const s of (it.segments || [])){
         if(s && s.key) await idbDelete(s.key);
       }
+      delete audioCache[it.id];
     }
   }catch{}
 }
 
 /** ===========================
- *  AUDIO: durations
- *  =========================== */
-async function getBlobDuration(blob){
-  return new Promise((resolve)=>{
-    try{
-      const a = document.createElement("audio");
-      a.preload = "metadata";
-      const url = URL.createObjectURL(blob);
-      a.src = url;
-      a.onloadedmetadata = () => {
-        const d = Number(a.duration);
-        try{ URL.revokeObjectURL(url); }catch{}
-        resolve(isFinite(d) && d>0 ? d : 0);
-      };
-      a.onerror = () => {
-        try{ URL.revokeObjectURL(url); }catch{}
-        resolve(0);
-      };
-    }catch{
-      resolve(0);
-    }
-  });
-}
-
-/** ===========================
- *  AUDIO: add segments
- *  =========================== */
-async function appendAudioSegmentFromBlob(pId, itemId, blob, fileName){
-  const p = getPuchok(pId);
-  const it = getItem(pId, itemId);
-  if(!p || !it || it.type !== "audio") return;
-
-  if(!blob || !blob.size){
-    await renderAudioViewerSmart(it, pId);
-    return;
-  }
-
-  const segKey = `blob:${it.id}:seg:${uid()}`;
-  await idbPutBlob(segKey, blob);
-
-  const dur = await getBlobDuration(blob);
-
-  it.segments = it.segments || [];
-  it.segments.push({
-    key: segKey,
-    mime: blob.type || "audio/webm",
-    size: blob.size || 0,
-    createdAt: nowISO(),
-    name: fileName || null,
-    duration: dur || 0
-  });
-
-  it.updatedAt = nowISO();
-  p.updatedAt = nowISO();
-  saveDB();
-
-  await renderAudioViewerSmart(it, pId);
-  render();
-}
-
-async function createAudioItemAndRecord(){
-  const p = getPuchok(currentPuchokId);
-  if(!p){
-    alert("Сначала открой пучок — тогда можно добавлять туда элементы.");
-    return;
-  }
-  const id = uid();
-  const it = {
-    id,
-    type: "audio",
-    title: `Аудио ${new Date().toLocaleDateString()}`,
-    segments: [],
-    createdAt: nowISO(),
-    updatedAt: nowISO()
-  };
-  p.items.push(it);
-  p.updatedAt = nowISO();
-  saveDB();
-  render();
-
-  await openItem(p.id, it.id);
-
-  if(AUDIO_MODE === "mediarecorder"){
-    await startRecordingToAudioItem(p.id, it.id);
-  }else{
-    pendingAudioTarget = { pId: p.id, itemId: it.id };
-    audioPicker.value = "";
-    audioPicker.click();
-  }
-}
-
-/** ===========================
- *  AUDIO: MediaRecorder (desktop/android)
+ *  AUDIO: RECORDING
  *  =========================== */
 async function ensureMic(){
   if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
@@ -1539,10 +1491,30 @@ async function ensureMic(){
   }
   try{
     return await navigator.mediaDevices.getUserMedia({ audio: true });
-  }catch{
+  }catch(e){
     alert("Нет доступа к микрофону.");
     return null;
   }
+}
+
+function pickBestMime(){
+  // Prefer mp4 on iOS when possible, otherwise webm/opus on Chromium.
+  try{
+    if(hasMediaRecorder()){
+      const prefer = [];
+      if(isIOS()){
+        prefer.push("audio/mp4");
+        prefer.push("audio/mp4;codecs=mp4a.40.2");
+      }
+      prefer.push("audio/webm;codecs=opus");
+      prefer.push("audio/webm");
+      prefer.push("audio/ogg;codecs=opus");
+      for(const m of prefer){
+        if(MediaRecorder.isTypeSupported(m)) return m;
+      }
+    }
+  }catch{}
+  return "";
 }
 
 async function startRecordingToAudioItem(pId, itemId){
@@ -1550,425 +1522,470 @@ async function startRecordingToAudioItem(pId, itemId){
   const p = getPuchok(pId);
   if(!it || !p || it.type !== "audio") return;
 
-  if(AUDIO_MODE !== "mediarecorder"){
-    pendingAudioTarget = { pId, itemId };
-    audioPicker.value = "";
-    audioPicker.click();
-    return;
-  }
-
   if(isRecording){
     stopAnyRecordingSafely();
     return;
   }
 
-  const stream = await ensureMic();
-  if(!stream) return;
+  if(AUDIO_MODE === "mediarecorder"){
+    const stream = await ensureMic();
+    if(!stream) return;
 
-  let mime = "";
-  if(MediaRecorder.isTypeSupported("audio/webm;codecs=opus")) mime = "audio/webm;codecs=opus";
-  else if(MediaRecorder.isTypeSupported("audio/webm")) mime = "audio/webm";
-  else if(MediaRecorder.isTypeSupported("audio/mp4")) mime = "audio/mp4";
-
-  recChunks = [];
-  mediaRecorder = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
-  isRecording = true;
-  currentAudioAppendTarget = { pId, itemId };
-
-  mediaRecorder.ondataavailable = (ev) => {
-    if(ev.data && ev.data.size > 0) recChunks.push(ev.data);
-  };
-
-  mediaRecorder.onstop = async () => {
-    isRecording = false;
-    try{ stream.getTracks().forEach(t=>t.stop()); }catch{}
-
-    const target = currentAudioAppendTarget;
-    currentAudioAppendTarget = null;
-
-    const chunks = recChunks;
+    const mime = pickBestMime();
     recChunks = [];
+    mediaRecorder = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+    isRecording = true;
+    currentAudioAppendTarget = { pId, itemId };
 
-    if(!target) return;
+    mediaRecorder.ondataavailable = (ev) => {
+      if(ev.data && ev.data.size > 0) recChunks.push(ev.data);
+    };
 
-    const blob = new Blob(chunks, { type: (mediaRecorder && mediaRecorder.mimeType) ? mediaRecorder.mimeType : "audio/webm" });
-    await appendAudioSegmentFromBlob(target.pId, target.itemId, blob, null);
-  };
+    mediaRecorder.onstop = async () => {
+      isRecording = false;
+      try{ stream.getTracks().forEach(t=>t.stop()); }catch{}
 
-  // timeslice makes repeated recordings more stable
-  mediaRecorder.start(1000);
+      const target = currentAudioAppendTarget;
+      currentAudioAppendTarget = null;
 
-  // refresh viewer
-  await renderAudioViewerSmart(it, pId);
+      const chunks = recChunks;
+      recChunks = [];
+
+      if(!target) return;
+      const blob = new Blob(chunks, { type: (mediaRecorder && mediaRecorder.mimeType) ? mediaRecorder.mimeType : "application/octet-stream" });
+      await appendAudioSegmentFromBlob(target.pId, target.itemId, blob, null);
+    };
+
+    // Timeslice helps some Chromium builds behave nicer on repeated rec.
+    mediaRecorder.start(1000);
+
+    await renderAudioViewer(it, pId);
+    return;
+  }
+
+  // capture fallback
+  pendingAudioTarget = { pId, itemId };
+  audioPicker.value = "";
+  audioPicker.click();
 }
 
 /** ===========================
- *  AUDIO: download (merge)
+ *  AUDIO: SMART PLAYER (WebAudio)
  *  =========================== */
-async function buildAudioBlobFromSegments(it){
+function getAudioSig(it){
   const segs = it.segments || [];
-  if(segs.length === 0) return null;
+  return segs.map(s => `${s.key}:${s.size || 0}:${s.mime || ""}`).join("|");
+}
 
+async function ensureAudioContext(){
+  if(!canUseWebAudio()) return null;
+  if(!audioCtx){
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    audioCtx = new Ctx();
+  }
+  if(audioCtx.state === "suspended"){
+    try{ await audioCtx.resume(); }catch{}
+  }
+  return audioCtx;
+}
+
+async function decodeBlobToAudioBuffer(ctx, blob){
+  // decodeAudioData needs ArrayBuffer
+  const ab = await blob.arrayBuffer();
+  return await ctx.decodeAudioData(ab.slice(0));
+}
+
+function concatAudioBuffers(ctx, buffers){
+  if(!buffers || buffers.length === 0) return null;
+  const channels = Math.max(...buffers.map(b => b.numberOfChannels));
+  const sampleRate = buffers[0].sampleRate;
+  const totalLength = buffers.reduce((sum,b)=> sum + b.length, 0);
+
+  const out = ctx.createBuffer(channels, totalLength, sampleRate);
+  for(let ch=0; ch<channels; ch++){
+    const outData = out.getChannelData(ch);
+    let offset = 0;
+    for(const b of buffers){
+      const src = b.getChannelData(Math.min(ch, b.numberOfChannels-1));
+      outData.set(src, offset);
+      offset += b.length;
+    }
+  }
+  return out;
+}
+
+function audioBufferToWavBlob(buffer){
+  // 16-bit PCM WAV
+  const numCh = buffer.numberOfChannels;
+  const sampleRate = buffer.sampleRate;
+  const numFrames = buffer.length;
+
+  // Interleave
+  const interleaved = new Float32Array(numFrames * numCh);
+  for(let i=0; i<numFrames; i++){
+    for(let ch=0; ch<numCh; ch++){
+      interleaved[i*numCh + ch] = buffer.getChannelData(ch)[i];
+    }
+  }
+
+  // PCM16
+  const pcm16 = new Int16Array(interleaved.length);
+  for(let i=0;i<interleaved.length;i++){
+    let s = Math.max(-1, Math.min(1, interleaved[i]));
+    pcm16[i] = s < 0 ? (s * 0x8000) : (s * 0x7FFF);
+  }
+
+  const bytesPerSample = 2;
+  const blockAlign = numCh * bytesPerSample;
+  const byteRate = sampleRate * blockAlign;
+  const dataSize = pcm16.length * bytesPerSample;
+
+  const bufferSize = 44 + dataSize;
+  const ab = new ArrayBuffer(bufferSize);
+  const view = new DataView(ab);
+
+  function writeStr(off, str){
+    for(let i=0;i<str.length;i++) view.setUint8(off+i, str.charCodeAt(i));
+  }
+
+  writeStr(0, "RIFF");
+  view.setUint32(4, 36 + dataSize, true);
+  writeStr(8, "WAVE");
+  writeStr(12, "fmt ");
+  view.setUint32(16, 16, true);         // PCM chunk size
+  view.setUint16(20, 1, true);          // PCM format
+  view.setUint16(22, numCh, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, byteRate, true);
+  view.setUint16(32, blockAlign, true);
+  view.setUint16(34, 16, true);         // bits per sample
+  writeStr(36, "data");
+  view.setUint32(40, dataSize, true);
+
+  // PCM data
+  let offset = 44;
+  for(let i=0;i<pcm16.length;i++, offset+=2){
+    view.setInt16(offset, pcm16[i], true);
+  }
+
+  return new Blob([ab], { type: "audio/wav" });
+}
+
+async function getMergedAudioForItem(it){
+  if(!it || it.type !== "audio") return null;
+  const sig = getAudioSig(it);
+  const cached = audioCache[it.id];
+  if(cached && cached.sig === sig && cached.buffer){
+    return cached;
+  }
+
+  const ctx = await ensureAudioContext();
+  if(!ctx) return null;
+
+  const segs = it.segments || [];
+  if(segs.length === 0){
+    audioCache[it.id] = { sig, buffer: null, duration: 0, wavBlob: null };
+    return audioCache[it.id];
+  }
+
+  // Load blobs
   const blobs = [];
   for(const s of segs){
     const b = await idbGetBlob(s.key);
     if(b) blobs.push(b);
   }
-  if(blobs.length === 0) return null;
+  if(blobs.length === 0){
+    audioCache[it.id] = { sig, buffer: null, duration: 0, wavBlob: null };
+    return audioCache[it.id];
+  }
 
-  const mime = blobs[0].type || (segs[0].mime || "audio/webm");
-  return new Blob(blobs, { type: mime });
+  // Decode each segment
+  const decoded = [];
+  for(const b of blobs){
+    try{
+      const buf = await decodeBlobToAudioBuffer(ctx, b);
+      decoded.push(buf);
+    }catch(e){
+      // If one segment fails decode, we still continue with others
+      // (but timeline will be incomplete)
+    }
+  }
+  if(decoded.length === 0){
+    audioCache[it.id] = { sig, buffer: null, duration: 0, wavBlob: null };
+    return audioCache[it.id];
+  }
+
+  const merged = concatAudioBuffers(ctx, decoded);
+  const duration = merged ? merged.duration : decoded.reduce((s,b)=> s + b.duration, 0);
+
+  audioCache[it.id] = { sig, buffer: merged, duration, wavBlob: null };
+  return audioCache[it.id];
+}
+
+function startPlayback(itemId, buffer, offsetSec){
+  if(!audioCtx || !buffer) return;
+
+  stopSmartPlayback();
+
+  activePlayingItemId = itemId;
+  currentOffset = Math.max(0, Math.min(offsetSec || 0, buffer.duration));
+
+  const src = audioCtx.createBufferSource();
+  src.buffer = buffer;
+  src.connect(audioCtx.destination);
+
+  playStartCtxTime = audioCtx.currentTime;
+  playStartOffset = currentOffset;
+
+  activeSource = src;
+
+  src.onended = () => {
+    // if ended naturally
+    if(activePlayingItemId === itemId){
+      currentOffset = buffer.duration;
+      stopSmartPlayback();
+      // re-render viewer to update buttons/time
+      const p = getPuchok(currentPuchokId);
+      const it = p ? (p.items||[]).find(x=>x.id===itemId) : null;
+      if(it && it.type==="audio") renderAudioViewer(it, currentPuchokId);
+    }
+  };
+
+  try{
+    src.start(0, currentOffset);
+  }catch(e){
+    stopSmartPlayback();
+    return;
+  }
+
+  // Kick UI updates
+  tickUI(itemId, buffer);
+}
+
+function pausePlayback(){
+  if(!audioCtx || !activeSource) return;
+  // compute where we are
+  const elapsed = audioCtx.currentTime - playStartCtxTime;
+  currentOffset = Math.min((playStartOffset + elapsed), Number.MAX_SAFE_INTEGER);
+  stopSmartPlayback();
+}
+
+function isPlayingItem(itemId){
+  return !!activeSource && activePlayingItemId === itemId;
+}
+
+function getCurrentPlayTime(buffer){
+  if(!audioCtx || !buffer) return currentOffset || 0;
+  if(activeSource && activePlayingItemId){
+    const elapsed = audioCtx.currentTime - playStartCtxTime;
+    return Math.max(0, Math.min(playStartOffset + elapsed, buffer.duration));
+  }
+  return currentOffset || 0;
+}
+
+function tickUI(itemId, buffer){
+  if(rafId) cancelAnimationFrame(rafId);
+  const slider = document.getElementById("smartSlider");
+  const timeEl = document.getElementById("smartTime");
+  const playBtn = document.getElementById("btnPlayPause");
+
+  const step = () => {
+    if(!isPlayingItem(itemId)){
+      rafId = null;
+      return;
+    }
+    const t = getCurrentPlayTime(buffer);
+    if(slider){
+      slider.value = String(t);
+    }
+    if(timeEl){
+      timeEl.textContent = `${fmtTimeSec(t)} / ${fmtTimeSec(buffer.duration)}`;
+    }
+    rafId = requestAnimationFrame(step);
+  };
+
+  // Update immediately once
+  if(playBtn){
+    playBtn.textContent = "Пауза";
+  }
+  if(timeEl){
+    const t = getCurrentPlayTime(buffer);
+    timeEl.textContent = `${fmtTimeSec(t)} / ${fmtTimeSec(buffer.duration)}`;
+  }
+  rafId = requestAnimationFrame(step);
 }
 
 /** ===========================
- *  SMART PLAYER (segments as one timeline)
+ *  AUDIO VIEWER (smart)
  *  =========================== */
-function ensureHiddenAudioEl(){
-  if(!smartAudioEl){
-    smartAudioEl = document.createElement("audio");
-    smartAudioEl.preload = "auto";
-    smartAudioEl.style.display = "none";
-    document.body.appendChild(smartAudioEl);
-  }
-}
-
-function computeSegMap(it){
-  const segs = it.segments || [];
-  let cur = 0;
-  const map = segs.map((s, idx)=>{
-    const d = Number(s.duration || 0);
-    const start = cur;
-    const end = cur + d;
-    cur = end;
-    return { idx, start, end, dur: d, key: s.key, mime: s.mime || "" };
-  });
-  return { map, total: cur };
-}
-
-function findSegmentByGlobalTime(segMap, t){
-  const tt = Math.max(0, Number(t || 0));
-  // if total is 0 => no durations, fallback to first
-  if(!segMap || !segMap.length) return { idx:0, offset:0 };
-  for(const m of segMap){
-    if(tt >= m.start && tt < m.end){
-      return { idx: m.idx, offset: tt - m.start };
-    }
-  }
-  // if t at end -> last segment end
-  const last = segMap[segMap.length-1];
-  if(tt >= last.end) return { idx: last.idx, offset: Math.max(0, last.dur - 0.001) };
-  return { idx: 0, offset: 0 };
-}
-
-async function loadSegmentToAudio(it, segIndex, offsetSec){
-  ensureHiddenAudioEl();
-
-  const segs = it.segments || [];
-  const seg = segs[segIndex];
-  if(!seg) return false;
-
-  const blob = await idbGetBlob(seg.key);
-  if(!blob) return false;
-
-  // revoke previous
-  if(smartAudioURL){
-    try{ URL.revokeObjectURL(smartAudioURL); }catch{}
-    smartAudioURL = null;
-  }
-
-  smartAudioURL = URL.createObjectURL(blob);
-  smartAudioEl.src = smartAudioURL;
-
-  // Wait canplay enough for setting currentTime reliably
-  await new Promise((resolve)=>{
-    const done = ()=>{ cleanup(); resolve(true); };
-    const cleanup = ()=>{
-      smartAudioEl.removeEventListener("loadedmetadata", done);
-      smartAudioEl.removeEventListener("canplay", done);
-      smartAudioEl.removeEventListener("error", done);
-    };
-    smartAudioEl.addEventListener("loadedmetadata", done, { once:true });
-    smartAudioEl.addEventListener("canplay", done, { once:true });
-    smartAudioEl.addEventListener("error", done, { once:true });
-  });
-
-  try{
-    const off = Math.max(0, Number(offsetSec || 0));
-    if(isFinite(off)) smartAudioEl.currentTime = off;
-  }catch{}
-
-  return true;
-}
-
-function updateSmartUI(){
-  if(!smartPlayer) return;
-  const sp = smartPlayer;
-
-  // compute global time
-  const segMap = sp.segMap || [];
-  const curSeg = segMap.find(x => x.idx === sp.segIndex);
-  const local = smartAudioEl ? Number(smartAudioEl.currentTime || 0) : 0;
-  const globalT = curSeg ? (curSeg.start + local) : 0;
-
-  // slider max might change after durations updated
-  const total = sp.totalDur || 0;
-  if(sp.ui.slider){
-    // avoid jitter while dragging
-    if(!sp.ui.dragging){
-      sp.ui.slider.max = String(Math.max(0, total));
-      sp.ui.slider.value = String(Math.min(Math.max(0, globalT), total));
-    }
-  }
-  if(sp.ui.curTime) sp.ui.curTime.textContent = fmtTime(globalT);
-  if(sp.ui.totalTime) sp.ui.totalTime.textContent = fmtTime(total);
-
-  // set play icon
-  if(sp.ui.playBtn){
-    const isP = sp.isPlaying && smartAudioEl && !smartAudioEl.paused;
-    sp.ui.playBtn.innerHTML = isP ? sp.ui.icons.pause : sp.ui.icons.play;
-  }
-}
-
-async function smartPlayFromGlobal(it, pId, globalT, autoplay){
-  const sp = smartPlayer;
-  if(!sp) return;
-
-  // durations unknown? do best effort: if totalDur==0 -> just play first segment at 0
-  const pos = findSegmentByGlobalTime(sp.segMap || [], globalT);
-  sp.segIndex = pos.idx;
-
-  const ok = await loadSegmentToAudio(it, sp.segIndex, pos.offset);
-  if(!ok) return;
-
-  // attach ended handler once
-  smartAudioEl.onended = async () => {
-    if(!smartPlayer) return;
-    const sp2 = smartPlayer;
-    const next = sp2.segIndex + 1;
-    const segs = it.segments || [];
-    if(next >= segs.length){
-      sp2.isPlaying = false;
-      updateSmartUI();
-      return;
-    }
-    sp2.segIndex = next;
-    const ok2 = await loadSegmentToAudio(it, sp2.segIndex, 0);
-    if(!ok2){ sp2.isPlaying = false; updateSmartUI(); return; }
-    try{
-      sp2.isPlaying = true;
-      await smartAudioEl.play();
-    }catch{
-      sp2.isPlaying = false;
-    }
-    updateSmartUI();
-  };
-
-  if(autoplay){
-    try{
-      sp.isPlaying = true;
-      await smartAudioEl.play();
-    }catch{
-      sp.isPlaying = false;
-    }
-  }
-  updateSmartUI();
-}
-
-async function ensureDurations(it){
-  const segs = it.segments || [];
-  let changed = false;
-  for(const s of segs){
-    if(!s.duration || Number(s.duration) <= 0){
-      const b = await idbGetBlob(s.key);
-      if(b){
-        const d = await getBlobDuration(b);
-        if(d > 0){
-          s.duration = d;
-          changed = true;
-        }
-      }
-    }
-  }
-  if(changed){
-    const p = getPuchok(currentPuchokId);
-    it.updatedAt = nowISO();
-    if(p) p.updatedAt = nowISO();
-    saveDB();
-  }
-}
-
-async function renderAudioViewerSmart(it, pId){
+async function renderAudioViewer(it, pId){
   if(!it || it.type !== "audio") return;
-
-  // ensure durations for good total time/seek
-  await ensureDurations(it);
 
   const segs = it.segments || [];
   const totalBytes = segs.reduce((s,x)=> s + (x.size || 0), 0);
 
-  const { map, total } = computeSegMap(it);
+  const canSmart = canUseWebAudio();
+  const mergedInfo = canSmart ? await getMergedAudioForItem(it) : null;
+  const duration = mergedInfo && mergedInfo.duration ? mergedInfo.duration : 0;
 
-  const isThisRec = (AUDIO_MODE === "mediarecorder")
-    ? (isRecording && currentAudioAppendTarget && currentAudioAppendTarget.itemId === it.id)
-    : false;
+  // keep offset within duration
+  if(activePlayingItemId !== it.id){
+    currentOffset = 0;
+  }else{
+    currentOffset = Math.max(0, Math.min(currentOffset, duration || 0));
+  }
 
-  const btnRecLabel = (AUDIO_MODE === "mediarecorder")
-    ? (isThisRec ? "Стоп" : (segs.length ? "Дозаписать" : "Записать"))
+  const isRecThis = isRecording && currentAudioAppendTarget && currentAudioAppendTarget.itemId === it.id;
+  const playing = isPlayingItem(it.id);
+
+  const recLabel = (AUDIO_MODE === "mediarecorder")
+    ? (isRecThis ? "Стоп запись" : (segs.length ? "Дозаписать" : "Записать"))
     : (segs.length ? "Дозаписать" : "Записать");
 
-  const recUI = isThisRec
-    ? `<div class="recBadge"><span class="dot"></span>Запись…</div>`
-    : (AUDIO_MODE === "capture" ? `<div class="hint">iOS: при нажатии “Записать” откроется системная запись.</div>` : "");
+  const smartBlock = canSmart
+    ? `
+      <div class="audioBar">
+        <div class="audioTop">
+          <div class="audioBtns">
+            <button class="audioBtn audioBtnPrimary" id="btnPlayPause" ${duration>0 ? "" : "disabled"}>${playing ? "Пауза" : "Плей"}</button>
+            <button class="audioBtn" id="btnStop" ${duration>0 ? "" : "disabled"}>Стоп</button>
+          </div>
+          <div class="audioTime" id="smartTime">${fmtTimeSec(getCurrentPlayTime(mergedInfo && mergedInfo.buffer ? mergedInfo.buffer : {duration:duration}))} / ${fmtTimeSec(duration)}</div>
+        </div>
 
-  // Build UI
+        <div class="audioSliderWrap">
+          <input class="audioSlider" id="smartSlider" type="range" min="0" max="${duration || 0}" step="0.01" value="${Math.min(currentOffset || 0, duration || 0)}" ${duration>0 ? "" : "disabled"} />
+        </div>
+
+        <div class="hint" style="margin-top:10px;">
+          Умный плеер: один таймлайн, перемотка работает по всему аудио. Скачивание: WAV одним файлом.
+        </div>
+      </div>
+    `
+    : `<div class="empty">Этот браузер не поддерживает WebAudio. Воспроизведение “умным” таймлайном недоступно.</div>`;
+
   modalViewer.innerHTML = `
     <div class="fileRow">
       <div class="fileMeta">
         <div class="fileName">${escapeHTML(it.title || "Аудио")}</div>
-        <div class="fileSub">
-          ${total > 0 ? `Длина: ${fmtTime(total)} • ` : ``}
-          Сегментов: ${segs.length} • ${fmtBytes(totalBytes)}
-        </div>
+        <div class="fileSub">Сегментов: ${segs.length} • ${fmtBytes(totalBytes)} • ${duration ? ("Длина: " + fmtTimeSec(duration)) : "Длина: —"}</div>
       </div>
       <div class="tagText tagAudio">Аудио</div>
     </div>
 
-    <div class="audioBox">
-      <div class="audioTop">
-        <div class="audioTime">
-          <span id="spCur">0:00</span>
-          <span style="opacity:.7">/</span>
-          <span id="spTot">${fmtTime(total)}</span>
-        </div>
-        <div class="audioControls">
-          <button class="audioPlayBtn" id="spPlay" ${segs.length ? "" : "disabled"} title="Play/Pause"></button>
-          <button class="btnOk" id="btnRec">${btnRecLabel}</button>
-          <button class="btnGhost" id="btnDownload" ${segs.length ? "" : "disabled"}>Скачать</button>
-        </div>
-      </div>
+    ${smartBlock}
 
-      <div class="audioSliderWrap">
-        <input type="range" id="spSlider" min="0" max="${Math.max(0,total)}" step="0.05" value="0" ${segs.length ? "" : "disabled"} />
-      </div>
+    <div class="viewerActions" style="margin-top:12px;">
+      <button class="btnOk" id="btnRec">${recLabel}</button>
+      <button class="btnGhost" id="btnDownloadWav" ${duration>0 ? "" : "disabled"}>Скачать WAV</button>
+    </div>
 
-      <div style="margin-top:10px;">${recUI}</div>
-
-      <div class="hint" style="margin-top:10px;">
-        Это выглядит как <b>один файл</b>: перемотка и время общие, “Дозаписать” просто увеличивает запись.
-      </div>
+    <div style="margin-top:10px;">
+      ${isRecThis ? `<div class="recBadge"><span class="dot"></span>Запись…</div>` : ""}
+      ${(!hasMediaRecorder() ? `<div class="hint">Запись идёт через системный диктофон (capture), потому что MediaRecorder недоступен.</div>` : "")}
     </div>
   `;
 
-  // icons
-  const playIcon = `
-    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <path d="M9 7l10 5-10 5V7Z" stroke="white" stroke-width="2" stroke-linejoin="round"/>
-    </svg>
-  `;
-  const pauseIcon = `
-    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <path d="M7 6v12M17 6v12" stroke="white" stroke-width="2.6" stroke-linecap="round"/>
-    </svg>
-  `;
-
-  // init smart player state
-  ensureHiddenAudioEl();
-  smartPlayer = {
-    pId,
-    itemId: it.id,
-    segIndex: 0,
-    isPlaying: false,
-    segMap: map,
-    totalDur: total,
-    ui: {
-      curTime: document.getElementById("spCur"),
-      totalTime: document.getElementById("spTot"),
-      slider: document.getElementById("spSlider"),
-      playBtn: document.getElementById("spPlay"),
-      dragging: false,
-      icons: { play: playIcon, pause: pauseIcon }
-    }
-  };
-
-  // set initial play btn icon
-  smartPlayer.ui.playBtn.innerHTML = playIcon;
-
-  // periodic UI update (more reliable than relying only on timeupdate across iOS)
-  if(smartTick) clearInterval(smartTick);
-  smartTick = setInterval(updateSmartUI, 150);
-
-  // If there are segments, preload first at 0 (no autoplay)
-  if(segs.length){
-    await smartPlayFromGlobal(it, pId, 0, false);
-  }else{
-    updateSmartUI();
-  }
-
-  // Slider events
-  const slider = smartPlayer.ui.slider;
-  slider.addEventListener("pointerdown", ()=> { if(smartPlayer) smartPlayer.ui.dragging = true; });
-  slider.addEventListener("pointerup", async ()=> {
-    if(!smartPlayer) return;
-    smartPlayer.ui.dragging = false;
-    const t = Number(slider.value || 0);
-    const shouldPlay = smartPlayer.isPlaying && smartAudioEl && !smartAudioEl.paused;
-    await smartPlayFromGlobal(it, pId, t, shouldPlay);
-  });
-  slider.addEventListener("input", ()=> {
-    // live update time while dragging
-    if(!smartPlayer) return;
-    const t = Number(slider.value || 0);
-    if(smartPlayer.ui.curTime) smartPlayer.ui.curTime.textContent = fmtTime(t);
-  });
-
-  // Play button
-  document.getElementById("spPlay").onclick = async ()=>{
-    if(!smartPlayer) return;
-    if(!segs.length) return;
-
-    const isP = smartPlayer.isPlaying && smartAudioEl && !smartAudioEl.paused;
-    if(isP){
-      try{ smartAudioEl.pause(); }catch{}
-      smartPlayer.isPlaying = false;
-      updateSmartUI();
-      return;
-    }
-
-    // play from current slider position
-    const t = Number(smartPlayer.ui.slider.value || 0);
-    await smartPlayFromGlobal(it, pId, t, true);
-  };
-
   // Record button
-  document.getElementById("btnRec").onclick = async ()=>{
+  document.getElementById("btnRec").onclick = async () => {
     if(AUDIO_MODE === "mediarecorder"){
-      // if already recording this item => stop
-      if(isThisRec){
-        stopAnyRecordingSafely();
-        return;
-      }
-      await startRecordingToAudioItem(pId, it.id);
-      return;
+      if(isRecThis) stopAnyRecordingSafely();
+      else await startRecordingToAudioItem(pId, it.id);
     }else{
+      // capture fallback
       pendingAudioTarget = { pId, itemId: it.id };
       audioPicker.value = "";
       audioPicker.click();
-      return;
     }
   };
 
-  // Download button
-  const btnD = document.getElementById("btnDownload");
-  if(btnD){
-    btnD.onclick = async () => {
-      const merged = await buildAudioBlobFromSegments(it);
-      if(!merged) return;
-      const url = URL.createObjectURL(merged);
+  // Smart controls
+  const playPauseBtn = document.getElementById("btnPlayPause");
+  const stopBtn = document.getElementById("btnStop");
+  const slider = document.getElementById("smartSlider");
+
+  if(canSmart && mergedInfo && mergedInfo.buffer){
+    // Ensure ctx created
+    await ensureAudioContext();
+
+    // Hook slider seek
+    if(slider){
+      slider.addEventListener("input", async () => {
+        const v = Number(slider.value || 0);
+        currentOffset = v;
+        const timeEl = document.getElementById("smartTime");
+        if(timeEl){
+          timeEl.textContent = `${fmtTimeSec(v)} / ${fmtTimeSec(mergedInfo.buffer.duration)}`;
+        }
+      });
+
+      slider.addEventListener("change", async () => {
+        const v = Number(slider.value || 0);
+        currentOffset = v;
+        if(isPlayingItem(it.id)){
+          // restart playback at new offset
+          await ensureAudioContext();
+          startPlayback(it.id, mergedInfo.buffer, currentOffset);
+        }
+      });
+    }
+
+    if(playPauseBtn){
+      playPauseBtn.onclick = async () => {
+        await ensureAudioContext();
+        if(isPlayingItem(it.id)){
+          pausePlayback();
+          // update label
+          playPauseBtn.textContent = "Плей";
+          const timeEl = document.getElementById("smartTime");
+          if(timeEl){
+            timeEl.textContent = `${fmtTimeSec(currentOffset)} / ${fmtTimeSec(mergedInfo.buffer.duration)}`;
+          }
+          return;
+        }
+        startPlayback(it.id, mergedInfo.buffer, currentOffset || 0);
+      };
+    }
+
+    if(stopBtn){
+      stopBtn.onclick = () => {
+        pausePlayback();
+        currentOffset = 0;
+        if(slider) slider.value = "0";
+        const timeEl = document.getElementById("smartTime");
+        if(timeEl){
+          timeEl.textContent = `${fmtTimeSec(0)} / ${fmtTimeSec(mergedInfo.buffer.duration)}`;
+        }
+        if(playPauseBtn) playPauseBtn.textContent = "Плей";
+      };
+    }
+  }else{
+    // disable if not ready
+    if(playPauseBtn) playPauseBtn.disabled = true;
+    if(stopBtn) stopBtn.disabled = true;
+    if(slider) slider.disabled = true;
+  }
+
+  // Download WAV
+  const btnWav = document.getElementById("btnDownloadWav");
+  if(btnWav){
+    btnWav.onclick = async () => {
+      const info = await getMergedAudioForItem(it);
+      if(!info || !info.buffer){
+        alert("Не удалось собрать аудио для WAV.");
+        return;
+      }
+      // Build wav once
+      if(!info.wavBlob){
+        info.wavBlob = audioBufferToWavBlob(info.buffer);
+        audioCache[it.id] = info;
+      }
+      const url = URL.createObjectURL(info.wavBlob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = (it.title || "audio") + (merged.type.includes("mp4") ? ".m4a" : ".webm");
+      a.download = (it.title || "audio") + ".wav";
       a.click();
-      setTimeout(()=>{ try{ URL.revokeObjectURL(url); }catch{} }, 3000);
+      setTimeout(()=> URL.revokeObjectURL(url), 1000);
     };
   }
 }
@@ -2112,7 +2129,6 @@ modalWrap.addEventListener("click", (e)=>{ if(e.target === modalWrap) closeModal
 modalSave.addEventListener("click", saveModal);
 modalDelete.addEventListener("click", deleteModal);
 
-// close menus when clicking outside
 document.addEventListener("click", ()=> closeAddMenu());
 addMenu.addEventListener("click", (e)=> e.stopPropagation());
 
@@ -2120,6 +2136,8 @@ addMenu.addEventListener("click", (e)=> e.stopPropagation());
  *  INIT
  *  =========================== */
 (function init(){
+  // refresh mode in case browser changes
+  AUDIO_MODE = chooseAudioMode();
   render();
   clearChat();
   collapseChat();
