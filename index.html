@@ -46,6 +46,9 @@
       --msgBotBd:#e3e6eb;
 
       --hover:#f0f2f5;
+
+      --rangeTrack:#d0d5dd;
+      --rangeFill:#2d6cff;
     }
     *{box-sizing:border-box}
     html,body{height:100%}
@@ -505,6 +508,24 @@
       width:10px;height:10px;border-radius:999px;background:#e11d48;
       box-shadow: 0 0 0 4px rgba(225,29,72,.15);
     }
+    .recLine{
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:10px;
+      flex-wrap:wrap;
+      margin-top:10px;
+    }
+    .recTimePill{
+      font-size:12px;
+      padding:6px 10px;
+      border-radius:999px;
+      border:1px solid var(--border);
+      background:#fff;
+      color:var(--text);
+      font-weight:900;
+      white-space:nowrap;
+    }
 
     /* Smart audio UI */
     .audioBar{
@@ -548,8 +569,49 @@
       gap:10px;
       align-items:center;
     }
+
+    /* Custom range visuals (fix "not from zero" + fill mismatch) */
     .audioSlider{
       width:100%;
+      -webkit-appearance:none;
+      appearance:none;
+      height:26px;
+      background:transparent;
+      outline:none;
+    }
+    .audioSlider::-webkit-slider-runnable-track{
+      height:8px;
+      border-radius:999px;
+      background:
+        linear-gradient(var(--rangeFill), var(--rangeFill)) 0 50% / var(--fill, 0%) 8px no-repeat,
+        linear-gradient(var(--rangeTrack), var(--rangeTrack)) 0 50% / 100% 8px no-repeat;
+      border:1px solid rgba(0,0,0,0.02);
+    }
+    .audioSlider::-webkit-slider-thumb{
+      -webkit-appearance:none;
+      appearance:none;
+      width:18px;
+      height:18px;
+      border-radius:999px;
+      background:#fff;
+      border:1px solid rgba(17,19,23,.2);
+      margin-top:-6px;
+      box-shadow: 0 6px 14px rgba(16,24,40,.18);
+    }
+    .audioSlider::-moz-range-track{
+      height:8px;
+      border-radius:999px;
+      background:var(--rangeTrack);
+    }
+    .audioSlider::-moz-range-progress{
+      height:8px;
+      border-radius:999px;
+      background:var(--rangeFill);
+    }
+    .audioSlider::-moz-range-thumb{
+      width:18px;height:18px;border-radius:999px;
+      background:#fff;border:1px solid rgba(17,19,23,.2);
+      box-shadow: 0 6px 14px rgba(16,24,40,.18);
     }
 
     /* Edge-to-edge on phone */
@@ -732,6 +794,12 @@ let isRecording = false;
 let currentAudioAppendTarget = null; // { pId, itemId }
 let pendingAudioTarget = null;       // for capture fallback
 
+// Recording UI clock (LIVE while recording)
+let recClockRaf = null;
+let recClockStartPerf = 0;
+let recClockBaseSec = 0;
+let recClockItemId = null;
+
 // Smart audio player state (per opened audio item)
 let audioCtx = null;
 let activeSource = null;
@@ -758,8 +826,6 @@ function canUseWebAudio(){
   return typeof (window.AudioContext || window.webkitAudioContext) !== "undefined";
 }
 function chooseAudioMode(){
-  // We TRY MediaRecorder everywhere it exists (including iOS 18+).
-  // If not available -> fallback to capture picker.
   return hasMediaRecorder() ? "mediarecorder" : "capture";
 }
 let AUDIO_MODE = chooseAudioMode();
@@ -860,6 +926,47 @@ function escapeHTML(s){
     .replaceAll(">","&gt;")
     .replaceAll('"',"&quot;")
     .replaceAll("'","&#039;");
+}
+function clamp(n,min,max){ return Math.max(min, Math.min(max, n)); }
+
+/** ===========================
+ *  RANGE FILL (cross-browser)
+ *  =========================== */
+function setRangeFill(el){
+  if(!el) return;
+  const min = Number(el.min || 0);
+  const max = Number(el.max || 0);
+  const val = Number(el.value || 0);
+  const denom = (max - min) || 1;
+  const pct = clamp(((val - min) / denom) * 100, 0, 100);
+  el.style.setProperty("--fill", pct + "%");
+}
+
+/** ===========================
+ *  RECORDING LIVE CLOCK
+ *  =========================== */
+function stopRecClock(){
+  if(recClockRaf) cancelAnimationFrame(recClockRaf);
+  recClockRaf = null;
+  recClockItemId = null;
+}
+function startRecClock(itemId, baseSec){
+  stopRecClock();
+  recClockItemId = itemId;
+  recClockBaseSec = Number(baseSec || 0);
+  recClockStartPerf = performance.now();
+
+  const tick = () => {
+    if(!isRecording || !recClockItemId || recClockItemId !== itemId){
+      stopRecClock();
+      return;
+    }
+    const live = recClockBaseSec + (performance.now() - recClockStartPerf)/1000;
+    const el = document.getElementById("recLiveTime");
+    if(el) el.textContent = "Запись: " + fmtTimeSec(live);
+    recClockRaf = requestAnimationFrame(tick);
+  };
+  recClockRaf = requestAnimationFrame(tick);
 }
 
 /** ===========================
@@ -1276,6 +1383,7 @@ async function createAudioItemAndRecord(){
     type: "audio",
     title: `Аудио ${new Date().toLocaleDateString()}`,
     segments: [],
+    durationSec: 0,
     createdAt: nowISO(),
     updatedAt: nowISO()
   };
@@ -1285,8 +1393,6 @@ async function createAudioItemAndRecord(){
   render();
 
   await openItem(p.id, it.id);
-
-  // Start immediately
   await startRecordingToAudioItem(p.id, it.id);
 }
 
@@ -1316,6 +1422,7 @@ function stopSmartPlayback(){
 
 function closeModal(){
   stopAnyRecordingSafely();
+  stopRecClock();
   stopSmartPlayback();
   modalWrap.style.display = "none";
   modalTextarea.style.display = "none";
@@ -1455,6 +1562,7 @@ async function deleteModal(){
   if(!ok) return;
 
   stopAnyRecordingSafely();
+  stopRecClock();
   stopSmartPlayback();
   await cleanupItemBlobs(it);
 
@@ -1498,7 +1606,6 @@ async function ensureMic(){
 }
 
 function pickBestMime(){
-  // Prefer mp4 on iOS when possible, otherwise webm/opus on Chromium.
   try{
     if(hasMediaRecorder()){
       const prefer = [];
@@ -1528,6 +1635,7 @@ async function startRecordingToAudioItem(pId, itemId){
   }
 
   if(AUDIO_MODE === "mediarecorder"){
+    // NOTE: iOS is strict: do not add extra awaits between user gesture and recorder.start()
     const stream = await ensureMic();
     if(!stream) return;
 
@@ -1543,6 +1651,7 @@ async function startRecordingToAudioItem(pId, itemId){
 
     mediaRecorder.onstop = async () => {
       isRecording = false;
+      stopRecClock();
       try{ stream.getTracks().forEach(t=>t.stop()); }catch{}
 
       const target = currentAudioAppendTarget;
@@ -1556,10 +1665,14 @@ async function startRecordingToAudioItem(pId, itemId){
       await appendAudioSegmentFromBlob(target.pId, target.itemId, blob, null);
     };
 
-    // Timeslice helps some Chromium builds behave nicer on repeated rec.
     mediaRecorder.start(1000);
 
-    await renderAudioViewer(it, pId);
+    // start LIVE timer immediately (no decoding here)
+    const baseSec = Number(it.durationSec || (audioCache[it.id]?.duration) || 0);
+    startRecClock(it.id, baseSec);
+
+    // update UI (safe after start)
+    renderAudioViewer(it, pId);
     return;
   }
 
@@ -1590,7 +1703,6 @@ async function ensureAudioContext(){
 }
 
 async function decodeBlobToAudioBuffer(ctx, blob){
-  // decodeAudioData needs ArrayBuffer
   const ab = await blob.arrayBuffer();
   return await ctx.decodeAudioData(ab.slice(0));
 }
@@ -1615,12 +1727,10 @@ function concatAudioBuffers(ctx, buffers){
 }
 
 function audioBufferToWavBlob(buffer){
-  // 16-bit PCM WAV
   const numCh = buffer.numberOfChannels;
   const sampleRate = buffer.sampleRate;
   const numFrames = buffer.length;
 
-  // Interleave
   const interleaved = new Float32Array(numFrames * numCh);
   for(let i=0; i<numFrames; i++){
     for(let ch=0; ch<numCh; ch++){
@@ -1628,7 +1738,6 @@ function audioBufferToWavBlob(buffer){
     }
   }
 
-  // PCM16
   const pcm16 = new Int16Array(interleaved.length);
   for(let i=0;i<interleaved.length;i++){
     let s = Math.max(-1, Math.min(1, interleaved[i]));
@@ -1652,17 +1761,16 @@ function audioBufferToWavBlob(buffer){
   view.setUint32(4, 36 + dataSize, true);
   writeStr(8, "WAVE");
   writeStr(12, "fmt ");
-  view.setUint32(16, 16, true);         // PCM chunk size
-  view.setUint16(20, 1, true);          // PCM format
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
   view.setUint16(22, numCh, true);
   view.setUint32(24, sampleRate, true);
   view.setUint32(28, byteRate, true);
   view.setUint16(32, blockAlign, true);
-  view.setUint16(34, 16, true);         // bits per sample
+  view.setUint16(34, 16, true);
   writeStr(36, "data");
   view.setUint32(40, dataSize, true);
 
-  // PCM data
   let offset = 44;
   for(let i=0;i<pcm16.length;i++, offset+=2){
     view.setInt16(offset, pcm16[i], true);
@@ -1688,7 +1796,6 @@ async function getMergedAudioForItem(it){
     return audioCache[it.id];
   }
 
-  // Load blobs
   const blobs = [];
   for(const s of segs){
     const b = await idbGetBlob(s.key);
@@ -1699,16 +1806,12 @@ async function getMergedAudioForItem(it){
     return audioCache[it.id];
   }
 
-  // Decode each segment
   const decoded = [];
   for(const b of blobs){
     try{
       const buf = await decodeBlobToAudioBuffer(ctx, b);
       decoded.push(buf);
-    }catch(e){
-      // If one segment fails decode, we still continue with others
-      // (but timeline will be incomplete)
-    }
+    }catch(e){}
   }
   if(decoded.length === 0){
     audioCache[it.id] = { sig, buffer: null, duration: 0, wavBlob: null };
@@ -1728,7 +1831,7 @@ function startPlayback(itemId, buffer, offsetSec){
   stopSmartPlayback();
 
   activePlayingItemId = itemId;
-  currentOffset = Math.max(0, Math.min(offsetSec || 0, buffer.duration));
+  currentOffset = clamp(offsetSec || 0, 0, buffer.duration);
 
   const src = audioCtx.createBufferSource();
   src.buffer = buffer;
@@ -1740,11 +1843,9 @@ function startPlayback(itemId, buffer, offsetSec){
   activeSource = src;
 
   src.onended = () => {
-    // if ended naturally
     if(activePlayingItemId === itemId){
       currentOffset = buffer.duration;
       stopSmartPlayback();
-      // re-render viewer to update buttons/time
       const p = getPuchok(currentPuchokId);
       const it = p ? (p.items||[]).find(x=>x.id===itemId) : null;
       if(it && it.type==="audio") renderAudioViewer(it, currentPuchokId);
@@ -1758,13 +1859,11 @@ function startPlayback(itemId, buffer, offsetSec){
     return;
   }
 
-  // Kick UI updates
   tickUI(itemId, buffer);
 }
 
 function pausePlayback(){
   if(!audioCtx || !activeSource) return;
-  // compute where we are
   const elapsed = audioCtx.currentTime - playStartCtxTime;
   currentOffset = Math.min((playStartOffset + elapsed), Number.MAX_SAFE_INTEGER);
   stopSmartPlayback();
@@ -1778,7 +1877,7 @@ function getCurrentPlayTime(buffer){
   if(!audioCtx || !buffer) return currentOffset || 0;
   if(activeSource && activePlayingItemId){
     const elapsed = audioCtx.currentTime - playStartCtxTime;
-    return Math.max(0, Math.min(playStartOffset + elapsed, buffer.duration));
+    return clamp(playStartOffset + elapsed, 0, buffer.duration);
   }
   return currentOffset || 0;
 }
@@ -1797,6 +1896,7 @@ function tickUI(itemId, buffer){
     const t = getCurrentPlayTime(buffer);
     if(slider){
       slider.value = String(t);
+      setRangeFill(slider);
     }
     if(timeEl){
       timeEl.textContent = `${fmtTimeSec(t)} / ${fmtTimeSec(buffer.duration)}`;
@@ -1804,14 +1904,12 @@ function tickUI(itemId, buffer){
     rafId = requestAnimationFrame(step);
   };
 
-  // Update immediately once
-  if(playBtn){
-    playBtn.textContent = "Пауза";
-  }
+  if(playBtn) playBtn.textContent = "Пауза";
   if(timeEl){
     const t = getCurrentPlayTime(buffer);
     timeEl.textContent = `${fmtTimeSec(t)} / ${fmtTimeSec(buffer.duration)}`;
   }
+  if(slider) setRangeFill(slider);
   rafId = requestAnimationFrame(step);
 }
 
@@ -1826,13 +1924,25 @@ async function renderAudioViewer(it, pId){
 
   const canSmart = canUseWebAudio();
   const mergedInfo = canSmart ? await getMergedAudioForItem(it) : null;
-  const duration = mergedInfo && mergedInfo.duration ? mergedInfo.duration : 0;
+  const duration = (mergedInfo && mergedInfo.duration) ? mergedInfo.duration : 0;
 
-  // keep offset within duration
+  // persist known duration (so live record timer can start from cumulative)
+  if(typeof duration === "number" && duration >= 0){
+    const p = getPuchok(pId);
+    const ref = getItem(pId, it.id);
+    if(p && ref){
+      ref.durationSec = duration;
+      // save without being too noisy
+      p.updatedAt = nowISO();
+      ref.updatedAt = nowISO();
+      saveDB();
+    }
+  }
+
   if(activePlayingItemId !== it.id){
     currentOffset = 0;
   }else{
-    currentOffset = Math.max(0, Math.min(currentOffset, duration || 0));
+    currentOffset = clamp(currentOffset, 0, duration || 0);
   }
 
   const isRecThis = isRecording && currentAudioAppendTarget && currentAudioAppendTarget.itemId === it.id;
@@ -1847,14 +1957,14 @@ async function renderAudioViewer(it, pId){
       <div class="audioBar">
         <div class="audioTop">
           <div class="audioBtns">
-            <button class="audioBtn audioBtnPrimary" id="btnPlayPause" ${duration>0 ? "" : "disabled"}>${playing ? "Пауза" : "Плей"}</button>
-            <button class="audioBtn" id="btnStop" ${duration>0 ? "" : "disabled"}>Стоп</button>
+            <button class="audioBtn audioBtnPrimary" id="btnPlayPause" ${(duration>0 && !isRecThis) ? "" : "disabled"}>${playing ? "Пауза" : "Плей"}</button>
+            <button class="audioBtn" id="btnStop" ${(duration>0 && !isRecThis) ? "" : "disabled"}>Стоп</button>
           </div>
           <div class="audioTime" id="smartTime">${fmtTimeSec(getCurrentPlayTime(mergedInfo && mergedInfo.buffer ? mergedInfo.buffer : {duration:duration}))} / ${fmtTimeSec(duration)}</div>
         </div>
 
         <div class="audioSliderWrap">
-          <input class="audioSlider" id="smartSlider" type="range" min="0" max="${duration || 0}" step="0.01" value="${Math.min(currentOffset || 0, duration || 0)}" ${duration>0 ? "" : "disabled"} />
+          <input class="audioSlider" id="smartSlider" type="range" min="0" max="${duration || 0}" step="0.01" value="${Math.min(currentOffset || 0, duration || 0)}" ${(duration>0 && !isRecThis) ? "" : "disabled"} />
         </div>
 
         <div class="hint" style="margin-top:10px;">
@@ -1877,12 +1987,15 @@ async function renderAudioViewer(it, pId){
 
     <div class="viewerActions" style="margin-top:12px;">
       <button class="btnOk" id="btnRec">${recLabel}</button>
-      <button class="btnGhost" id="btnDownloadWav" ${duration>0 ? "" : "disabled"}>Скачать WAV</button>
+      <button class="btnGhost" id="btnDownloadWav" ${(duration>0 && !isRecThis) ? "" : "disabled"}>Скачать WAV</button>
     </div>
 
-    <div style="margin-top:10px;">
-      ${isRecThis ? `<div class="recBadge"><span class="dot"></span>Запись…</div>` : ""}
-      ${(!hasMediaRecorder() ? `<div class="hint">Запись идёт через системный диктофон (capture), потому что MediaRecorder недоступен.</div>` : "")}
+    <div class="recLine">
+      <div>
+        ${isRecThis ? `<div class="recBadge"><span class="dot"></span>Запись…</div>` : ""}
+        ${(!hasMediaRecorder() ? `<div class="hint">Запись идёт через системный диктофон (capture), потому что MediaRecorder недоступен.</div>` : "")}
+      </div>
+      <div class="recTimePill" id="recLiveTime">${isRecThis ? ("Запись: " + fmtTimeSec((it.durationSec||0))) : "Запись: —"}</div>
     </div>
   `;
 
@@ -1892,7 +2005,6 @@ async function renderAudioViewer(it, pId){
       if(isRecThis) stopAnyRecordingSafely();
       else await startRecordingToAudioItem(pId, it.id);
     }else{
-      // capture fallback
       pendingAudioTarget = { pId, itemId: it.id };
       audioPicker.value = "";
       audioPicker.click();
@@ -1904,13 +2016,16 @@ async function renderAudioViewer(it, pId){
   const stopBtn = document.getElementById("btnStop");
   const slider = document.getElementById("smartSlider");
 
-  if(canSmart && mergedInfo && mergedInfo.buffer){
-    // Ensure ctx created
+  if(slider){
+    setRangeFill(slider);
+    slider.addEventListener("input", () => setRangeFill(slider));
+  }
+
+  if(canSmart && mergedInfo && mergedInfo.buffer && !isRecThis){
     await ensureAudioContext();
 
-    // Hook slider seek
     if(slider){
-      slider.addEventListener("input", async () => {
+      slider.addEventListener("input", () => {
         const v = Number(slider.value || 0);
         currentOffset = v;
         const timeEl = document.getElementById("smartTime");
@@ -1923,7 +2038,6 @@ async function renderAudioViewer(it, pId){
         const v = Number(slider.value || 0);
         currentOffset = v;
         if(isPlayingItem(it.id)){
-          // restart playback at new offset
           await ensureAudioContext();
           startPlayback(it.id, mergedInfo.buffer, currentOffset);
         }
@@ -1935,7 +2049,6 @@ async function renderAudioViewer(it, pId){
         await ensureAudioContext();
         if(isPlayingItem(it.id)){
           pausePlayback();
-          // update label
           playPauseBtn.textContent = "Плей";
           const timeEl = document.getElementById("smartTime");
           if(timeEl){
@@ -1951,7 +2064,7 @@ async function renderAudioViewer(it, pId){
       stopBtn.onclick = () => {
         pausePlayback();
         currentOffset = 0;
-        if(slider) slider.value = "0";
+        if(slider){ slider.value = "0"; setRangeFill(slider); }
         const timeEl = document.getElementById("smartTime");
         if(timeEl){
           timeEl.textContent = `${fmtTimeSec(0)} / ${fmtTimeSec(mergedInfo.buffer.duration)}`;
@@ -1960,7 +2073,6 @@ async function renderAudioViewer(it, pId){
       };
     }
   }else{
-    // disable if not ready
     if(playPauseBtn) playPauseBtn.disabled = true;
     if(stopBtn) stopBtn.disabled = true;
     if(slider) slider.disabled = true;
@@ -1975,7 +2087,6 @@ async function renderAudioViewer(it, pId){
         alert("Не удалось собрать аудио для WAV.");
         return;
       }
-      // Build wav once
       if(!info.wavBlob){
         info.wavBlob = audioBufferToWavBlob(info.buffer);
         audioCache[it.id] = info;
@@ -1987,6 +2098,15 @@ async function renderAudioViewer(it, pId){
       a.click();
       setTimeout(()=> URL.revokeObjectURL(url), 1000);
     };
+  }
+
+  // If recording for this item is active but clock not running (e.g., rerender), restart it
+  if(isRecThis){
+    const baseSec = Number(it.durationSec || (audioCache[it.id]?.duration) || 0);
+    startRecClock(it.id, baseSec);
+  }else{
+    const recEl = document.getElementById("recLiveTime");
+    if(recEl) recEl.textContent = "Запись: —";
   }
 }
 
@@ -2136,7 +2256,6 @@ addMenu.addEventListener("click", (e)=> e.stopPropagation());
  *  INIT
  *  =========================== */
 (function init(){
-  // refresh mode in case browser changes
   AUDIO_MODE = chooseAudioMode();
   render();
   clearChat();
