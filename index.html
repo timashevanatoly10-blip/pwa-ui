@@ -280,6 +280,8 @@
     .tagFile{ border-color:#f4d6a6; color:#9a5a00; background:#fff4e1; }
     .tagImg{ border-color:#c8f1d2; color:#176c2c; background:#e9f9ee; }
     .tagAudio{ border-color:#f3c7d0; color:#8a1830; background:#fdecef; }
+    .tagCode{ border-color:#ddd6fe; color:#5b21b6; background:#f5f3ff; }
+    .tagLink{ border-color:#bfe7ff; color:#075985; background:#e0f2fe; }
 
     /* Chat dock (collapsible like Notion) */
     .dock{
@@ -450,6 +452,13 @@
       line-height:1.4;
       display:none;
     }
+    .codeTextarea{
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      font-size:14px;
+      background:#0b1020;
+      color:#eef2ff;
+      border-color: rgba(99,102,241,.35);
+    }
     .viewer{
       display:none;
       width:100%;
@@ -486,6 +495,20 @@
     }
     .viewer .fileSub{font-size:12px; color:var(--muted); margin-top:4px}
     .viewer .viewerActions{display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-end; margin-top:10px}
+
+    pre.codeBlock{
+      margin:12px 0 0 0;
+      padding:12px;
+      border-radius:14px;
+      border:1px solid rgba(99,102,241,.35);
+      background:#0b1020;
+      color:#eef2ff;
+      overflow:auto;
+      white-space:pre;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      font-size:14px;
+      line-height:1.4;
+    }
 
     .row{
       display:flex;
@@ -667,16 +690,18 @@
           </svg>
         </button>
 
-        <button id="addMenuBtn" class="iconBtn iconBtnPrimary" style="display:none;" title="Добавить">
+        <button id="addMenuBtn" class="iconBtn iconBtnPrimary" style="display:none;" title="+">
           <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
             <path d="M12 5v14M5 12h14" stroke="white" stroke-width="2.4" stroke-linecap="round"/>
           </svg>
         </button>
 
         <div id="addMenu" class="menu" role="menu" aria-hidden="true">
-          <button id="menuAddText">Добавить текст</button>
-          <button id="menuAddFile">Добавить файл/фото</button>
-          <button id="menuAddAudio">Добавить аудио</button>
+          <button id="menuAddText">Текст</button>
+          <button id="menuAddFile">Файл</button>
+          <button id="menuAddAudio">Аудио</button>
+          <button id="menuAddCode">Код</button>
+          <button id="menuAddLink">Ссылка</button>
           <div class="sep"></div>
           <button id="menuDeletePuchok" class="dangerItem">Удалить пучок</button>
         </div>
@@ -731,6 +756,7 @@
 
         <div class="row" id="modalRow">
           <button id="modalDelete" class="btnDanger">Удалить</button>
+          <button id="modalCopy" class="btnGhost" style="display:none;">Copy</button>
           <button id="modalSave" class="btnOk">Сохранить</button>
         </div>
 
@@ -766,6 +792,8 @@ const addMenu = document.getElementById("addMenu");
 const menuAddText = document.getElementById("menuAddText");
 const menuAddFile = document.getElementById("menuAddFile");
 const menuAddAudio = document.getElementById("menuAddAudio");
+const menuAddCode = document.getElementById("menuAddCode");
+const menuAddLink = document.getElementById("menuAddLink");
 const menuDeletePuchok = document.getElementById("menuDeletePuchok");
 
 const chatDock = document.getElementById("chatDock");
@@ -786,6 +814,7 @@ const modalViewer = document.getElementById("modalViewer");
 const modalClose = document.getElementById("modalClose");
 const modalSave = document.getElementById("modalSave");
 const modalDelete = document.getElementById("modalDelete");
+const modalCopy = document.getElementById("modalCopy");
 const modalHint = document.getElementById("modalHint");
 
 /** ===========================
@@ -846,7 +875,6 @@ function safeStopRecorder(){
   if(!mediaRecorder) return;
   try{
     if(isIOS()){
-      // iOS/Safari often gives last chunk only after requestData + tiny delay
       try{ mediaRecorder.requestData(); }catch{}
       setTimeout(()=>{
         try{ mediaRecorder.stop(); }catch{}
@@ -938,12 +966,20 @@ function icoSVG(kind){
   if(kind==="audio"){
     return `<svg ${common}><path d="M12 3v12" stroke="#111317" stroke-width="2"/><path d="M8 7v8" stroke="#111317" stroke-width="2"/><path d="M16 7v8" stroke="#111317" stroke-width="2"/><path d="M5 11v4" stroke="#111317" stroke-width="2"/><path d="M19 11v4" stroke="#111317" stroke-width="2"/></svg>`;
   }
+  if(kind==="code"){
+    return `<svg ${common}><path d="M9 18L3 12l6-6" stroke="#111317" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M15 6l6 6-6 6" stroke="#111317" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+  }
+  if(kind==="link"){
+    return `<svg ${common}><path d="M10 13a5 5 0 0 1 0-7l1-1a5 5 0 0 1 7 7l-1 1" stroke="#111317" stroke-width="2" stroke-linecap="round"/><path d="M14 11a5 5 0 0 1 0 7l-1 1a5 5 0 0 1-7-7l1-1" stroke="#111317" stroke-width="2" stroke-linecap="round"/></svg>`;
+  }
   return `<svg ${common}><path d="M4 6h16v12H4V6Z" stroke="#111317" stroke-width="2"/><path d="M8 11l2.5 3 2-2 3.5 4" stroke="#111317" stroke-width="2" stroke-linejoin="round"/><path d="M9 9.5h.01" stroke="#111317" stroke-width="3" stroke-linecap="round"/></svg>`;
 }
 function typeLabel(it){
   if(it.type==="image") return { text:"Фото", cls:"tagText tagImg" };
   if(it.type==="file") return { text:"Файл", cls:"tagText tagFile" };
   if(it.type==="audio") return { text:"Аудио", cls:"tagText tagAudio" };
+  if(it.type==="code") return { text:"Код", cls:"tagText tagCode" };
+  if(it.type==="link") return { text:"Ссылка", cls:"tagText tagLink" };
   return { text:"Текст", cls:"tagText" };
 }
 function escapeHTML(s){
@@ -955,6 +991,28 @@ function escapeHTML(s){
     .replaceAll("'","&#039;");
 }
 function clamp(n,min,max){ return Math.max(min, Math.min(max, n)); }
+
+function normalizeUrl(raw){
+  const s = (raw || "").toString().trim();
+  if(!s) return "";
+  if(/^https?:\/\//i.test(s)) return s;
+  if(/^mailto:/i.test(s)) return s;
+  if(/^tel:/i.test(s)) return s;
+  // если без схемы — считаем https
+  return "https://" + s;
+}
+function urlTitle(u){
+  try{
+    const url = new URL(u);
+    const host = url.host || u;
+    const path = (url.pathname && url.pathname !== "/") ? url.pathname : "";
+    const t = (host + path).replace(/\/{2,}/g,"/");
+    return t.length > 60 ? t.slice(0,60) + "…" : t;
+  }catch{
+    const t = (u || "").toString().trim();
+    return t.length > 60 ? t.slice(0,60) + "…" : (t || "Ссылка");
+  }
+}
 
 /** ===========================
  *  RANGE FILL (cross-browser)
@@ -1158,7 +1216,7 @@ function renderPuchokInside(p){
   if((p.items || []).length === 0){
     const empty = document.createElement("div");
     empty.className = "empty";
-    empty.innerHTML = "Внутри пусто.<br>Нажми <b>+</b> сверху справа → добавь текст / файл / аудио.";
+    empty.innerHTML = "Внутри пусто.<br>Нажми <b>+</b> сверху справа → добавь текст / файл / аудио / код / ссылку.";
     wrap.appendChild(empty);
   }else{
     const sorted = [...p.items].sort((a,b)=> (b.updatedAt||b.createdAt||"").localeCompare(a.updatedAt||a.createdAt||""));
@@ -1189,7 +1247,11 @@ function renderPuchokInside(p){
           }
         })();
       }else{
-        thumb.innerHTML = icoSVG(it.type==="file" ? "file" : it.type==="audio" ? "audio" : "image");
+        if(it.type==="file") thumb.innerHTML = icoSVG("file");
+        else if(it.type==="audio") thumb.innerHTML = icoSVG("audio");
+        else if(it.type==="code") thumb.innerHTML = icoSVG("code");
+        else if(it.type==="link") thumb.innerHTML = icoSVG("link");
+        else thumb.innerHTML = icoSVG("image");
       }
 
       const textWrap = document.createElement("div");
@@ -1205,6 +1267,12 @@ function renderPuchokInside(p){
       if(it.type === "text"){
         const preview = (it.content || "").toString().trim().replace(/\s+/g," ");
         desc.textContent = preview ? (preview.length > 90 ? preview.slice(0,90)+"…" : preview) : "Пусто";
+      }else if(it.type === "code"){
+        const preview = (it.content || "").toString().replace(/\s+$/,"");
+        const oneLine = preview.replace(/\s+/g," ").trim();
+        desc.textContent = oneLine ? (oneLine.length > 90 ? oneLine.slice(0,90)+"…" : oneLine) : "Пусто";
+      }else if(it.type === "link"){
+        desc.textContent = it.url ? it.url : "—";
       }else if(it.type === "image"){
         desc.textContent = `${fmtBytes(it.size)} • ${fmtDate(it.createdAt || it.updatedAt || nowISO())}`;
       }else if(it.type === "file"){
@@ -1297,12 +1365,19 @@ async function deleteCurrentPuchok(){
 /** ===========================
  *  CRUD: Items
  *  =========================== */
-function addTextItemToCurrent(initialText = ""){
+function ensureCurrentPuchok(){
   const p = getPuchok(currentPuchokId);
   if(!p){
     alert("Сначала открой пучок — тогда можно добавлять туда элементы.");
-    return;
+    return null;
   }
+  return p;
+}
+
+function addTextItemToCurrent(initialText = ""){
+  const p = ensureCurrentPuchok();
+  if(!p) return;
+
   const it = {
     id: uid(),
     type: "text",
@@ -1318,12 +1393,62 @@ function addTextItemToCurrent(initialText = ""){
   openItem(p.id, it.id);
 }
 
-async function addFileItemToCurrent(file){
-  const p = getPuchok(currentPuchokId);
-  if(!p){
-    alert("Сначала открой пучок — тогда можно добавлять туда элементы.");
+function addCodeItemToCurrent(initialCode = ""){
+  const p = ensureCurrentPuchok();
+  if(!p) return;
+
+  const it = {
+    id: uid(),
+    type: "code",
+    title: safeTitleFromText(initialCode) || "Код",
+    content: (initialCode || "").toString(),
+    createdAt: nowISO(),
+    updatedAt: nowISO()
+  };
+  p.items.push(it);
+  p.updatedAt = nowISO();
+  saveDB();
+  render();
+  openItem(p.id, it.id);
+}
+
+function addLinkItemsToCurrent(rawInput){
+  const p = ensureCurrentPuchok();
+  if(!p) return;
+
+  const lines = (rawInput || "")
+    .toString()
+    .split(/\r?\n/)
+    .map(s => s.trim())
+    .filter(Boolean);
+
+  if(lines.length === 0){
+    alert("Вставь ссылку (или несколько строк — несколько ссылок).");
     return;
   }
+
+  for(const line of lines){
+    const u = normalizeUrl(line);
+    if(!u) continue;
+    const it = {
+      id: uid(),
+      type: "link",
+      title: urlTitle(u),
+      url: u,
+      createdAt: nowISO(),
+      updatedAt: nowISO()
+    };
+    p.items.push(it);
+  }
+
+  p.updatedAt = nowISO();
+  saveDB();
+  render();
+}
+
+async function addFileItemToCurrent(file){
+  const p = ensureCurrentPuchok();
+  if(!p) return;
 
   const isImg = (file.type || "").startsWith("image/");
   const id = uid();
@@ -1391,7 +1516,6 @@ async function appendAudioSegmentFromBlob(pId, itemId, blob, fileName){
   p.updatedAt = nowISO();
   saveDB();
 
-  // Bust cache for this item
   delete audioCache[it.id];
 
   await renderAudioViewer(it, pId);
@@ -1399,11 +1523,9 @@ async function appendAudioSegmentFromBlob(pId, itemId, blob, fileName){
 }
 
 async function createAudioItemAndRecord(){
-  const p = getPuchok(currentPuchokId);
-  if(!p){
-    alert("Сначала открой пучок — тогда можно добавлять туда элементы.");
-    return;
-  }
+  const p = ensureCurrentPuchok();
+  if(!p) return;
+
   const id = uid();
   const it = {
     id,
@@ -1454,6 +1576,8 @@ function closeModal(){
   modalTextarea.style.display = "none";
   modalViewer.style.display = "none";
   modalViewer.innerHTML = "";
+  modalTextarea.classList.remove("codeTextarea");
+  modalCopy.style.display = "none";
   openItemId = null;
   openItemType = null;
 }
@@ -1464,7 +1588,6 @@ async function openItem(puchokId, itemId){
   const it = (p.items || []).find(x => x.id === itemId);
   if(!it) return;
 
-  // stop playback if switching items
   stopSmartPlayback();
 
   openItemId = itemId;
@@ -1476,6 +1599,8 @@ async function openItem(puchokId, itemId){
 
   modalDelete.style.display = "";
   modalSave.style.display = "none";
+  modalCopy.style.display = "none";
+  modalTextarea.classList.remove("codeTextarea");
 
   if(it.type === "text"){
     modalTextarea.style.display = "block";
@@ -1488,9 +1613,57 @@ async function openItem(puchokId, itemId){
     return;
   }
 
+  if(it.type === "code"){
+    modalTextarea.style.display = "block";
+    modalViewer.style.display = "none";
+    modalTextarea.value = it.content || "";
+    modalTextarea.classList.add("codeTextarea");
+    modalSave.style.display = "";
+    modalCopy.style.display = "";
+    modalHint.textContent = "Код: редактирование + Copy.";
+    modalWrap.style.display = "flex";
+    setTimeout(()=> modalTextarea.focus(), 50);
+    return;
+  }
+
   modalTextarea.style.display = "none";
   modalViewer.style.display = "block";
   modalWrap.style.display = "flex";
+
+  if(it.type === "link"){
+    modalHint.textContent = "Ссылка: открыть или скопировать.";
+    const url = it.url || "";
+    modalViewer.innerHTML = `
+      <div class="fileRow">
+        <div class="fileMeta">
+          <div class="fileName">${escapeHTML(it.title || "Ссылка")}</div>
+          <div class="fileSub" style="word-break:break-all">${escapeHTML(url)}</div>
+        </div>
+        <div class="tagText tagLink">Ссылка</div>
+      </div>
+      <div class="viewerActions">
+        <button class="btnGhost" id="btnOpenLink" ${url ? "" : "disabled"}>Открыть</button>
+        <button class="btnGhost" id="btnCopyLink" ${url ? "" : "disabled"}>Copy</button>
+      </div>
+    `;
+    const btnOpen = document.getElementById("btnOpenLink");
+    const btnCopy = document.getElementById("btnCopyLink");
+    if(btnOpen) btnOpen.onclick = () => url && window.open(url, "_blank");
+    if(btnCopy) btnCopy.onclick = async () => {
+      if(!url) return;
+      try{
+        await navigator.clipboard.writeText(url);
+      }catch{
+        const ta = document.createElement("textarea");
+        ta.value = url;
+        document.body.appendChild(ta);
+        ta.select();
+        try{ document.execCommand("copy"); }catch{}
+        ta.remove();
+      }
+    };
+    return;
+  }
 
   if(it.type === "image"){
     modalHint.textContent = "Фото хранится локально (IndexedDB).";
@@ -1560,22 +1733,61 @@ async function openItem(puchokId, itemId){
 }
 
 /** ===========================
- *  MODAL SAVE/DELETE
+ *  MODAL SAVE/DELETE/COPY
  *  =========================== */
 function saveModal(){
   const p = getPuchok(currentPuchokId);
   if(!p) return;
   const it = (p.items || []).find(x => x.id === openItemId);
-  if(!it || it.type !== "text") return;
+  if(!it) return;
 
-  const txt = modalTextarea.value || "";
-  it.content = txt;
-  it.title = safeTitleFromText(txt) || (it.title || "Текст");
-  it.updatedAt = nowISO();
-  p.updatedAt = nowISO();
-  saveDB();
-  closeModal();
-  render();
+  if(it.type === "text"){
+    const txt = modalTextarea.value || "";
+    it.content = txt;
+    it.title = safeTitleFromText(txt) || (it.title || "Текст");
+    it.updatedAt = nowISO();
+    p.updatedAt = nowISO();
+    saveDB();
+    closeModal();
+    render();
+    return;
+  }
+
+  if(it.type === "code"){
+    const code = modalTextarea.value || "";
+    it.content = code;
+    it.title = safeTitleFromText(code) || (it.title || "Код");
+    it.updatedAt = nowISO();
+    p.updatedAt = nowISO();
+    saveDB();
+    closeModal();
+    render();
+    return;
+  }
+}
+
+async function copyModal(){
+  const p = getPuchok(currentPuchokId);
+  if(!p) return;
+  const it = (p.items || []).find(x => x.id === openItemId);
+  if(!it) return;
+
+  let text = "";
+  if(it.type === "code") text = (modalTextarea.value || it.content || "").toString();
+  else if(it.type === "text") text = (modalTextarea.value || it.content || "").toString();
+  else if(it.type === "link") text = (it.url || "").toString();
+  if(!text) return;
+
+  try{
+    await navigator.clipboard.writeText(text);
+  }catch{
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    document.body.appendChild(ta);
+    ta.select();
+    try{ document.execCommand("copy"); }catch{}
+    ta.remove();
+  }
 }
 
 async function deleteModal(){
@@ -1661,7 +1873,6 @@ async function startRecordingToAudioItem(pId, itemId){
   }
 
   if(AUDIO_MODE === "mediarecorder"){
-    // NOTE: iOS is strict: do not add extra awaits between user gesture and recorder.start()
     const stream = await ensureMic();
     if(!stream) return;
 
@@ -1691,23 +1902,19 @@ async function startRecordingToAudioItem(pId, itemId){
       await appendAudioSegmentFromBlob(target.pId, target.itemId, blob, null);
     };
 
-    // iOS: do NOT use timeslice (it ломает поток/обрезает хвосты). Desktop/Android: можно 1000ms.
     if(isIOS()){
       mediaRecorder.start();
     }else{
       mediaRecorder.start(1000);
     }
 
-    // start LIVE timer immediately (no decoding here)
     const baseSec = Number(it.durationSec || (audioCache[it.id]?.duration) || 0);
     startRecClock(it.id, baseSec);
 
-    // update UI (safe after start)
     renderAudioViewer(it, pId);
     return;
   }
 
-  // capture fallback
   pendingAudioTarget = { pId, itemId };
   audioPicker.value = "";
   audioPicker.click();
@@ -1957,7 +2164,6 @@ async function renderAudioViewer(it, pId){
   const mergedInfo = canSmart ? await getMergedAudioForItem(it) : null;
   const duration = (mergedInfo && mergedInfo.duration) ? mergedInfo.duration : 0;
 
-  // persist known duration (so live record timer can start from cumulative)
   if(typeof duration === "number" && duration >= 0){
     const p = getPuchok(pId);
     const ref = getItem(pId, it.id);
@@ -2029,7 +2235,6 @@ async function renderAudioViewer(it, pId){
     </div>
   `;
 
-  // Record button
   document.getElementById("btnRec").onclick = async () => {
     if(AUDIO_MODE === "mediarecorder"){
       if(isRecThis) stopAnyRecordingSafely();
@@ -2041,7 +2246,6 @@ async function renderAudioViewer(it, pId){
     }
   };
 
-  // Smart controls
   const playPauseBtn = document.getElementById("btnPlayPause");
   const stopBtn = document.getElementById("btnStop");
   const slider = document.getElementById("smartSlider");
@@ -2109,7 +2313,6 @@ async function renderAudioViewer(it, pId){
     if(slider) slider.disabled = true;
   }
 
-  // Download WAV (label hidden from user, but file will still be WAV)
   const btnWav = document.getElementById("btnDownloadWav");
   if(btnWav){
     btnWav.onclick = async () => {
@@ -2131,7 +2334,6 @@ async function renderAudioViewer(it, pId){
     };
   }
 
-  // If recording for this item is active but clock not running (e.g., rerender), restart it
   if(isRecThis){
     const baseSec = Number(it.durationSec || (audioCache[it.id]?.duration) || 0);
     startRecClock(it.id, baseSec);
@@ -2251,6 +2453,18 @@ menuAddAudio.addEventListener("click", async ()=>{
   await createAudioItemAndRecord();
 });
 
+menuAddCode.addEventListener("click", ()=>{
+  closeAddMenu();
+  addCodeItemToCurrent("");
+});
+
+menuAddLink.addEventListener("click", ()=>{
+  closeAddMenu();
+  const raw = prompt("Вставь ссылку (или несколько строк):", "");
+  if(raw === null) return;
+  addLinkItemsToCurrent(raw);
+});
+
 menuDeletePuchok.addEventListener("click", async ()=>{
   await deleteCurrentPuchok();
 });
@@ -2279,6 +2493,7 @@ modalClose.addEventListener("click", closeModal);
 modalWrap.addEventListener("click", (e)=>{ if(e.target === modalWrap) closeModal(); });
 modalSave.addEventListener("click", saveModal);
 modalDelete.addEventListener("click", deleteModal);
+modalCopy.addEventListener("click", copyModal);
 
 document.addEventListener("click", ()=> closeAddMenu());
 addMenu.addEventListener("click", (e)=> e.stopPropagation());
