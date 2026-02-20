@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>ТИМ</title>
+  <title>ПУЧКИ</title>
 
   <!-- PWA -->
   <link rel="manifest" href="/manifest.webmanifest">
@@ -12,7 +12,7 @@
   <!-- iOS standalone -->
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
-  <meta name="apple-mobile-web-app-title" content="ТИМ">
+  <meta name="apple-mobile-web-app-title" content="ПУЧКИ">
 
   <!-- Icons -->
   <link rel="icon" href="/icon-192.png">
@@ -53,7 +53,8 @@
     *{box-sizing:border-box}
     html,body{height:100%}
     body{
-      margin:0; font-family:Arial,sans-serif;
+      margin:0;
+      font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", Inter, Arial, sans-serif;
       background:var(--bg); color:var(--text);
       display:block;
     }
@@ -81,7 +82,13 @@
     }
 
     .leftHead{display:flex; align-items:center; gap:10px; min-width:0}
-    .title{font-weight:800; font-size:16px; white-space:nowrap}
+    .title{
+      font-weight:900;
+      font-size:16px;
+      white-space:nowrap;
+      letter-spacing:.08em;
+      text-transform:uppercase;
+    }
     .crumb{font-size:12px; color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:56vw}
 
     .actions{
@@ -551,6 +558,8 @@
       color:var(--text);
       font-weight:900;
       cursor:pointer;
+      min-width:44px;
+      text-align:center;
     }
     .audioBtnPrimary{
       border-color: rgba(45,108,255,.35);
@@ -643,7 +652,7 @@
       <div class="leftHead">
         <button id="backBtn" class="btnGhost" style="display:none;">←</button>
         <div>
-          <div class="title" id="headTitle">ТИМ</div>
+          <div class="title" id="headTitle">ПУЧКИ</div>
           <div class="crumb" id="headCrumb">Пучки + чат</div>
         </div>
       </div>
@@ -831,6 +840,24 @@ function chooseAudioMode(){
 let AUDIO_MODE = chooseAudioMode();
 
 /** ===========================
+ *  iOS MediaRecorder "flush + micro-delay" stop
+ *  =========================== */
+function safeStopRecorder(){
+  if(!mediaRecorder) return;
+  try{
+    if(isIOS()){
+      // iOS/Safari often gives last chunk only after requestData + tiny delay
+      try{ mediaRecorder.requestData(); }catch{}
+      setTimeout(()=>{
+        try{ mediaRecorder.stop(); }catch{}
+      }, 140);
+    }else{
+      try{ mediaRecorder.stop(); }catch{}
+    }
+  }catch{}
+}
+
+/** ===========================
  *  IndexedDB helpers
  *  =========================== */
 function idbOpen(){
@@ -861,7 +888,7 @@ async function idbGetBlob(key){
     const tx = d.transaction(IDB_STORE, "readonly");
     const req = tx.objectStore(IDB_STORE).get(key);
     req.onsuccess = ()=> resolve(req.result ? req.result.blob : null);
-    req.onerror = ()=> reject(req.error);
+    req.onerror = ()=> reject(tx.error);
   });
 }
 async function idbDelete(key){
@@ -1027,7 +1054,7 @@ collapseBar.addEventListener("click", collapseChat);
  *  =========================== */
 function setHeaderForList(){
   backBtn.style.display = "none";
-  headTitle.textContent = "ТИМ";
+  headTitle.textContent = "ПУЧКИ";
   headCrumb.textContent = "Пучки + чат";
 
   editPuchokBtn.style.display = "none";
@@ -1039,7 +1066,7 @@ function setHeaderForList(){
 }
 function setHeaderForPuchok(p){
   backBtn.style.display = "";
-  headTitle.textContent = "Пучок";
+  headTitle.textContent = "ПУЧКИ";
   headCrumb.textContent = p.title || "Без названия";
 
   newPuchokBtn.style.display = "none";
@@ -1402,8 +1429,7 @@ async function createAudioItemAndRecord(){
 function stopAnyRecordingSafely(){
   try{
     if(mediaRecorder && isRecording){
-      try{ mediaRecorder.requestData(); }catch{}
-      mediaRecorder.stop();
+      safeStopRecorder();
     }
   }catch{}
 }
@@ -1665,7 +1691,12 @@ async function startRecordingToAudioItem(pId, itemId){
       await appendAudioSegmentFromBlob(target.pId, target.itemId, blob, null);
     };
 
-    mediaRecorder.start(1000);
+    // iOS: do NOT use timeslice (it ломает поток/обрезает хвосты). Desktop/Android: можно 1000ms.
+    if(isIOS()){
+      mediaRecorder.start();
+    }else{
+      mediaRecorder.start(1000);
+    }
 
     // start LIVE timer immediately (no decoding here)
     const baseSec = Number(it.durationSec || (audioCache[it.id]?.duration) || 0);
@@ -1904,7 +1935,7 @@ function tickUI(itemId, buffer){
     rafId = requestAnimationFrame(step);
   };
 
-  if(playBtn) playBtn.textContent = "Пауза";
+  if(playBtn) playBtn.textContent = "⏸";
   if(timeEl){
     const t = getCurrentPlayTime(buffer);
     timeEl.textContent = `${fmtTimeSec(t)} / ${fmtTimeSec(buffer.duration)}`;
@@ -1932,7 +1963,6 @@ async function renderAudioViewer(it, pId){
     const ref = getItem(pId, it.id);
     if(p && ref){
       ref.durationSec = duration;
-      // save without being too noisy
       p.updatedAt = nowISO();
       ref.updatedAt = nowISO();
       saveDB();
@@ -1957,8 +1987,8 @@ async function renderAudioViewer(it, pId){
       <div class="audioBar">
         <div class="audioTop">
           <div class="audioBtns">
-            <button class="audioBtn audioBtnPrimary" id="btnPlayPause" ${(duration>0 && !isRecThis) ? "" : "disabled"}>${playing ? "Пауза" : "Плей"}</button>
-            <button class="audioBtn" id="btnStop" ${(duration>0 && !isRecThis) ? "" : "disabled"}>Стоп</button>
+            <button class="audioBtn audioBtnPrimary" id="btnPlayPause" ${(duration>0 && !isRecThis) ? "" : "disabled"}>${playing ? "⏸" : "▶︎"}</button>
+            <button class="audioBtn" id="btnStop" ${(duration>0 && !isRecThis) ? "" : "disabled"}>⏹</button>
           </div>
           <div class="audioTime" id="smartTime">${fmtTimeSec(getCurrentPlayTime(mergedInfo && mergedInfo.buffer ? mergedInfo.buffer : {duration:duration}))} / ${fmtTimeSec(duration)}</div>
         </div>
@@ -1968,7 +1998,7 @@ async function renderAudioViewer(it, pId){
         </div>
 
         <div class="hint" style="margin-top:10px;">
-          Умный плеер: один таймлайн, перемотка работает по всему аудио. Скачивание: WAV одним файлом.
+          Умный плеер: один таймлайн, перемотка работает по всему аудио. Скачивание: один файл.
         </div>
       </div>
     `
@@ -1987,7 +2017,7 @@ async function renderAudioViewer(it, pId){
 
     <div class="viewerActions" style="margin-top:12px;">
       <button class="btnOk" id="btnRec">${recLabel}</button>
-      <button class="btnGhost" id="btnDownloadWav" ${(duration>0 && !isRecThis) ? "" : "disabled"}>Скачать WAV</button>
+      <button class="btnGhost" id="btnDownloadWav" ${(duration>0 && !isRecThis) ? "" : "disabled"}>Скачать</button>
     </div>
 
     <div class="recLine">
@@ -2049,7 +2079,7 @@ async function renderAudioViewer(it, pId){
         await ensureAudioContext();
         if(isPlayingItem(it.id)){
           pausePlayback();
-          playPauseBtn.textContent = "Плей";
+          playPauseBtn.textContent = "▶︎";
           const timeEl = document.getElementById("smartTime");
           if(timeEl){
             timeEl.textContent = `${fmtTimeSec(currentOffset)} / ${fmtTimeSec(mergedInfo.buffer.duration)}`;
@@ -2057,6 +2087,7 @@ async function renderAudioViewer(it, pId){
           return;
         }
         startPlayback(it.id, mergedInfo.buffer, currentOffset || 0);
+        playPauseBtn.textContent = "⏸";
       };
     }
 
@@ -2069,7 +2100,7 @@ async function renderAudioViewer(it, pId){
         if(timeEl){
           timeEl.textContent = `${fmtTimeSec(0)} / ${fmtTimeSec(mergedInfo.buffer.duration)}`;
         }
-        if(playPauseBtn) playPauseBtn.textContent = "Плей";
+        if(playPauseBtn) playPauseBtn.textContent = "▶︎";
       };
     }
   }else{
@@ -2078,13 +2109,13 @@ async function renderAudioViewer(it, pId){
     if(slider) slider.disabled = true;
   }
 
-  // Download WAV
+  // Download WAV (label hidden from user, but file will still be WAV)
   const btnWav = document.getElementById("btnDownloadWav");
   if(btnWav){
     btnWav.onclick = async () => {
       const info = await getMergedAudioForItem(it);
       if(!info || !info.buffer){
-        alert("Не удалось собрать аудио для WAV.");
+        alert("Не удалось собрать аудио для скачивания.");
         return;
       }
       if(!info.wavBlob){
