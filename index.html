@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+ <!DOCTYPE html>
 <html lang="ru">
 <head>
   <meta charset="UTF-8" />
@@ -118,16 +118,14 @@
     </div>
   </div>
 
+  <!-- STORAGE (external) -->
+  <script src="/assets/storage.js"></script>
+
 <script>
 /** ===========================
  *  CONFIG
  *  =========================== */
 const WORKER_URL = "https://gptim24.timashevanatoly10.workers.dev";
-const STORAGE_KEY = "tim_puchki_v2";
-
-// IndexedDB for blobs
-const IDB_NAME = "tim_puchki_blobs";
-const IDB_STORE = "blobs";
 
 /** ===========================
  *  DOM
@@ -239,50 +237,6 @@ function safeStopRecorder(){
 }
 
 /** ===========================
- *  IndexedDB helpers
- *  =========================== */
-function idbOpen(){
-  return new Promise((resolve, reject)=>{
-    const req = indexedDB.open(IDB_NAME, 1);
-    req.onupgradeneeded = () => {
-      const d = req.result;
-      if(!d.objectStoreNames.contains(IDB_STORE)){
-        d.createObjectStore(IDB_STORE, { keyPath: "key" });
-      }
-    };
-    req.onsuccess = ()=> resolve(req.result);
-    req.onerror = ()=> reject(req.error);
-  });
-}
-async function idbPutBlob(key, blob){
-  const d = await idbOpen();
-  return new Promise((resolve, reject)=>{
-    const tx = d.transaction(IDB_STORE, "readwrite");
-    tx.objectStore(IDB_STORE).put({ key, blob });
-    tx.oncomplete = ()=> resolve(true);
-    tx.onerror = ()=> reject(tx.error);
-  });
-}
-async function idbGetBlob(key){
-  const d = await idbOpen();
-  return new Promise((resolve, reject)=>{
-    const tx = d.transaction(IDB_STORE, "readonly");
-    const req = tx.objectStore(IDB_STORE).get(key);
-    req.onsuccess = ()=> resolve(req.result ? req.result.blob : null);
-    req.onerror = ()=> reject(tx.error);
-  });
-}
-async function idbDelete(key){
-  const d = await idbOpen();
-  return new Promise((resolve, reject)=>{
-    const tx = d.transaction(IDB_STORE, "readwrite");
-    tx.objectStore(IDB_STORE).delete(key);
-    tx.oncomplete = ()=> resolve(true);
-    tx.onerror = ()=> reject(tx.error);
-  });
-}
-
-/** ===========================
  *  HELPERS
  *  =========================== */
 function nowISO(){ return new Date().toISOString(); }
@@ -351,7 +305,6 @@ function normalizeUrl(raw){
   if(/^https?:\/\//i.test(s)) return s;
   if(/^mailto:/i.test(s)) return s;
   if(/^tel:/i.test(s)) return s;
-  // если без схемы — считаем https
   return "https://" + s;
 }
 function urlTitle(u){
@@ -408,27 +361,11 @@ function startRecClock(itemId, baseSec){
 }
 
 /** ===========================
- *  DB (localStorage metadata)
+ *  DB wrappers (use storage.js signatures)
  *  =========================== */
-function loadDB(){
-  try{
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if(!raw) return { puchki: [] };
-    const parsed = JSON.parse(raw);
-    if(!parsed || !Array.isArray(parsed.puchki)) return { puchki: [] };
-    parsed.puchki.forEach(p => { if(!Array.isArray(p.items)) p.items = []; });
-    return parsed;
-  }catch{
-    return { puchki: [] };
-  }
-}
-function saveDB(){ localStorage.setItem(STORAGE_KEY, JSON.stringify(db)); }
-function getPuchok(id){ return db.puchki.find(p => p.id === id) || null; }
-function getItem(pId, itemId){
-  const p = getPuchok(pId);
-  if(!p) return null;
-  return (p.items || []).find(x => x.id === itemId) || null;
-}
+function saveDBLocal(){ saveDB(db); }
+function getPuchokLocal(id){ return getPuchok(db, id); }
+function getItemLocal(pId, itemId){ return getItem(db, pId, itemId); }
 
 /** ===========================
  *  MENU (Add)
@@ -497,7 +434,7 @@ function render(){
     setHeaderForList();
     renderPuchokList();
   }else{
-    const p = getPuchok(currentPuchokId);
+    const p = getPuchokLocal(currentPuchokId);
     if(!p){
       currentPuchokId = null;
       render();
@@ -685,21 +622,21 @@ function createPuchok(){
     items: []
   };
   db.puchki.push(p);
-  saveDB();
+  saveDBLocal();
   openPuchok(p.id);
 }
 function renameCurrentPuchok(){
-  const p = getPuchok(currentPuchokId);
+  const p = getPuchokLocal(currentPuchokId);
   if(!p) return;
   const name = prompt("Новое название пучка:", p.title || "");
   if(name === null) return;
   p.title = (name || "").trim() || "Без названия";
   p.updatedAt = nowISO();
-  saveDB();
+  saveDBLocal();
   render();
 }
 async function deleteCurrentPuchok(){
-  const p = getPuchok(currentPuchokId);
+  const p = getPuchokLocal(currentPuchokId);
   if(!p) return;
   closeAddMenu();
   const ok = confirm(`Удалить пучок “${p.title || "Без названия"}”?`);
@@ -710,7 +647,7 @@ async function deleteCurrentPuchok(){
   }
 
   db.puchki = db.puchki.filter(x => x.id !== p.id);
-  saveDB();
+  saveDBLocal();
   currentPuchokId = null;
   render();
 }
@@ -719,7 +656,7 @@ async function deleteCurrentPuchok(){
  *  CRUD: Items
  *  =========================== */
 function ensureCurrentPuchok(){
-  const p = getPuchok(currentPuchokId);
+  const p = getPuchokLocal(currentPuchokId);
   if(!p){
     alert("Сначала открой пучок — тогда можно добавлять туда элементы.");
     return null;
@@ -741,7 +678,7 @@ function addTextItemToCurrent(initialText = ""){
   };
   p.items.push(it);
   p.updatedAt = nowISO();
-  saveDB();
+  saveDBLocal();
   render();
   openItem(p.id, it.id);
 }
@@ -760,7 +697,7 @@ function addCodeItemToCurrent(initialCode = ""){
   };
   p.items.push(it);
   p.updatedAt = nowISO();
-  saveDB();
+  saveDBLocal();
   render();
   openItem(p.id, it.id);
 }
@@ -795,7 +732,7 @@ function addLinkItemsToCurrent(rawInput){
   }
 
   p.updatedAt = nowISO();
-  saveDB();
+  saveDBLocal();
   render();
 }
 
@@ -838,14 +775,14 @@ async function addFileItemToCurrent(file){
 
   p.items.push(it);
   p.updatedAt = nowISO();
-  saveDB();
+  saveDBLocal();
   render();
   openItem(p.id, it.id);
 }
 
 async function appendAudioSegmentFromBlob(pId, itemId, blob, fileName){
-  const p = getPuchok(pId);
-  const it = getItem(pId, itemId);
+  const p = getPuchokLocal(pId);
+  const it = getItemLocal(pId, itemId);
   if(!p || !it || it.type !== "audio") return;
 
   if(!blob || !blob.size){
@@ -867,7 +804,7 @@ async function appendAudioSegmentFromBlob(pId, itemId, blob, fileName){
 
   it.updatedAt = nowISO();
   p.updatedAt = nowISO();
-  saveDB();
+  saveDBLocal();
 
   delete audioCache[it.id];
 
@@ -891,7 +828,7 @@ async function createAudioItemAndRecord(){
   };
   p.items.push(it);
   p.updatedAt = nowISO();
-  saveDB();
+  saveDBLocal();
   render();
 
   await openItem(p.id, it.id);
@@ -936,7 +873,7 @@ function closeModal(){
 }
 
 async function openItem(puchokId, itemId){
-  const p = getPuchok(puchokId);
+  const p = getPuchokLocal(puchokId);
   if(!p) return;
   const it = (p.items || []).find(x => x.id === itemId);
   if(!it) return;
@@ -1089,7 +1026,7 @@ async function openItem(puchokId, itemId){
  *  MODAL SAVE/DELETE/COPY
  *  =========================== */
 function saveModal(){
-  const p = getPuchok(currentPuchokId);
+  const p = getPuchokLocal(currentPuchokId);
   if(!p) return;
   const it = (p.items || []).find(x => x.id === openItemId);
   if(!it) return;
@@ -1100,7 +1037,7 @@ function saveModal(){
     it.title = safeTitleFromText(txt) || (it.title || "Текст");
     it.updatedAt = nowISO();
     p.updatedAt = nowISO();
-    saveDB();
+    saveDBLocal();
     closeModal();
     render();
     return;
@@ -1112,7 +1049,7 @@ function saveModal(){
     it.title = safeTitleFromText(code) || (it.title || "Код");
     it.updatedAt = nowISO();
     p.updatedAt = nowISO();
-    saveDB();
+    saveDBLocal();
     closeModal();
     render();
     return;
@@ -1120,7 +1057,7 @@ function saveModal(){
 }
 
 async function copyModal(){
-  const p = getPuchok(currentPuchokId);
+  const p = getPuchokLocal(currentPuchokId);
   if(!p) return;
   const it = (p.items || []).find(x => x.id === openItemId);
   if(!it) return;
@@ -1144,7 +1081,7 @@ async function copyModal(){
 }
 
 async function deleteModal(){
-  const p = getPuchok(currentPuchokId);
+  const p = getPuchokLocal(currentPuchokId);
   if(!p) return;
   const it = (p.items || []).find(x => x.id === openItemId);
   if(!it) return;
@@ -1159,25 +1096,9 @@ async function deleteModal(){
 
   p.items = (p.items || []).filter(x => x.id !== it.id);
   p.updatedAt = nowISO();
-  saveDB();
+  saveDBLocal();
   closeModal();
   render();
-}
-
-async function cleanupItemBlobs(it){
-  try{
-    if(it.type === "image"){
-      if(it.blobKey) await idbDelete(it.blobKey);
-      if(it.thumbKey) await idbDelete(it.thumbKey);
-    } else if(it.type === "file"){
-      if(it.blobKey) await idbDelete(it.blobKey);
-    } else if(it.type === "audio"){
-      for(const s of (it.segments || [])){
-        if(s && s.key) await idbDelete(s.key);
-      }
-      delete audioCache[it.id];
-    }
-  }catch{}
 }
 
 /** ===========================
@@ -1216,8 +1137,8 @@ function pickBestMime(){
 }
 
 async function startRecordingToAudioItem(pId, itemId){
-  const it = getItem(pId, itemId);
-  const p = getPuchok(pId);
+  const it = getItemLocal(pId, itemId);
+  const p = getPuchokLocal(pId);
   if(!it || !p || it.type !== "audio") return;
 
   if(isRecording){
@@ -1437,7 +1358,7 @@ function startPlayback(itemId, buffer, offsetSec){
     if(activePlayingItemId === itemId){
       currentOffset = buffer.duration;
       stopSmartPlayback();
-      const p = getPuchok(currentPuchokId);
+      const p = getPuchokLocal(currentPuchokId);
       const it = p ? (p.items||[]).find(x=>x.id===itemId) : null;
       if(it && it.type==="audio") renderAudioViewer(it, currentPuchokId);
     }
@@ -1518,13 +1439,13 @@ async function renderAudioViewer(it, pId){
   const duration = (mergedInfo && mergedInfo.duration) ? mergedInfo.duration : 0;
 
   if(typeof duration === "number" && duration >= 0){
-    const p = getPuchok(pId);
-    const ref = getItem(pId, it.id);
+    const p = getPuchokLocal(pId);
+    const ref = getItemLocal(pId, it.id);
     if(p && ref){
       ref.durationSec = duration;
       p.updatedAt = nowISO();
       ref.updatedAt = nowISO();
-      saveDB();
+      saveDBLocal();
     }
   }
 
