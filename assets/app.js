@@ -53,6 +53,23 @@ let openItemId = null;
 let openItemType = null;
 
 /** ===========================
+ *  PLATFORM / FEATURE DETECT
+ *  =========================== */
+function isIOS(){
+  const ua = navigator.userAgent || "";
+  return /iPad|iPhone|iPod/.test(ua) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+}
+function hasMediaRecorder(){
+  return typeof MediaRecorder !== "undefined" && typeof MediaRecorder === "function";
+}
+function canUseWebAudio(){
+  return typeof (window.AudioContext || window.webkitAudioContext) !== "undefined";
+}
+function chooseAudioMode(){
+  return hasMediaRecorder() ? "mediarecorder" : "capture";
+}
+
+/** ===========================
  *  HELPERS
  *  =========================== */
 function nowISO(){ return new Date().toISOString(); }
@@ -80,6 +97,30 @@ function fmtTimeSec(sec){
   const m = Math.floor(sec/60);
   const s = Math.floor(sec%60);
   return `${m}:${s.toString().padStart(2,"0")}`;
+}
+function icoSVG(kind){
+  const common = `class="ico" viewBox="0 0 24 24" fill="none"`;
+  if(kind==="file"){
+    return `<svg ${common}><path d="M7 3h7l3 3v15H7V3Z" stroke="#111317" stroke-width="2"/><path d="M14 3v6h6" stroke="#111317" stroke-width="2"/></svg>`;
+  }
+  if(kind==="audio"){
+    return `<svg ${common}><path d="M12 3v12" stroke="#111317" stroke-width="2"/><path d="M8 7v8" stroke="#111317" stroke-width="2"/><path d="M16 7v8" stroke="#111317" stroke-width="2"/><path d="M5 11v4" stroke="#111317" stroke-width="2"/><path d="M19 11v4" stroke="#111317" stroke-width="2"/></svg>`;
+  }
+  if(kind==="code"){
+    return `<svg ${common}><path d="M9 18L3 12l6-6" stroke="#111317" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M15 6l6 6-6 6" stroke="#111317" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+  }
+  if(kind==="link"){
+    return `<svg ${common}><path d="M10 13a5 5 0 0 1 0-7l1-1a5 5 0 0 1 7 7l-1 1" stroke="#111317" stroke-width="2" stroke-linecap="round"/><path d="M14 11a5 5 0 0 1 0 7l-1 1a5 5 0 0 1-7-7l1-1" stroke="#111317" stroke-width="2" stroke-linecap="round"/></svg>`;
+  }
+  return `<svg ${common}><path d="M4 6h16v12H4V6Z" stroke="#111317" stroke-width="2"/><path d="M8 11l2.5 3 2-2 3.5 4" stroke="#111317" stroke-width="2" stroke-linejoin="round"/><path d="M9 9.5h.01" stroke="#111317" stroke-width="3" stroke-linecap="round"/></svg>`;
+}
+function typeLabel(it){
+  if(it.type==="image") return { text:"Фото", cls:"tagText tagImg" };
+  if(it.type==="file") return { text:"Файл", cls:"tagText tagFile" };
+  if(it.type==="audio") return { text:"Аудио", cls:"tagText tagAudio" };
+  if(it.type==="code") return { text:"Код", cls:"tagText tagCode" };
+  if(it.type==="link") return { text:"Ссылка", cls:"tagText tagLink" };
+  return { text:"Текст", cls:"tagText" };
 }
 function escapeHTML(s){
   return (s||"").toString()
@@ -113,14 +154,27 @@ function urlTitle(u){
 }
 
 /** ===========================
- *  DB wrappers
+ *  RANGE FILL (cross-browser)
+ *  =========================== */
+function setRangeFill(el){
+  if(!el) return;
+  const min = Number(el.min || 0);
+  const max = Number(el.max || 0);
+  const val = Number(el.value || 0);
+  const denom = (max - min) || 1;
+  const pct = clamp(((val - min) / denom) * 100, 0, 100);
+  el.style.setProperty("--fill", pct + "%");
+}
+
+/** ===========================
+ *  DB wrappers (use storage.js signatures)
  *  =========================== */
 function saveDBLocal(){ saveDB(db); }
 function getPuchokLocal(id){ return getPuchok(db, id); }
 function getItemLocal(pId, itemId){ return getItem(db, pId, itemId); }
 
 /** ===========================
- *  MENU
+ *  MENU (Add)
  *  =========================== */
 function closeAddMenu(){
   addMenu.style.display = "none";
@@ -135,7 +189,7 @@ function toggleAddMenu(){
 }
 
 /** ===========================
- *  CHAT COLLAPSE
+ *  CHAT DOCK COLLAPSE/EXPAND
  *  =========================== */
 function expandChat(){
   chatDock.classList.remove("collapsed");
@@ -150,15 +204,17 @@ input.addEventListener("focus", expandChat);
 collapseBar.addEventListener("click", collapseChat);
 
 /** ===========================
- *  HEADER
+ *  UI HEADER
  *  =========================== */
 function setHeaderForList(){
   backBtn.style.display = "none";
   headTitle.textContent = "ПУЧКИ";
   headCrumb.textContent = "Пучки + чат";
+
   editPuchokBtn.style.display = "none";
   addMenuBtn.style.display = "none";
   closeAddMenu();
+
   newPuchokBtn.style.display = "";
   chatHint.textContent = "Совет: сначала открой пучок → тогда “В пучок” будет сохранять ответы прямо туда.";
 }
@@ -166,15 +222,17 @@ function setHeaderForPuchok(p){
   backBtn.style.display = "";
   headTitle.textContent = "ПУЧКИ";
   headCrumb.textContent = p.title || "Без названия";
+
   newPuchokBtn.style.display = "none";
   editPuchokBtn.style.display = "";
   addMenuBtn.style.display = "";
   closeAddMenu();
+
   chatHint.textContent = "Ты в пучке: ответы бота можно сохранять кнопкой “В пучок”.";
 }
 
 /** ===========================
- *  RENDER
+ *  UI RENDER
  *  =========================== */
 function render(){
   mainPanel.innerHTML = "";
@@ -200,7 +258,7 @@ function renderPuchokList(){
   if(db.puchki.length === 0){
     const empty = document.createElement("div");
     empty.className = "empty";
-    empty.innerHTML = "Пока нет пучков.<br>Нажми <b>+ Пучок</b>.";
+    empty.innerHTML = "Пока нет пучков.<br>Нажми <b>+ Пучок</b>, потом зайди внутрь и сохраняй туда ответы / заметки / файлы / аудио.";
     wrap.appendChild(empty);
   }else{
     const sorted = [...db.puchki].sort((a,b)=> (b.updatedAt||b.createdAt||"").localeCompare(a.updatedAt||a.createdAt||""));
@@ -219,10 +277,16 @@ function renderPuchokList(){
       sub.className = "sub";
       const count = (p.items || []).length;
 
-      sub.innerHTML = `
-        <span class="pill">Элементов: ${count}</span>
-        <span class="pill">Обновлён: ${fmtDate(p.updatedAt || p.createdAt || nowISO())}</span>
-      `;
+      const pill1 = document.createElement("span");
+      pill1.className = "pill";
+      pill1.textContent = `Элементов: ${count}`;
+
+      const pill2 = document.createElement("span");
+      pill2.className = "pill";
+      pill2.textContent = `Обновлён: ${fmtDate(p.updatedAt || p.createdAt || nowISO())}`;
+
+      sub.appendChild(pill1);
+      sub.appendChild(pill2);
 
       meta.appendChild(name);
       meta.appendChild(sub);
@@ -230,7 +294,7 @@ function renderPuchokList(){
       const btn = document.createElement("button");
       btn.className = "btnGhost";
       btn.textContent = "Открыть";
-      btn.onclick = () => openPuchok(p.id);
+      btn.addEventListener("click", () => openPuchok(p.id));
 
       card.appendChild(meta);
       card.appendChild(btn);
@@ -248,24 +312,88 @@ function renderPuchokInside(p){
   if((p.items || []).length === 0){
     const empty = document.createElement("div");
     empty.className = "empty";
-    empty.innerHTML = "Внутри пусто.<br>Нажми <b>+</b>.";
+    empty.innerHTML = "Внутри пусто.<br>Нажми <b>+</b> сверху справа → добавь текст / файл / аудио / код / ссылку.";
     wrap.appendChild(empty);
   }else{
     const sorted = [...p.items].sort((a,b)=> (b.updatedAt||b.createdAt||"").localeCompare(a.updatedAt||a.createdAt||""));
     for(const it of sorted){
       const row = document.createElement("div");
       row.className = "itemRow";
-      row.onclick = () => openItem(p.id, it.id);
+      row.addEventListener("click", () => openItem(p.id, it.id));
 
-      row.innerHTML = `
-        <div class="itemLeft">
-          <div class="thumb"></div>
-          <div class="itemText">
-            <div class="itemTitle">${escapeHTML(it.title || "Элемент")}</div>
-            <div class="itemDesc">${fmtDate(it.createdAt)}</div>
-          </div>
-        </div>
-      `;
+      const left = document.createElement("div");
+      left.className = "itemLeft";
+
+      const thumb = document.createElement("div");
+      thumb.className = "thumb";
+
+      if(it.type === "image" && it.thumbKey){
+        thumb.innerHTML = `<span style="color:#98a2b3;font-size:12px;font-weight:900">…</span>`;
+        (async()=>{
+          const b = await idbGetBlob(it.thumbKey);
+          if(b){
+            const url = URL.createObjectURL(b);
+            const img = document.createElement("img");
+            img.src = url;
+            img.onload = ()=> URL.revokeObjectURL(url);
+            thumb.innerHTML = "";
+            thumb.appendChild(img);
+          }else{
+            thumb.innerHTML = icoSVG("image");
+          }
+        })();
+      }else{
+        if(it.type==="file") thumb.innerHTML = icoSVG("file");
+        else if(it.type==="audio") thumb.innerHTML = icoSVG("audio");
+        else if(it.type==="code") thumb.innerHTML = icoSVG("code");
+        else if(it.type==="link") thumb.innerHTML = icoSVG("link");
+        else thumb.innerHTML = icoSVG("image");
+      }
+
+      const textWrap = document.createElement("div");
+      textWrap.className = "itemText";
+
+      const title = document.createElement("div");
+      title.className = "itemTitle";
+      title.textContent = it.title || "Элемент";
+
+      const desc = document.createElement("div");
+      desc.className = "itemDesc";
+
+      if(it.type === "text"){
+        const preview = (it.content || "").toString().trim().replace(/\s+/g," ");
+        desc.textContent = preview ? (preview.length > 90 ? preview.slice(0,90)+"…" : preview) : "Пусто";
+      }else if(it.type === "code"){
+        const preview = (it.content || "").toString().replace(/\s+$/,"");
+        const oneLine = preview.replace(/\s+/g," ").trim();
+        desc.textContent = oneLine ? (oneLine.length > 90 ? oneLine.slice(0,90)+"…" : oneLine) : "Пусто";
+      }else if(it.type === "link"){
+        desc.textContent = it.url ? it.url : "—";
+      }else if(it.type === "image"){
+        desc.textContent = `${fmtBytes(it.size)} • ${fmtDate(it.createdAt || it.updatedAt || nowISO())}`;
+      }else if(it.type === "file"){
+        desc.textContent = `${fmtBytes(it.size)} • ${it.mime || "file"} • ${fmtDate(it.createdAt || it.updatedAt || nowISO())}`;
+      }else if(it.type === "audio"){
+        const segs = (it.segments || []).length;
+        const total = (it.segments || []).reduce((s,x)=> s + (x.size || 0), 0);
+        desc.textContent = `Сегментов: ${segs} • ${fmtBytes(total)} • ${fmtDate(it.createdAt || it.updatedAt || nowISO())}`;
+      }else{
+        desc.textContent = fmtDate(it.createdAt || it.updatedAt || nowISO());
+      }
+
+      textWrap.appendChild(title);
+      textWrap.appendChild(desc);
+
+      left.appendChild(thumb);
+      left.appendChild(textWrap);
+
+      const right = document.createElement("div");
+      const t = typeLabel(it);
+      right.className = t.cls;
+      right.textContent = t.text;
+
+      row.appendChild(left);
+      row.appendChild(right);
       wrap.appendChild(row);
     }
   }
@@ -274,7 +402,7 @@ function renderPuchokInside(p){
 }
 
 /** ===========================
- *  CRUD
+ *  NAV
  *  =========================== */
 function openPuchok(id){
   currentPuchokId = id;
@@ -285,12 +413,16 @@ function goBack(){
   currentPuchokId = null;
   render();
 }
+
+/** ===========================
+ *  CRUD: Puchok
+ *  =========================== */
 function createPuchok(){
   const name = prompt("Название пучка:", "Новый пучок");
   if(name === null) return;
   const p = {
     id: uid(),
-    title: (name || "").trim() || "Новый пучок",
+    title: (name || "").trim() || "Новый пuchok",
     createdAt: nowISO(),
     updatedAt: nowISO(),
     items: []
@@ -299,23 +431,453 @@ function createPuchok(){
   saveDBLocal();
   openPuchok(p.id);
 }
+function renameCurrentPuchok(){
+  const p = getPuchokLocal(currentPuchokId);
+  if(!p) return;
+  const name = prompt("Новое название пучка:", p.title || "");
+  if(name === null) return;
+  p.title = (name || "").trim() || "Без названия";
+  p.updatedAt = nowISO();
+  saveDBLocal();
+  render();
+}
+async function deleteCurrentPuchok(){
+  const p = getPuchokLocal(currentPuchokId);
+  if(!p) return;
+  closeAddMenu();
+  const ok = confirm(`Удалить пучок “${p.title || "Без названия"}”?`);
+  if(!ok) return;
+
+  for(const it of (p.items || [])){
+    await cleanupItemBlobs(it);
+  }
+
+  db.puchki = db.puchki.filter(x => x.id !== p.id);
+  saveDBLocal();
+  currentPuchokId = null;
+  render();
+}
 
 /** ===========================
- *  CHAT
+ *  CRUD: Items
+ *  =========================== */
+function ensureCurrentPuchok(){
+  const p = getPuchokLocal(currentPuchokId);
+  if(!p){
+    alert("Сначала открой пучок — тогда можно добавлять туда элементы.");
+    return null;
+  }
+  return p;
+}
+
+function addTextItemToCurrent(initialText = ""){
+  const p = ensureCurrentPuchok();
+  if(!p) return;
+
+  const it = {
+    id: uid(),
+    type: "text",
+    title: safeTitleFromText(initialText) || "Текст",
+    content: (initialText || "").toString(),
+    createdAt: nowISO(),
+    updatedAt: nowISO()
+  };
+  p.items.push(it);
+  p.updatedAt = nowISO();
+  saveDBLocal();
+  render();
+  openItem(p.id, it.id);
+}
+
+function addCodeItemToCurrent(initialCode = ""){
+  const p = ensureCurrentPuchok();
+  if(!p) return;
+
+  const it = {
+    id: uid(),
+    type: "code",
+    title: safeTitleFromText(initialCode) || "Код",
+    content: (initialCode || "").toString(),
+    createdAt: nowISO(),
+    updatedAt: nowISO()
+  };
+  p.items.push(it);
+  p.updatedAt = nowISO();
+  saveDBLocal();
+  render();
+  openItem(p.id, it.id);
+}
+
+function addLinkItemsToCurrent(rawInput){
+  const p = ensureCurrentPuchok();
+  if(!p) return;
+
+  const lines = (rawInput || "")
+    .toString()
+    .split(/\r?\n/)
+    .map(s => s.trim())
+    .filter(Boolean);
+
+  if(lines.length === 0){
+    alert("Вставь ссылку (или несколько строк — несколько ссылок).");
+    return;
+  }
+
+  for(const line of lines){
+    const u = normalizeUrl(line);
+    if(!u) continue;
+    const it = {
+      id: uid(),
+      type: "link",
+      title: urlTitle(u),
+      url: u,
+      createdAt: nowISO(),
+      updatedAt: nowISO()
+    };
+    p.items.push(it);
+  }
+
+  p.updatedAt = nowISO();
+  saveDBLocal();
+  render();
+}
+
+async function addFileItemToCurrent(file){
+  const p = ensureCurrentPuchok();
+  if(!p) return;
+
+  const isImg = (file.type || "").startsWith("image/");
+  const id = uid();
+  const blobKey = `blob:${id}:main`;
+  await idbPutBlob(blobKey, file);
+
+  let it;
+  if(isImg){
+    const thumbKey = `blob:${id}:thumb`;
+    await idbPutBlob(thumbKey, file);
+    it = {
+      id,
+      type: "image",
+      title: file.name ? file.name : "Фото",
+      blobKey,
+      thumbKey,
+      mime: file.type || "image/*",
+      size: file.size || 0,
+      createdAt: nowISO(),
+      updatedAt: nowISO()
+    };
+  }else{
+    it = {
+      id,
+      type: "file",
+      title: file.name || "Файл",
+      blobKey,
+      mime: file.type || "application/octet-stream",
+      size: file.size || 0,
+      createdAt: nowISO(),
+      updatedAt: nowISO()
+    };
+  }
+
+  p.items.push(it);
+  p.updatedAt = nowISO();
+  saveDBLocal();
+  render();
+  openItem(p.id, it.id);
+}
+
+/** ===========================
+ *  MODAL / OPEN ITEM
+ *  =========================== */
+function closeModal(){
+  // audio.js exports these
+  if(typeof stopAnyRecordingSafely === "function") stopAnyRecordingSafely();
+  if(typeof stopRecClock === "function") stopRecClock();
+  if(typeof stopSmartPlayback === "function") stopSmartPlayback();
+
+  modalWrap.style.display = "none";
+  modalTextarea.style.display = "none";
+  modalViewer.style.display = "none";
+  modalViewer.innerHTML = "";
+  modalTextarea.classList.remove("codeTextarea");
+  modalCopy.style.display = "none";
+  openItemId = null;
+  openItemType = null;
+}
+
+async function openItem(puchokId, itemId){
+  const p = getPuchokLocal(puchokId);
+  if(!p) return;
+  const it = (p.items || []).find(x => x.id === itemId);
+  if(!it) return;
+
+  if(typeof stopSmartPlayback === "function") stopSmartPlayback();
+
+  openItemId = itemId;
+  openItemType = it.type;
+
+  modalTitle.textContent = it.title || "Элемент";
+  modalHint.textContent = "";
+  modalViewer.innerHTML = "";
+
+  modalDelete.style.display = "";
+  modalSave.style.display = "none";
+  modalCopy.style.display = "none";
+  modalTextarea.classList.remove("codeTextarea");
+
+  if(it.type === "text"){
+    modalTextarea.style.display = "block";
+    modalViewer.style.display = "none";
+    modalTextarea.value = it.content || "";
+    modalSave.style.display = "";
+    modalHint.textContent = "Текст можно редактировать и сохранять.";
+    modalWrap.style.display = "flex";
+    setTimeout(()=> modalTextarea.focus(), 50);
+    return;
+  }
+
+  if(it.type === "code"){
+    modalTextarea.style.display = "block";
+    modalViewer.style.display = "none";
+    modalTextarea.value = it.content || "";
+    modalTextarea.classList.add("codeTextarea");
+    modalSave.style.display = "";
+    modalCopy.style.display = "";
+    modalHint.textContent = "Код: редактирование + Copy.";
+    modalWrap.style.display = "flex";
+    setTimeout(()=> modalTextarea.focus(), 50);
+    return;
+  }
+
+  modalTextarea.style.display = "none";
+  modalViewer.style.display = "block";
+  modalWrap.style.display = "flex";
+
+  if(it.type === "link"){
+    modalHint.textContent = "Ссылка: открыть или скопировать.";
+    const url = it.url || "";
+    modalViewer.innerHTML = `
+      <div class="fileRow">
+        <div class="fileMeta">
+          <div class="fileName">${escapeHTML(it.title || "Ссылка")}</div>
+          <div class="fileSub" style="word-break:break-all">${escapeHTML(url)}</div>
+        </div>
+        <div class="tagText tagLink">Ссылка</div>
+      </div>
+      <div class="viewerActions">
+        <button class="btnGhost" id="btnOpenLink" ${url ? "" : "disabled"}>Открыть</button>
+        <button class="btnGhost" id="btnCopyLink" ${url ? "" : "disabled"}>Copy</button>
+      </div>
+    `;
+    const btnOpen = document.getElementById("btnOpenLink");
+    const btnCopy = document.getElementById("btnCopyLink");
+    if(btnOpen) btnOpen.onclick = () => url && window.open(url, "_blank");
+    if(btnCopy) btnCopy.onclick = async () => {
+      if(!url) return;
+      try{
+        await navigator.clipboard.writeText(url);
+      }catch{
+        const ta = document.createElement("textarea");
+        ta.value = url;
+        document.body.appendChild(ta);
+        ta.select();
+        try{ document.execCommand("copy"); }catch{}
+        ta.remove();
+      }
+    };
+    return;
+  }
+
+  if(it.type === "image"){
+    modalHint.textContent = "Фото хранится локально (IndexedDB).";
+    const b = await idbGetBlob(it.blobKey);
+    if(!b){
+      modalViewer.innerHTML = `<div class="empty">Файл не найден в хранилище.</div>`;
+      return;
+    }
+    const url = URL.createObjectURL(b);
+    modalViewer.innerHTML = `
+      <img src="${url}" alt="Фото" />
+      <div class="viewerActions">
+        <button class="btnGhost" id="btnOpenNewTab">Открыть</button>
+        <button class="btnGhost" id="btnDownload">Скачать</button>
+      </div>
+    `;
+    document.getElementById("btnOpenNewTab").onclick = () => window.open(url, "_blank");
+    document.getElementById("btnDownload").onclick = () => {
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = it.title || "image";
+      a.click();
+    };
+    return;
+  }
+
+  if(it.type === "file"){
+    modalHint.textContent = "Файл хранится локально (IndexedDB).";
+    const b = await idbGetBlob(it.blobKey);
+    if(!b){
+      modalViewer.innerHTML = `<div class="empty">Файл не найден в хранилище.</div>`;
+      return;
+    }
+    const url = URL.createObjectURL(b);
+    modalViewer.innerHTML = `
+      <div class="fileRow">
+        <div class="fileMeta">
+          <div class="fileName">${escapeHTML(it.title || "Файл")}</div>
+          <div class="fileSub">${escapeHTML(it.mime || "file")} • ${fmtBytes(it.size)}</div>
+        </div>
+        <div class="tagText tagFile">Файл</div>
+      </div>
+      <div class="viewerActions">
+        <button class="btnGhost" id="btnOpenNewTab">Открыть</button>
+        <button class="btnGhost" id="btnDownload">Скачать</button>
+      </div>
+      <div class="hint">Открытие зависит от типа файла и возможностей браузера. Если не откроется — используй “Скачать”.</div>
+    `;
+    document.getElementById("btnOpenNewTab").onclick = () => window.open(url, "_blank");
+    document.getElementById("btnDownload").onclick = () => {
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = it.title || "file";
+      a.click();
+    };
+    return;
+  }
+
+  if(it.type === "audio"){
+    // audio.js exports renderAudioViewer
+    if(typeof renderAudioViewer === "function"){
+      await renderAudioViewer(it, puchokId);
+    }else{
+      modalViewer.innerHTML = `<div class="empty">audio.js не загрузился.</div>`;
+    }
+    return;
+  }
+}
+
+/** ===========================
+ *  MODAL SAVE/DELETE/COPY
+ *  =========================== */
+function saveModal(){
+  const p = getPuchokLocal(currentPuchokId);
+  if(!p) return;
+  const it = (p.items || []).find(x => x.id === openItemId);
+  if(!it) return;
+
+  if(it.type === "text"){
+    const txt = modalTextarea.value || "";
+    it.content = txt;
+    it.title = safeTitleFromText(txt) || (it.title || "Текст");
+    it.updatedAt = nowISO();
+    p.updatedAt = nowISO();
+    saveDBLocal();
+    closeModal();
+    render();
+    return;
+  }
+
+  if(it.type === "code"){
+    const code = modalTextarea.value || "";
+    it.content = code;
+    it.title = safeTitleFromText(code) || (it.title || "Код");
+    it.updatedAt = nowISO();
+    p.updatedAt = nowISO();
+    saveDBLocal();
+    closeModal();
+    render();
+    return;
+  }
+}
+
+async function copyModal(){
+  const p = getPuchokLocal(currentPuchokId);
+  if(!p) return;
+  const it = (p.items || []).find(x => x.id === openItemId);
+  if(!it) return;
+
+  let text = "";
+  if(it.type === "code") text = (modalTextarea.value || it.content || "").toString();
+  else if(it.type === "text") text = (modalTextarea.value || it.content || "").toString();
+  else if(it.type === "link") text = (it.url || "").toString();
+  if(!text) return;
+
+  try{
+    await navigator.clipboard.writeText(text);
+  }catch{
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    document.body.appendChild(ta);
+    ta.select();
+    try{ document.execCommand("copy"); }catch{}
+    ta.remove();
+  }
+}
+
+async function deleteModal(){
+  const p = getPuchokLocal(currentPuchokId);
+  if(!p) return;
+  const it = (p.items || []).find(x => x.id === openItemId);
+  if(!it) return;
+
+  const ok = confirm("Удалить этот элемент?");
+  if(!ok) return;
+
+  if(typeof stopAnyRecordingSafely === "function") stopAnyRecordingSafely();
+  if(typeof stopRecClock === "function") stopRecClock();
+  if(typeof stopSmartPlayback === "function") stopSmartPlayback();
+
+  await cleanupItemBlobs(it);
+
+  p.items = (p.items || []).filter(x => x.id !== it.id);
+  p.updatedAt = nowISO();
+  saveDBLocal();
+  closeModal();
+  render();
+}
+
+/** ===========================
+ *  CHAT UI
  *  =========================== */
 function addMsg(text, cls){
   const wrap = document.createElement("div");
   wrap.className = "msg " + cls;
-  wrap.innerHTML = `<div>${escapeHTML(text)}</div>`;
+
+  const body = document.createElement("div");
+  body.textContent = text;
+  wrap.appendChild(body);
+
+  if(cls === "bot"){
+    const tools = document.createElement("div");
+    tools.className = "msgTools";
+
+    const btnSave = document.createElement("button");
+    btnSave.className = "miniBtn miniBtnOk";
+    btnSave.textContent = "В пучок";
+    btnSave.addEventListener("click", () => {
+      if(!currentPuchokId){
+        alert("Открой пучок — тогда “В пучок” сохранит ответ туда.");
+        return;
+      }
+      addTextItemToCurrent(text);
+    });
+
+    tools.appendChild(btnSave);
+    wrap.appendChild(tools);
+  }
+
   chat.appendChild(wrap);
   chat.scrollTop = chat.scrollHeight;
 }
 
 function clearChat(){
   chat.innerHTML = "";
-  addMsg("Чат очищен.", "bot");
+  addMsg("Чат очищен. Пиши сообщение — я отправлю в Worker (/chat).", "bot");
 }
 
+/** ===========================
+ *  CHAT NETWORK
+ *  =========================== */
 async function handleSend(){
   const text = input.value.trim();
   if(!text) return;
@@ -332,10 +894,19 @@ async function handleSend(){
       body: JSON.stringify({ message: text })
     });
 
-    const data = await resp.json();
-    addMsg(data.answer || "Нет ответа", "bot");
+    const raw = await resp.text();
+    let data = {};
+    try{ data = JSON.parse(raw); }catch{}
+
+    if(!resp.ok){
+      addMsg(`HTTP ${resp.status}: ${raw || "error"}`, "err");
+    }else if(data && data.ok){
+      addMsg(data.answer || "Нет ответа", "bot");
+    }else{
+      addMsg(raw || "Неожиданный ответ", "err");
+    }
   }catch(e){
-    addMsg("Ошибка сети", "err");
+    addMsg("Ошибка сети: " + (e?.message || e), "err");
   }
 
   send.disabled = false;
@@ -344,11 +915,77 @@ async function handleSend(){
 /** ===========================
  *  EVENTS
  *  =========================== */
-backBtn.onclick = goBack;
-newPuchokBtn.onclick = createPuchok;
-send.onclick = handleSend;
-input.addEventListener("keydown", e => { if(e.key==="Enter") handleSend(); });
-clearChatBtn.onclick = clearChat;
+backBtn.addEventListener("click", goBack);
+newPuchokBtn.addEventListener("click", createPuchok);
+
+editPuchokBtn.addEventListener("click", () => {
+  closeAddMenu();
+  renameCurrentPuchok();
+});
+
+addMenuBtn.addEventListener("click", (e)=>{
+  e.stopPropagation();
+  toggleAddMenu();
+});
+
+menuAddText.addEventListener("click", ()=>{
+  closeAddMenu();
+  addTextItemToCurrent("");
+});
+
+menuAddFile.addEventListener("click", ()=>{
+  closeAddMenu();
+  if(!currentPuchokId){ alert("Сначала открой пучок."); return; }
+  filePicker.value = "";
+  filePicker.click();
+});
+
+menuAddAudio.addEventListener("click", async ()=>{
+  closeAddMenu();
+  if(!currentPuchokId){ alert("Сначала открой пучок."); return; }
+  if(typeof createAudioItemAndRecord === "function"){
+    await createAudioItemAndRecord();
+  }else{
+    alert("audio.js не загрузился (нет createAudioItemAndRecord).");
+  }
+});
+
+menuAddCode.addEventListener("click", ()=>{
+  closeAddMenu();
+  addCodeItemToCurrent("");
+});
+
+menuAddLink.addEventListener("click", ()=>{
+  closeAddMenu();
+  const raw = prompt("Вставь ссылку (или несколько строк):", "");
+  if(raw === null) return;
+  addLinkItemsToCurrent(raw);
+});
+
+menuDeletePuchok.addEventListener("click", async ()=>{
+  await deleteCurrentPuchok();
+});
+
+filePicker.addEventListener("change", async () => {
+  const f = filePicker.files && filePicker.files[0];
+  if(!f) return;
+  await addFileItemToCurrent(f);
+});
+
+// audioPicker change handler переехал в /assets/audio.js
+
+send.addEventListener("click", handleSend);
+input.addEventListener("keydown", (e) => { if(e.key === "Enter") handleSend(); });
+clearChatBtn.addEventListener("click", clearChat);
+
+modalClose.addEventListener("click", closeModal);
+modalWrap.addEventListener("click", (e)=>{ if(e.target === modalWrap) closeModal(); });
+modalSave.addEventListener("click", saveModal);
+modalDelete.addEventListener("click", deleteModal);
+modalCopy.addEventListener("click", copyModal);
+
+document.addEventListener("click", ()=> closeAddMenu());
+addMenu.addEventListener("click", (e)=> e.stopPropagation());
 
 /** ===========================
  *  INIT
