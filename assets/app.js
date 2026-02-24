@@ -3,6 +3,45 @@
  *  =========================== */
 const WORKER_URL = "https://gptim24.timashevanatoly10.workers.dev";
 
+// API token (для доступа к Worker). Храним локально на устройстве.
+const API_TOKEN_STORAGE_KEY = "PUCHKI_API_TOKEN";
+
+/** ===========================
+ *  TOKEN HELPERS
+ *  =========================== */
+function getApiToken(){
+  try{
+    return (localStorage.getItem(API_TOKEN_STORAGE_KEY) || "").trim();
+  }catch{
+    return "";
+  }
+}
+function setApiToken(token){
+  try{
+    const t = (token || "").toString().trim();
+    if(!t) localStorage.removeItem(API_TOKEN_STORAGE_KEY);
+    else localStorage.setItem(API_TOKEN_STORAGE_KEY, t);
+  }catch{}
+}
+function promptApiToken(){
+  const current = getApiToken();
+  const t = prompt("Введи API token для доступа к приложению:", current || "");
+  if(t === null) return null; // cancel
+  const cleaned = (t || "").toString().trim();
+  setApiToken(cleaned);
+  return cleaned;
+}
+function ensureApiToken({ force = false } = {}){
+  const t = getApiToken();
+  if(t && !force) return t;
+  const entered = promptApiToken();
+  return (entered || "").trim();
+}
+function authHeaders(){
+  const t = getApiToken();
+  return t ? { "Authorization": "Bearer " + t } : {};
+}
+
 /** ===========================
  *  DOM
  *  =========================== */
@@ -422,7 +461,7 @@ function createPuchok(){
   if(name === null) return;
   const p = {
     id: uid(),
-    title: (name || "").trim() || "Новый пuchok",
+    title: (name || "").trim() || "Новый пучок",
     createdAt: nowISO(),
     updatedAt: nowISO(),
     items: []
@@ -872,12 +911,29 @@ function addMsg(text, cls){
 
 function clearChat(){
   chat.innerHTML = "";
-  addMsg("Чат очищен. Пиши сообщение — я отправлю в Worker (/chat).", "bot");
+  const hasToken = !!getApiToken();
+  addMsg(
+    hasToken
+      ? "Чат очищен. Пиши сообщение — отправлю в Worker (/chat)."
+      : "Чат очищен. ВНИМАНИЕ: нет API token. При первой отправке попрошу токен.",
+    "bot"
+  );
 }
 
 /** ===========================
  *  CHAT NETWORK
  *  =========================== */
+async function postChatOnce(text){
+  return await fetch(WORKER_URL + "/chat", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...authHeaders(),
+    },
+    body: JSON.stringify({ message: text })
+  });
+}
+
 async function handleSend(){
   const text = input.value.trim();
   if(!text) return;
@@ -888,11 +944,27 @@ async function handleSend(){
   send.disabled = true;
 
   try{
-    const resp = await fetch(WORKER_URL + "/chat", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message: text })
-    });
+    // 1) убеждаемся что есть токен (если нет — спросим)
+    const t = ensureApiToken({ force: false });
+    if(!t){
+      addMsg("Нужен API token. Нажми отправить ещё раз и введи токен.", "err");
+      send.disabled = false;
+      return;
+    }
+
+    // 2) отправляем
+    let resp = await postChatOnce(text);
+
+    // 3) если не авторизованы — попросим токен ещё раз и повторим 1 раз
+    if(resp.status === 401 || resp.status === 403){
+      const t2 = ensureApiToken({ force: true });
+      if(!t2){
+        addMsg("Без токена доступа нет (401/403).", "err");
+        send.disabled = false;
+        return;
+      }
+      resp = await postChatOnce(text);
+    }
 
     const raw = await resp.text();
     let data = {};
@@ -977,6 +1049,12 @@ filePicker.addEventListener("change", async () => {
 send.addEventListener("click", handleSend);
 input.addEventListener("keydown", (e) => { if(e.key === "Enter") handleSend(); });
 clearChatBtn.addEventListener("click", clearChat);
+
+// Доп. горячая кнопка: двойной клик по "Очистить" — сменить токен
+clearChatBtn.addEventListener("dblclick", ()=>{
+  promptApiToken();
+  clearChat();
+});
 
 modalClose.addEventListener("click", closeModal);
 modalWrap.addEventListener("click", (e)=>{ if(e.target === modalWrap) closeModal(); });
