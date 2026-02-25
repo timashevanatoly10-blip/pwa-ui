@@ -1,20 +1,22 @@
 /** ===========================
+ *  PUCHKI — APP (cloud-first for D1)
+ *  - Puchki + text/code/link items live in D1 via Worker
+ *  - Blobs (image/file/audio segments) stay local in IndexedDB (storage.js) for now
+ *  - audio.js compatibility: we keep an in-memory db mirror + shims
+ *  =========================== */
+
+/** ===========================
  *  CONFIG
  *  =========================== */
 const WORKER_URL = "https://gptim24.timashevanatoly10.workers.dev";
-
-// API token (для доступа к Worker). Храним локально на устройстве.
 const API_TOKEN_STORAGE_KEY = "PUCHKI_API_TOKEN";
 
 /** ===========================
  *  TOKEN HELPERS
  *  =========================== */
 function getApiToken(){
-  try{
-    return (localStorage.getItem(API_TOKEN_STORAGE_KEY) || "").trim();
-  }catch{
-    return "";
-  }
+  try{ return (localStorage.getItem(API_TOKEN_STORAGE_KEY) || "").trim(); }
+  catch{ return ""; }
 }
 function setApiToken(token){
   try{
@@ -26,7 +28,7 @@ function setApiToken(token){
 function promptApiToken(){
   const current = getApiToken();
   const t = prompt("Введи API token для доступа к приложению:", current || "");
-  if(t === null) return null; // cancel
+  if(t === null) return null;
   const cleaned = (t || "").toString().trim();
   setApiToken(cleaned);
   return cleaned;
@@ -84,12 +86,17 @@ const modalCopy = document.getElementById("modalCopy");
 const modalHint = document.getElementById("modalHint");
 
 /** ===========================
- *  STATE
+ *  STATE (cloud-first)
  *  =========================== */
-let db = loadDB();
 let currentPuchokId = null;
 let openItemId = null;
 let openItemType = null;
+let isBusy = false;
+
+// In-memory mirror shaped like old local DB (for UI + audio.js compatibility)
+let db = { puchki: [] }; // [{id,title,createdAt,updatedAt, items: []}]
+window.db = db; // audio.js expects global "db"
+window.currentPuchokId = currentPuchokId; // keep synced below
 
 /** ===========================
  *  PLATFORM / FEATURE DETECT
@@ -137,30 +144,6 @@ function fmtTimeSec(sec){
   const s = Math.floor(sec%60);
   return `${m}:${s.toString().padStart(2,"0")}`;
 }
-function icoSVG(kind){
-  const common = `class="ico" viewBox="0 0 24 24" fill="none"`;
-  if(kind==="file"){
-    return `<svg ${common}><path d="M7 3h7l3 3v15H7V3Z" stroke="#111317" stroke-width="2"/><path d="M14 3v6h6" stroke="#111317" stroke-width="2"/></svg>`;
-  }
-  if(kind==="audio"){
-    return `<svg ${common}><path d="M12 3v12" stroke="#111317" stroke-width="2"/><path d="M8 7v8" stroke="#111317" stroke-width="2"/><path d="M16 7v8" stroke="#111317" stroke-width="2"/><path d="M5 11v4" stroke="#111317" stroke-width="2"/><path d="M19 11v4" stroke="#111317" stroke-width="2"/></svg>`;
-  }
-  if(kind==="code"){
-    return `<svg ${common}><path d="M9 18L3 12l6-6" stroke="#111317" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M15 6l6 6-6 6" stroke="#111317" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
-  }
-  if(kind==="link"){
-    return `<svg ${common}><path d="M10 13a5 5 0 0 1 0-7l1-1a5 5 0 0 1 7 7l-1 1" stroke="#111317" stroke-width="2" stroke-linecap="round"/><path d="M14 11a5 5 0 0 1 0 7l-1 1a5 5 0 0 1-7-7l1-1" stroke="#111317" stroke-width="2" stroke-linecap="round"/></svg>`;
-  }
-  return `<svg ${common}><path d="M4 6h16v12H4V6Z" stroke="#111317" stroke-width="2"/><path d="M8 11l2.5 3 2-2 3.5 4" stroke="#111317" stroke-width="2" stroke-linejoin="round"/><path d="M9 9.5h.01" stroke="#111317" stroke-width="3" stroke-linecap="round"/></svg>`;
-}
-function typeLabel(it){
-  if(it.type==="image") return { text:"Фото", cls:"tagText tagImg" };
-  if(it.type==="file") return { text:"Файл", cls:"tagText tagFile" };
-  if(it.type==="audio") return { text:"Аудио", cls:"tagText tagAudio" };
-  if(it.type==="code") return { text:"Код", cls:"tagText tagCode" };
-  if(it.type==="link") return { text:"Ссылка", cls:"tagText tagLink" };
-  return { text:"Текст", cls:"tagText" };
-}
 function escapeHTML(s){
   return (s||"").toString()
     .replaceAll("&","&amp;")
@@ -192,6 +175,31 @@ function urlTitle(u){
   }
 }
 
+function icoSVG(kind){
+  const common = `class="ico" viewBox="0 0 24 24" fill="none"`;
+  if(kind==="file"){
+    return `<svg ${common}><path d="M7 3h7l3 3v15H7V3Z" stroke="#111317" stroke-width="2"/><path d="M14 3v6h6" stroke="#111317" stroke-width="2"/></svg>`;
+  }
+  if(kind==="audio"){
+    return `<svg ${common}><path d="M12 3v12" stroke="#111317" stroke-width="2"/><path d="M8 7v8" stroke="#111317" stroke-width="2"/><path d="M16 7v8" stroke="#111317" stroke-width="2"/><path d="M5 11v4" stroke="#111317" stroke-width="2"/><path d="M19 11v4" stroke="#111317" stroke-width="2"/></svg>`;
+  }
+  if(kind==="code"){
+    return `<svg ${common}><path d="M9 18L3 12l6-6" stroke="#111317" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M15 6l6 6-6 6" stroke="#111317" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+  }
+  if(kind==="link"){
+    return `<svg ${common}><path d="M10 13a5 5 0 0 1 0-7l1-1a5 5 0 0 1 7 7l-1 1" stroke="#111317" stroke-width="2" stroke-linecap="round"/><path d="M14 11a5 5 0 0 1 0 7l-1 1a5 5 0 0 1-7-7l1-1" stroke="#111317" stroke-width="2" stroke-linecap="round"/></svg>`;
+  }
+  return `<svg ${common}><path d="M4 6h16v12H4V6Z" stroke="#111317" stroke-width="2"/><path d="M8 11l2.5 3 2-2 3.5 4" stroke="#111317" stroke-width="2" stroke-linejoin="round"/><path d="M9 9.5h.01" stroke="#111317" stroke-width="3" stroke-linecap="round"/></svg>`;
+}
+function typeLabel(it){
+  if(it.type==="image") return { text:"Фото", cls:"tagText tagImg" };
+  if(it.type==="file") return { text:"Файл", cls:"tagText tagFile" };
+  if(it.type==="audio") return { text:"Аудио", cls:"tagText tagAudio" };
+  if(it.type==="code") return { text:"Код", cls:"tagText tagCode" };
+  if(it.type==="link") return { text:"Ссылка", cls:"tagText tagLink" };
+  return { text:"Текст", cls:"tagText" };
+}
+
 /** ===========================
  *  RANGE FILL (cross-browser)
  *  =========================== */
@@ -204,13 +212,235 @@ function setRangeFill(el){
   const pct = clamp(((val - min) / denom) * 100, 0, 100);
   el.style.setProperty("--fill", pct + "%");
 }
+window.setRangeFill = setRangeFill; // audio.js uses it
 
 /** ===========================
- *  DB wrappers (use storage.js signatures)
+ *  STORAGE.JS SHIMS (blobs only)
+ *  - storage.js must provide: idbPutBlob, idbGetBlob, cleanupItemBlobs
  *  =========================== */
-function saveDBLocal(){ saveDB(db); }
-function getPuchokLocal(id){ return getPuchok(db, id); }
-function getItemLocal(pId, itemId){ return getItem(db, pId, itemId); }
+async function cleanupItemBlobsSafe(it){
+  try{
+    if(typeof cleanupItemBlobs === "function") await cleanupItemBlobs(it);
+  }catch{}
+}
+
+/** ===========================
+ *  DB SHIMS for audio.js
+ *  =========================== */
+function saveDBLocal(){
+  // audio.js expects: persist modified item (segments/durationSec/etc).
+  // Here we push those changes into D1 (meta field) when possible.
+  try{
+    if(!currentPuchokId) return;
+    const p = getPuchokLocal(currentPuchokId);
+    if(!p) return;
+
+    // Patch only the item that is currently open/playing/recording is messy;
+    // we do a safe, small pass: patch all items in current puchok that have meta-ish fields.
+    // To avoid spamming: throttle by an in-flight lock.
+    schedulePersistCurrentPuchokItems();
+  }catch{}
+}
+function getPuchokLocal(id){ return (db.puchki || []).find(x => x.id === id) || null; }
+function getItemLocal(pId, itemId){
+  const p = getPuchokLocal(pId);
+  if(!p) return null;
+  return (p.items || []).find(x => x.id === itemId) || null;
+}
+window.saveDBLocal = saveDBLocal;
+window.getPuchokLocal = getPuchokLocal;
+window.getItemLocal = getItemLocal;
+window.nowISO = nowISO;
+window.uid = uid;
+window.fmtBytes = fmtBytes;
+window.fmtTimeSec = fmtTimeSec;
+window.clamp = clamp;
+window.escapeHTML = escapeHTML;
+window.isIOS = isIOS;
+window.hasMediaRecorder = hasMediaRecorder;
+window.canUseWebAudio = canUseWebAudio;
+window.chooseAudioMode = chooseAudioMode;
+window.audioPicker = audioPicker;
+window.modalViewer = modalViewer;
+window.modalHint = modalHint;
+
+/** ===========================
+ *  NETWORK (Worker API)
+ *  =========================== */
+async function apiFetch(path, { method="GET", json=null, headers={}, retryAuth=true } = {}){
+  const url = WORKER_URL + path;
+
+  // ensure token once for auth-zone calls
+  const needsToken = (path === "/chat" || path.startsWith("/db/") || path.startsWith("/puchki") || path.startsWith("/items"));
+  if(needsToken){
+    const t = ensureApiToken({ force:false });
+    if(!t) throw new Error("NO_TOKEN");
+  }
+
+  const resp = await fetch(url, {
+    method,
+    headers: {
+      ...(json ? { "Content-Type":"application/json" } : {}),
+      ...authHeaders(),
+      ...headers,
+    },
+    body: json ? JSON.stringify(json) : undefined,
+  });
+
+  if((resp.status === 401 || resp.status === 403) && retryAuth && needsToken){
+    const t2 = ensureApiToken({ force:true });
+    if(!t2) throw new Error("UNAUTHORIZED");
+    return await apiFetch(path, { method, json, headers, retryAuth:false });
+  }
+
+  return resp;
+}
+
+async function apiJson(path, opts){
+  const resp = await apiFetch(path, opts);
+  const raw = await resp.text().catch(()=>"");
+  let data = {};
+  try{ data = JSON.parse(raw); }catch{}
+  if(!resp.ok || !data || data.ok === false){
+    const msg = (data && data.error) ? data.error : (raw || `HTTP ${resp.status}`);
+    throw new Error(msg);
+  }
+  return data;
+}
+
+/** ===========================
+ *  DATA MAPPING (D1 -> UI objects)
+ *  =========================== */
+function parseMeta(meta){
+  if(!meta) return null;
+  if(typeof meta === "object") return meta;
+  try{ return JSON.parse(meta); }catch{ return null; }
+}
+
+function mapPuchokRow(row){
+  return {
+    id: row.id,
+    title: row.title,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    items: [], // loaded on open
+    itemsCount: null,
+  };
+}
+
+function mapItemRow(row){
+  const meta = parseMeta(row.meta) || null;
+
+  const it = {
+    id: row.id,
+    type: row.type,
+    title: row.title || null,
+    content: row.content || null,
+    url: row.url || null,
+    mime: row.mime || null,
+    size: Number(row.size || 0),
+    meta: meta || null,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+
+  // Back-compat fields stored in meta (local blobs / audio segments)
+  if(meta && typeof meta === "object"){
+    if(meta.blobKey) it.blobKey = meta.blobKey;
+    if(meta.thumbKey) it.thumbKey = meta.thumbKey;
+    if(meta.segments) it.segments = meta.segments;
+    if(meta.durationSec != null) it.durationSec = meta.durationSec;
+  }
+
+  // Normalize types for UI labels (we use "image" when mime starts with image/)
+  if(it.type === "file" && it.mime && it.mime.startsWith("image/")){
+    it.type = "image";
+  }
+
+  return it;
+}
+
+function itemToPatchPayload(it){
+  // For cloud-first: store blob/audio stuff in meta JSON
+  const meta = Object.assign({}, (it.meta && typeof it.meta === "object") ? it.meta : {});
+  if(it.blobKey) meta.blobKey = it.blobKey;
+  if(it.thumbKey) meta.thumbKey = it.thumbKey;
+  if(it.segments) meta.segments = it.segments;
+  if(it.durationSec != null) meta.durationSec = it.durationSec;
+
+  const payload = {};
+  if(it.type) payload.type = it.type === "image" ? "file" : it.type; // keep D1 types simple if you prefer
+  if(it.title !== undefined) payload.title = it.title;
+  if(it.content !== undefined) payload.content = it.content;
+  if(it.url !== undefined) payload.url = it.url;
+  if(it.mime !== undefined) payload.mime = it.mime;
+  if(it.size !== undefined) payload.size = it.size;
+  payload.meta = Object.keys(meta).length ? meta : null;
+  return payload;
+}
+
+/** ===========================
+ *  CLOUD LOADERS
+ *  =========================== */
+async function loadPuchkiList(){
+  const data = await apiJson("/puchki", { method:"GET" });
+  const list = (data.puchki || []).map(mapPuchokRow);
+  db.puchki = list;
+}
+
+async function loadPuchokWithItems(puchokId){
+  const data = await apiJson(`/puchki/${encodeURIComponent(puchokId)}`, { method:"GET" });
+  const pRow = data.puchok;
+  const itemsRows = data.items || [];
+
+  const p = mapPuchokRow(pRow);
+  p.items = itemsRows.map(mapItemRow);
+
+  // update/insert into db mirror
+  const idx = (db.puchki || []).findIndex(x => x.id === p.id);
+  if(idx >= 0) db.puchki[idx] = Object.assign(db.puchki[idx], p);
+  else db.puchki.unshift(p);
+
+  // ensure current pointer exists
+  return getPuchokLocal(p.id);
+}
+
+/** ===========================
+ *  PERSIST (throttled) — for audio.js changes
+ *  =========================== */
+let persistTimer = null;
+let persistInFlight = false;
+
+function schedulePersistCurrentPuchokItems(){
+  if(persistTimer) clearTimeout(persistTimer);
+  persistTimer = setTimeout(async ()=>{
+    if(persistInFlight) return;
+    persistInFlight = true;
+    try{
+      const p = getPuchokLocal(currentPuchokId);
+      if(!p) return;
+
+      // Persist only audio/file/image items that carry meta keys
+      const toPersist = (p.items || []).filter(it => {
+        if(!it) return false;
+        if(it.type === "audio") return true;
+        if(it.type === "file" || it.type === "image") return !!(it.blobKey || it.thumbKey || it.meta);
+        return false;
+      });
+
+      for(const it of toPersist){
+        try{
+          await apiJson(`/items/${encodeURIComponent(it.id)}`, {
+            method:"PATCH",
+            json: itemToPatchPayload(it),
+          });
+        }catch{}
+      }
+    }finally{
+      persistInFlight = false;
+    }
+  }, 600);
+}
 
 /** ===========================
  *  MENU (Add)
@@ -275,6 +505,8 @@ function setHeaderForPuchok(p){
  *  =========================== */
 function render(){
   mainPanel.innerHTML = "";
+  window.currentPuchokId = currentPuchokId; // keep in sync for audio.js
+
   if(!currentPuchokId){
     setHeaderForList();
     renderPuchokList();
@@ -289,12 +521,13 @@ function render(){
     renderPuchokInside(p);
   }
 }
+window.render = render; // audio.js expects render()
 
 function renderPuchokList(){
   const wrap = document.createElement("div");
   wrap.className = "list";
 
-  if(db.puchki.length === 0){
+  if((db.puchki || []).length === 0){
     const empty = document.createElement("div");
     empty.className = "empty";
     empty.innerHTML = "Пока нет пучков.<br>Нажми <b>+ Пучок</b>, потом зайди внутрь и сохраняй туда ответы / заметки / файлы / аудио.";
@@ -314,11 +547,11 @@ function renderPuchokList(){
 
       const sub = document.createElement("div");
       sub.className = "sub";
-      const count = (p.items || []).length;
 
       const pill1 = document.createElement("span");
       pill1.className = "pill";
-      pill1.textContent = `Элементов: ${count}`;
+      // D1 list doesn’t provide count — we show "—"
+      pill1.textContent = `Элементов: ${Number.isFinite(p.itemsCount) ? p.itemsCount : "—"}`;
 
       const pill2 = document.createElement("span");
       pill2.className = "pill";
@@ -348,13 +581,14 @@ function renderPuchokInside(p){
   const wrap = document.createElement("div");
   wrap.className = "list";
 
-  if((p.items || []).length === 0){
+  const items = p.items || [];
+  if(items.length === 0){
     const empty = document.createElement("div");
     empty.className = "empty";
     empty.innerHTML = "Внутри пусто.<br>Нажми <b>+</b> сверху справа → добавь текст / файл / аудио / код / ссылку.";
     wrap.appendChild(empty);
   }else{
-    const sorted = [...p.items].sort((a,b)=> (b.updatedAt||b.createdAt||"").localeCompare(a.updatedAt||a.createdAt||""));
+    const sorted = [...items].sort((a,b)=> (b.updatedAt||b.createdAt||"").localeCompare(a.updatedAt||a.createdAt||""));
     for(const it of sorted){
       const row = document.createElement("div");
       row.className = "itemRow";
@@ -369,15 +603,19 @@ function renderPuchokInside(p){
       if(it.type === "image" && it.thumbKey){
         thumb.innerHTML = `<span style="color:#98a2b3;font-size:12px;font-weight:900">…</span>`;
         (async()=>{
-          const b = await idbGetBlob(it.thumbKey);
-          if(b){
-            const url = URL.createObjectURL(b);
-            const img = document.createElement("img");
-            img.src = url;
-            img.onload = ()=> URL.revokeObjectURL(url);
-            thumb.innerHTML = "";
-            thumb.appendChild(img);
-          }else{
+          try{
+            const b = await idbGetBlob(it.thumbKey);
+            if(b){
+              const url = URL.createObjectURL(b);
+              const img = document.createElement("img");
+              img.src = url;
+              img.onload = ()=> URL.revokeObjectURL(url);
+              thumb.innerHTML = "";
+              thumb.appendChild(img);
+            }else{
+              thumb.innerHTML = icoSVG("image");
+            }
+          }catch{
             thumb.innerHTML = icoSVG("image");
           }
         })();
@@ -441,11 +679,21 @@ function renderPuchokInside(p){
 }
 
 /** ===========================
- *  NAV
+ *  NAV (cloud)
  *  =========================== */
-function openPuchok(id){
-  currentPuchokId = id;
-  render();
+async function openPuchok(id){
+  if(isBusy) return;
+  isBusy = true;
+  try{
+    currentPuchokId = id;
+    await loadPuchokWithItems(id);
+  }catch(e){
+    addMsg("Ошибка загрузки пучка: " + (e?.message || e), "err");
+    currentPuchokId = null;
+  }finally{
+    isBusy = false;
+    render();
+  }
 }
 function goBack(){
   closeAddMenu();
@@ -454,51 +702,80 @@ function goBack(){
 }
 
 /** ===========================
- *  CRUD: Puchok
+ *  CRUD: Puchok (cloud)
  *  =========================== */
-function createPuchok(){
+async function createPuchok(){
+  if(isBusy) return;
   const name = prompt("Название пучка:", "Новый пучок");
   if(name === null) return;
-  const p = {
-    id: uid(),
-    title: (name || "").trim() || "Новый пучок",
-    createdAt: nowISO(),
-    updatedAt: nowISO(),
-    items: []
-  };
-  db.puchki.push(p);
-  saveDBLocal();
-  openPuchok(p.id);
+
+  const title = (name || "").trim() || "Новый пучок";
+  isBusy = true;
+  try{
+    const data = await apiJson("/puchki", { method:"POST", json:{ title } });
+    const p = mapPuchokRow(data.puchok);
+    db.puchki.unshift(p);
+    currentPuchokId = p.id;
+    await loadPuchokWithItems(p.id);
+  }catch(e){
+    addMsg("Ошибка создания пучка: " + (e?.message || e), "err");
+  }finally{
+    isBusy = false;
+    render();
+  }
 }
-function renameCurrentPuchok(){
+
+async function renameCurrentPuchok(){
   const p = getPuchokLocal(currentPuchokId);
   if(!p) return;
+
   const name = prompt("Новое название пучка:", p.title || "");
   if(name === null) return;
-  p.title = (name || "").trim() || "Без названия";
-  p.updatedAt = nowISO();
-  saveDBLocal();
-  render();
+
+  const title = (name || "").trim() || "Без названия";
+
+  isBusy = true;
+  try{
+    await apiJson(`/puchki/${encodeURIComponent(p.id)}`, { method:"PATCH", json:{ title } });
+    p.title = title;
+    p.updatedAt = nowISO();
+  }catch(e){
+    addMsg("Ошибка переименования: " + (e?.message || e), "err");
+  }finally{
+    isBusy = false;
+    render();
+  }
 }
+
 async function deleteCurrentPuchok(){
   const p = getPuchokLocal(currentPuchokId);
   if(!p) return;
+
   closeAddMenu();
   const ok = confirm(`Удалить пучок “${p.title || "Без названия"}”?`);
   if(!ok) return;
 
-  for(const it of (p.items || [])){
-    await cleanupItemBlobs(it);
-  }
+  isBusy = true;
+  try{
+    // cleanup local blobs (best-effort)
+    for(const it of (p.items || [])){
+      await cleanupItemBlobsSafe(it);
+    }
 
-  db.puchki = db.puchki.filter(x => x.id !== p.id);
-  saveDBLocal();
-  currentPuchokId = null;
-  render();
+    await apiJson(`/puchki/${encodeURIComponent(p.id)}`, { method:"DELETE" });
+
+    db.puchki = (db.puchki || []).filter(x => x.id !== p.id);
+    currentPuchokId = null;
+  }catch(e){
+    addMsg("Ошибка удаления пучка: " + (e?.message || e), "err");
+  }finally{
+    isBusy = false;
+    render();
+  }
 }
 
 /** ===========================
- *  CRUD: Items
+ *  CRUD: Items (cloud)
  *  =========================== */
 function ensureCurrentPuchok(){
   const p = getPuchokLocal(currentPuchokId);
@@ -509,45 +786,66 @@ function ensureCurrentPuchok(){
   return p;
 }
 
-function addTextItemToCurrent(initialText = ""){
+async function refreshCurrentPuchok(){
+  if(!currentPuchokId) return;
+  await loadPuchokWithItems(currentPuchokId);
+}
+
+async function addTextItemToCurrent(initialText = ""){
   const p = ensureCurrentPuchok();
   if(!p) return;
 
-  const it = {
-    id: uid(),
-    type: "text",
-    title: safeTitleFromText(initialText) || "Текст",
-    content: (initialText || "").toString(),
-    createdAt: nowISO(),
-    updatedAt: nowISO()
-  };
-  p.items.push(it);
-  p.updatedAt = nowISO();
-  saveDBLocal();
-  render();
-  openItem(p.id, it.id);
+  const content = (initialText || "").toString();
+  const title = safeTitleFromText(content) || "Текст";
+
+  isBusy = true;
+  try{
+    const data = await apiJson(`/puchki/${encodeURIComponent(p.id)}/items`, {
+      method:"POST",
+      json:{ type:"text", title, content }
+    });
+
+    const it = mapItemRow(data.item);
+    p.items = p.items || [];
+    p.items.unshift(it);
+    p.updatedAt = it.updatedAt;
+    render();
+    await openItem(p.id, it.id);
+  }catch(e){
+    addMsg("Ошибка добавления текста: " + (e?.message || e), "err");
+  }finally{
+    isBusy = false;
+  }
 }
 
-function addCodeItemToCurrent(initialCode = ""){
+async function addCodeItemToCurrent(initialCode = ""){
   const p = ensureCurrentPuchok();
   if(!p) return;
 
-  const it = {
-    id: uid(),
-    type: "code",
-    title: safeTitleFromText(initialCode) || "Код",
-    content: (initialCode || "").toString(),
-    createdAt: nowISO(),
-    updatedAt: nowISO()
-  };
-  p.items.push(it);
-  p.updatedAt = nowISO();
-  saveDBLocal();
-  render();
-  openItem(p.id, it.id);
+  const content = (initialCode || "").toString();
+  const title = safeTitleFromText(content) || "Код";
+
+  isBusy = true;
+  try{
+    const data = await apiJson(`/puchki/${encodeURIComponent(p.id)}/items`, {
+      method:"POST",
+      json:{ type:"code", title, content }
+    });
+
+    const it = mapItemRow(data.item);
+    p.items = p.items || [];
+    p.items.unshift(it);
+    p.updatedAt = it.updatedAt;
+    render();
+    await openItem(p.id, it.id);
+  }catch(e){
+    addMsg("Ошибка добавления кода: " + (e?.message || e), "err");
+  }finally{
+    isBusy = false;
+  }
 }
 
-function addLinkItemsToCurrent(rawInput){
+async function addLinkItemsToCurrent(rawInput){
   const p = ensureCurrentPuchok();
   if(!p) return;
 
@@ -562,74 +860,114 @@ function addLinkItemsToCurrent(rawInput){
     return;
   }
 
-  for(const line of lines){
-    const u = normalizeUrl(line);
-    if(!u) continue;
-    const it = {
-      id: uid(),
-      type: "link",
-      title: urlTitle(u),
-      url: u,
-      createdAt: nowISO(),
-      updatedAt: nowISO()
-    };
-    p.items.push(it);
-  }
+  isBusy = true;
+  try{
+    for(const line of lines){
+      const u = normalizeUrl(line);
+      if(!u) continue;
+      const title = urlTitle(u);
 
-  p.updatedAt = nowISO();
-  saveDBLocal();
-  render();
+      const data = await apiJson(`/puchki/${encodeURIComponent(p.id)}/items`, {
+        method:"POST",
+        json:{ type:"link", title, url: u }
+      });
+
+      const it = mapItemRow(data.item);
+      p.items = p.items || [];
+      p.items.unshift(it);
+      p.updatedAt = it.updatedAt;
+    }
+    render();
+  }catch(e){
+    addMsg("Ошибка добавления ссылок: " + (e?.message || e), "err");
+  }finally{
+    isBusy = false;
+  }
 }
 
 async function addFileItemToCurrent(file){
   const p = ensureCurrentPuchok();
   if(!p) return;
 
+  // 1) Save blob locally (IndexedDB) — we keep as before
   const isImg = (file.type || "").startsWith("image/");
-  const id = uid();
-  const blobKey = `blob:${id}:main`;
-  await idbPutBlob(blobKey, file);
+  const idLocal = uid();
+  const blobKey = `blob:${idLocal}:main`;
+  try{ await idbPutBlob(blobKey, file); }catch{}
 
-  let it;
+  let thumbKey = null;
   if(isImg){
-    const thumbKey = `blob:${id}:thumb`;
-    await idbPutBlob(thumbKey, file);
-    it = {
-      id,
-      type: "image",
-      title: file.name ? file.name : "Фото",
-      blobKey,
-      thumbKey,
-      mime: file.type || "image/*",
-      size: file.size || 0,
-      createdAt: nowISO(),
-      updatedAt: nowISO()
-    };
-  }else{
-    it = {
-      id,
-      type: "file",
-      title: file.name || "Файл",
-      blobKey,
-      mime: file.type || "application/octet-stream",
-      size: file.size || 0,
-      createdAt: nowISO(),
-      updatedAt: nowISO()
-    };
+    thumbKey = `blob:${idLocal}:thumb`;
+    try{ await idbPutBlob(thumbKey, file); }catch{}
   }
 
-  p.items.push(it);
-  p.updatedAt = nowISO();
-  saveDBLocal();
-  render();
-  openItem(p.id, it.id);
+  // 2) Create D1 item with meta pointing to local keys (until R2)
+  const meta = {
+    blobKey,
+    ...(thumbKey ? { thumbKey } : {}),
+    localOnly: true,
+  };
+
+  isBusy = true;
+  try{
+    const data = await apiJson(`/puchki/${encodeURIComponent(p.id)}/items`, {
+      method:"POST",
+      json:{
+        type: "file",
+        title: file.name || (isImg ? "Фото" : "Файл"),
+        mime: file.type || (isImg ? "image/*" : "application/octet-stream"),
+        size: file.size || 0,
+        meta,
+      }
+    });
+
+    const it = mapItemRow(data.item);
+    // Keep UI-friendly type for images
+    if(isImg) it.type = "image";
+    it.blobKey = blobKey;
+    if(thumbKey) it.thumbKey = thumbKey;
+
+    p.items = p.items || [];
+    p.items.unshift(it);
+    p.updatedAt = it.updatedAt;
+
+    render();
+    await openItem(p.id, it.id);
+  }catch(e){
+    addMsg("Ошибка добавления файла: " + (e?.message || e), "err");
+  }finally{
+    isBusy = false;
+  }
+}
+
+async function createAudioItemCloud(){
+  const p = ensureCurrentPuchok();
+  if(!p) return null;
+
+  const title = `Аудио ${new Date().toLocaleDateString()}`;
+  const meta = { segments: [], durationSec: 0, localOnly: true };
+
+  const data = await apiJson(`/puchki/${encodeURIComponent(p.id)}/items`, {
+    method:"POST",
+    json:{ type:"audio", title, meta }
+  });
+
+  const it = mapItemRow(data.item);
+  it.type = "audio";
+  it.segments = [];
+  it.durationSec = 0;
+
+  p.items = p.items || [];
+  p.items.unshift(it);
+  p.updatedAt = it.updatedAt;
+
+  return it;
 }
 
 /** ===========================
  *  MODAL / OPEN ITEM
  *  =========================== */
 function closeModal(){
-  // audio.js exports these
   if(typeof stopAnyRecordingSafely === "function") stopAnyRecordingSafely();
   if(typeof stopRecClock === "function") stopRecClock();
   if(typeof stopSmartPlayback === "function") stopSmartPlayback();
@@ -669,7 +1007,7 @@ async function openItem(puchokId, itemId){
     modalViewer.style.display = "none";
     modalTextarea.value = it.content || "";
     modalSave.style.display = "";
-    modalHint.textContent = "Текст можно редактировать и сохранять.";
+    modalHint.textContent = "Текст хранится в облаке (D1).";
     modalWrap.style.display = "flex";
     setTimeout(()=> modalTextarea.focus(), 50);
     return;
@@ -682,7 +1020,7 @@ async function openItem(puchokId, itemId){
     modalTextarea.classList.add("codeTextarea");
     modalSave.style.display = "";
     modalCopy.style.display = "";
-    modalHint.textContent = "Код: редактирование + Copy.";
+    modalHint.textContent = "Код хранится в облаке (D1).";
     modalWrap.style.display = "flex";
     setTimeout(()=> modalTextarea.focus(), 50);
     return;
@@ -693,7 +1031,7 @@ async function openItem(puchokId, itemId){
   modalWrap.style.display = "flex";
 
   if(it.type === "link"){
-    modalHint.textContent = "Ссылка: открыть или скопировать.";
+    modalHint.textContent = "Ссылка хранится в облаке (D1).";
     const url = it.url || "";
     modalViewer.innerHTML = `
       <div class="fileRow">
@@ -728,10 +1066,15 @@ async function openItem(puchokId, itemId){
   }
 
   if(it.type === "image"){
-    modalHint.textContent = "Фото хранится локально (IndexedDB).";
-    const b = await idbGetBlob(it.blobKey);
+    modalHint.textContent = "Фото: метаданные в облаке (D1), файл пока локально (IndexedDB).";
+    const key = it.blobKey || (it.meta && it.meta.blobKey) || null;
+    if(!key){
+      modalViewer.innerHTML = `<div class="empty">Локальный blobKey не найден (пока без R2 фото не восстановить на другом устройстве).</div>`;
+      return;
+    }
+    const b = await idbGetBlob(key).catch(()=>null);
     if(!b){
-      modalViewer.innerHTML = `<div class="empty">Файл не найден в хранилище.</div>`;
+      modalViewer.innerHTML = `<div class="empty">Файл не найден в локальном хранилище (IndexedDB).</div>`;
       return;
     }
     const url = URL.createObjectURL(b);
@@ -753,10 +1096,15 @@ async function openItem(puchokId, itemId){
   }
 
   if(it.type === "file"){
-    modalHint.textContent = "Файл хранится локально (IndexedDB).";
-    const b = await idbGetBlob(it.blobKey);
+    modalHint.textContent = "Файл: метаданные в облаке (D1), файл пока локально (IndexedDB).";
+    const key = it.blobKey || (it.meta && it.meta.blobKey) || null;
+    if(!key){
+      modalViewer.innerHTML = `<div class="empty">Локальный blobKey не найден (пока без R2 файл не восстановить на другом устройстве).</div>`;
+      return;
+    }
+    const b = await idbGetBlob(key).catch(()=>null);
     if(!b){
-      modalViewer.innerHTML = `<div class="empty">Файл не найден в хранилище.</div>`;
+      modalViewer.innerHTML = `<div class="empty">Файл не найден в локальном хранилище (IndexedDB).</div>`;
       return;
     }
     const url = URL.createObjectURL(b);
@@ -785,7 +1133,7 @@ async function openItem(puchokId, itemId){
   }
 
   if(it.type === "audio"){
-    // audio.js exports renderAudioViewer
+    // audio.js expects local-style item with segments + can record and update it
     if(typeof renderAudioViewer === "function"){
       await renderAudioViewer(it, puchokId);
     }else{
@@ -798,7 +1146,7 @@ async function openItem(puchokId, itemId){
 /** ===========================
  *  MODAL SAVE/DELETE/COPY
  *  =========================== */
-function saveModal(){
+async function saveModal(){
   const p = getPuchokLocal(currentPuchokId);
   if(!p) return;
   const it = (p.items || []).find(x => x.id === openItemId);
@@ -809,10 +1157,21 @@ function saveModal(){
     it.content = txt;
     it.title = safeTitleFromText(txt) || (it.title || "Текст");
     it.updatedAt = nowISO();
-    p.updatedAt = nowISO();
-    saveDBLocal();
-    closeModal();
-    render();
+
+    isBusy = true;
+    try{
+      await apiJson(`/items/${encodeURIComponent(it.id)}`, {
+        method:"PATCH",
+        json:{ title: it.title, content: it.content }
+      });
+      await refreshCurrentPuchok();
+      closeModal();
+      render();
+    }catch(e){
+      addMsg("Ошибка сохранения: " + (e?.message || e), "err");
+    }finally{
+      isBusy = false;
+    }
     return;
   }
 
@@ -821,10 +1180,21 @@ function saveModal(){
     it.content = code;
     it.title = safeTitleFromText(code) || (it.title || "Код");
     it.updatedAt = nowISO();
-    p.updatedAt = nowISO();
-    saveDBLocal();
-    closeModal();
-    render();
+
+    isBusy = true;
+    try{
+      await apiJson(`/items/${encodeURIComponent(it.id)}`, {
+        method:"PATCH",
+        json:{ title: it.title, content: it.content }
+      });
+      await refreshCurrentPuchok();
+      closeModal();
+      render();
+    }catch(e){
+      addMsg("Ошибка сохранения: " + (e?.message || e), "err");
+    }finally{
+      isBusy = false;
+    }
     return;
   }
 }
@@ -866,13 +1236,18 @@ async function deleteModal(){
   if(typeof stopRecClock === "function") stopRecClock();
   if(typeof stopSmartPlayback === "function") stopSmartPlayback();
 
-  await cleanupItemBlobs(it);
-
-  p.items = (p.items || []).filter(x => x.id !== it.id);
-  p.updatedAt = nowISO();
-  saveDBLocal();
-  closeModal();
-  render();
+  isBusy = true;
+  try{
+    await cleanupItemBlobsSafe(it);
+    await apiJson(`/items/${encodeURIComponent(it.id)}`, { method:"DELETE" });
+    await refreshCurrentPuchok();
+    closeModal();
+    render();
+  }catch(e){
+    addMsg("Ошибка удаления: " + (e?.message || e), "err");
+  }finally{
+    isBusy = false;
+  }
 }
 
 /** ===========================
@@ -924,13 +1299,9 @@ function clearChat(){
  *  CHAT NETWORK
  *  =========================== */
 async function postChatOnce(text){
-  return await fetch(WORKER_URL + "/chat", {
+  return await apiFetch("/chat", {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...authHeaders(),
-    },
-    body: JSON.stringify({ message: text })
+    json: { message: text },
   });
 }
 
@@ -944,29 +1315,8 @@ async function handleSend(){
   send.disabled = true;
 
   try{
-    // 1) убеждаемся что есть токен (если нет — спросим)
-    const t = ensureApiToken({ force: false });
-    if(!t){
-      addMsg("Нужен API token. Нажми отправить ещё раз и введи токен.", "err");
-      send.disabled = false;
-      return;
-    }
-
-    // 2) отправляем
-    let resp = await postChatOnce(text);
-
-    // 3) если не авторизованы — попросим токен ещё раз и повторим 1 раз
-    if(resp.status === 401 || resp.status === 403){
-      const t2 = ensureApiToken({ force: true });
-      if(!t2){
-        addMsg("Без токена доступа нет (401/403).", "err");
-        send.disabled = false;
-        return;
-      }
-      resp = await postChatOnce(text);
-    }
-
-    const raw = await resp.text();
+    const resp = await postChatOnce(text);
+    const raw = await resp.text().catch(()=> "");
     let data = {};
     try{ data = JSON.parse(raw); }catch{}
 
@@ -978,7 +1328,10 @@ async function handleSend(){
       addMsg(raw || "Неожиданный ответ", "err");
     }
   }catch(e){
-    addMsg("Ошибка сети: " + (e?.message || e), "err");
+    const msg = (e && e.message === "NO_TOKEN")
+      ? "Нужен API token. Нажми отправить ещё раз и введи токен."
+      : ("Ошибка сети: " + (e?.message || e));
+    addMsg(msg, "err");
   }
 
   send.disabled = false;
@@ -1015,10 +1368,26 @@ menuAddFile.addEventListener("click", ()=>{
 menuAddAudio.addEventListener("click", async ()=>{
   closeAddMenu();
   if(!currentPuchokId){ alert("Сначала открой пучок."); return; }
-  if(typeof createAudioItemAndRecord === "function"){
-    await createAudioItemAndRecord();
-  }else{
-    alert("audio.js не загрузился (нет createAudioItemAndRecord).");
+  try{
+    // Create cloud item first, then let audio.js record into it
+    const it = await createAudioItemCloud();
+    if(!it){
+      alert("Не удалось создать аудио-элемент в облаке.");
+      return;
+    }
+    render();
+    await openItem(currentPuchokId, it.id);
+
+    if(typeof startRecordingToAudioItem === "function"){
+      await startRecordingToAudioItem(currentPuchokId, it.id);
+    }else if(typeof createAudioItemAndRecord === "function"){
+      // fallback (shouldn’t happen now)
+      await createAudioItemAndRecord();
+    }else{
+      alert("audio.js не загрузился (нет startRecordingToAudioItem).");
+    }
+  }catch(e){
+    addMsg("Ошибка аудио: " + (e?.message || e), "err");
   }
 });
 
@@ -1044,13 +1413,13 @@ filePicker.addEventListener("change", async () => {
   await addFileItemToCurrent(f);
 });
 
-// audioPicker change handler переехал в /assets/audio.js
+// audioPicker change handler is in /assets/audio.js (it appends segments, then saveDBLocal() persists)
 
 send.addEventListener("click", handleSend);
 input.addEventListener("keydown", (e) => { if(e.key === "Enter") handleSend(); });
 clearChatBtn.addEventListener("click", clearChat);
 
-// Доп. горячая кнопка: двойной клик по "Очистить" — сменить токен
+// Double click "Очистить" — change token
 clearChatBtn.addEventListener("dblclick", ()=>{
   promptApiToken();
   clearChat();
@@ -1068,7 +1437,13 @@ addMenu.addEventListener("click", (e)=> e.stopPropagation());
 /** ===========================
  *  INIT
  *  =========================== */
-(function init(){
+(async function init(){
+  try{
+    // Load cloud list
+    await loadPuchkiList();
+  }catch(e){
+    // If no token yet, we still render empty list and allow chat/token prompt
+  }
   render();
   clearChat();
   collapseChat();
