@@ -1,8 +1,13 @@
 /* ===========================
    STORAGE LAYER
    localStorage + IndexedDB
+   - В текущей cloud-first схеме:
+     * metadata (puchki/items) живёт в D1 (через Worker)
+     * IndexedDB остаётся ТОЛЬКО для аудио-сегментов (пока) и совместимости audio.js
+     * Для file/image blobs теперь R2, поэтому blobKey/thumbKey для них больше не нужны
    =========================== */
 
+// (оставляем ключи, чтобы ничего не ломалось у старого кода/аудио)
 const STORAGE_KEY = "tim_puchki_v2";
 
 // IndexedDB
@@ -11,7 +16,11 @@ const IDB_STORE = "blobs";
 
 /* ===========================
    localStorage (metadata)
-   =========================== */
+   ===========================
+   В новой версии метаданные не сохраняем локально (они в D1).
+   Но функции оставляем как no-op / безопасные, чтобы ничего не падало,
+   если где-то ещё остались вызовы loadDB/saveDB.
+*/
 
 function loadDB(){
   try{
@@ -34,11 +43,14 @@ function loadDB(){
 }
 
 function saveDB(db){
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(db));
+  try{
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(db));
+  }catch{}
 }
 
 function getPuchok(db, id){
-  return db.puchki.find(p => p.id === id) || null;
+  try{ return (db && db.puchki ? db.puchki.find(p => p.id === id) : null) || null; }
+  catch{ return null; }
 }
 
 function getItem(db, pId, itemId){
@@ -108,23 +120,48 @@ async function idbDelete(key){
 
 /* ===========================
    Blob cleanup
-   =========================== */
+   ===========================
+   Важно:
+   - image/file blobs теперь в R2 => IndexedDB тут не трогаем для них
+   - audio сегменты пока локальные => чистим как раньше
+*/
 
 async function cleanupItemBlobs(it){
   try{
-    if(it.type === "image"){
-      if(it.blobKey) await idbDelete(it.blobKey);
-      if(it.thumbKey) await idbDelete(it.thumbKey);
+    if(!it) return;
+
+    // FILE/IMAGE: blobs в R2, локальных ключей больше может не быть
+    // но если остались старые записи (legacy), безопасно подчистим
+    if(it.type === "image" || it.type === "file"){
+      if(it.blobKey) await idbDelete(it.blobKey).catch(()=>{});
+      if(it.thumbKey) await idbDelete(it.thumbKey).catch(()=>{});
+      // NOTE: если blobKey/thumbKey нет — ок
+      return;
     }
-    else if(it.type === "file"){
-      if(it.blobKey) await idbDelete(it.blobKey);
-    }
-    else if(it.type === "audio"){
+
+    // AUDIO: сегменты локальные (IndexedDB)
+    if(it.type === "audio"){
       for(const s of (it.segments || [])){
-        if(s && s.key) await idbDelete(s.key);
+        if(s && s.key) await idbDelete(s.key).catch(()=>{});
       }
+      return;
     }
+
   }catch(e){
     console.error("Cleanup error:", e);
   }
 }
+
+/* ===========================
+   Expose for app/audio.js (если нужно)
+   =========================== */
+window.loadDB = loadDB;
+window.saveDB = saveDB;
+window.getPuchok = getPuchok;
+window.getItem = getItem;
+
+window.idbPutBlob = idbPutBlob;
+window.idbGetBlob = idbGetBlob;
+window.idbDelete = idbDelete;
+
+window.cleanupItemBlobs = cleanupItemBlobs;
