@@ -12,6 +12,8 @@ const WORKER_URL = "https://gptim24.timashevanatoly10.workers.dev";
 const API_TOKEN_STORAGE_KEY = "PUCHKI_API_TOKEN";
 
 // Порог: всё <= 20MB грузим через Worker (как ты и сказал)
+// ВАЖНО: мы применяем этот лимит ТОЛЬКО к обычным файлам (не image/*),
+// для фото лимит на фронте не режем (пусть воркер решает).
 const WORKER_UPLOAD_LIMIT_BYTES = 20 * 1024 * 1024;
 
 // R2 endpoints (в Worker мы их добавим/доделаем)
@@ -22,6 +24,12 @@ function itemBlobPath(itemId, qs = "") {
   const base = `/items/${encodeURIComponent(itemId)}/blob`;
   return qs ? `${base}?${qs}` : base;
 }
+
+// NEW for big files (direct upload via presign)
+// - POST /r2/presign   -> returns { ok:true, upload:{ url, method, headers?, key? } }
+// - POST /r2/complete  -> finalize item metadata in D1 after direct upload
+function r2PresignPath(){ return `/r2/presign`; }
+function r2CompletePath(){ return `/r2/complete`; }
 
 /** ===========================
  *  TOKEN HELPERS
@@ -307,7 +315,8 @@ async function apiFetch(path, { method="GET", json=null, headers={}, retryAuth=t
     path === "/chat" ||
     path.startsWith("/db/") ||
     path.startsWith("/puchki") ||
-    path.startsWith("/items")
+    path.startsWith("/items") ||
+    path.startsWith("/r2/")
   );
 
   if(needsToken){
@@ -349,9 +358,11 @@ async function apiJson(path, opts){
 /** ===========================
  *  R2 (via Worker) — FILE/IMAGE blobs
  *  =========================== */
-async function uploadItemBlobToR2(itemId, file){
+
+// upload via Worker; enforceLimit=true => режем 20MB на фронте
+async function uploadItemBlobToR2(itemId, file, { enforceLimit = true } = {}){
   if(!file) throw new Error("NO_FILE");
-  if((file.size || 0) > WORKER_UPLOAD_LIMIT_BYTES){
+  if(enforceLimit && (file.size || 0) > WORKER_UPLOAD_LIMIT_BYTES){
     throw new Error(`Файл слишком большой для загрузки через Worker (лимит ${fmtBytes(WORKER_UPLOAD_LIMIT_BYTES)}).`);
   }
 
@@ -395,6 +406,73 @@ async function deleteItemBlobFromR2(itemId){
     throw new Error(t || `HTTP ${resp.status}`);
   }
   return true;
+}
+
+/** ===========================
+ *  BIG FILE "obhod" (presign -> direct upload -> complete)
+ *  =========================== */
+async function directUploadLargeFileToR2({ itemId, puchokId, file }){
+  if(!file) throw new Error("NO_FILE");
+
+  let presign;
+  try{
+    presign = await apiJson(r2PresignPath(), {
+      method: "POST",
+      json: {
+        item_id: itemId,
+        puchok_id: puchokId,
+        name: (file.name || "file").toString(),
+        mime: (file.type || "application/octet-stream").toString(),
+        size: Number(file.size || 0),
+        source: "add_file",
+      }
+    });
+  }catch(e){
+    throw new Error(
+      `Обходная загрузка не настроена в воркере.\n` +
+      `Нужны эндпойнты: POST ${r2PresignPath()} и POST ${r2CompletePath()}.\n` +
+      `Детали: ${(e?.message || e)}`
+    );
+  }
+
+  const up = presign?.upload || null;
+  if(!up || !up.url){
+    throw new Error("Воркер вернул presign без upload.url (неожиданный формат ответа).");
+  }
+
+  const uploadUrl = up.url;
+  const method = (up.method || "PUT").toString().toUpperCase();
+  const extraHeaders = (up.headers && typeof up.headers === "object") ? up.headers : {};
+  const key = up.key || null;
+
+  const directResp = await fetch(uploadUrl, {
+    method,
+    headers: {
+      ...extraHeaders,
+      ...(extraHeaders["Content-Type"] ? {} : { "Content-Type": (file.type || "application/octet-stream") }),
+    },
+    body: file,
+  });
+
+  if(!directResp.ok){
+    const txt = await directResp.text().catch(()=> "");
+    throw new Error(`Direct upload в R2 не прошёл: HTTP ${directResp.status} ${txt || ""}`.trim());
+  }
+
+  const done = await apiJson(r2CompletePath(), {
+    method: "POST",
+    json: {
+      item_id: itemId,
+      puchok_id: puchokId,
+      key,
+      name: (file.name || "file").toString(),
+      mime: (file.type || "application/octet-stream").toString(),
+      size: Number(file.size || 0),
+      source: "add_file",
+    }
+  });
+
+  return done;
 }
 
 /** ===========================
@@ -1016,8 +1094,18 @@ async function addFileItemToCurrent(file){
     let it = mapItemRow(created.item);
     if(isImg) it.type = "image";
 
-    // 2) грузим blob в R2 (через worker)
-    await uploadItemBlobToR2(it.id, file);
+    // 2) грузим blob в R2
+    if(isImg){
+      // Фото: всегда через Worker, без front-limit
+      await uploadItemBlobToR2(it.id, file, { enforceLimit:false });
+    }else{
+      // Обычный файл: <=20MB через Worker, >20MB "обход"
+      if((file.size || 0) <= WORKER_UPLOAD_LIMIT_BYTES){
+        await uploadItemBlobToR2(it.id, file, { enforceLimit:true });
+      }else{
+        await directUploadLargeFileToR2({ itemId: it.id, puchokId: p.id, file });
+      }
+    }
 
     // 3) патчим meta => hasBlob:true
     it.r2 = { hasBlob:true, name: title, mime };
@@ -1029,10 +1117,8 @@ async function addFileItemToCurrent(file){
       json: itemToPatchPayload(it),
     });
 
-    // 4) обновляем локальную модель
-    p.items = p.items || [];
-    p.items.unshift(it);
-    p.updatedAt = nowISO();
+    // 4) обновляем локальную модель гарантированно из облака (подтянуть url/size/meta)
+    await refreshCurrentPuchok();
 
     render();
     await openItem(p.id, it.id);
