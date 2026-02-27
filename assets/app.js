@@ -98,6 +98,32 @@ const modalCopy = document.getElementById("modalCopy");
 const modalHint = document.getElementById("modalHint");
 
 /** ===========================
+ *  REFRESH BUTTON (inside puchok)
+ *  - если в HTML нет элемента refreshBtn, создаём его рядом с "+"
+ *  =========================== */
+let refreshBtn = document.getElementById("refreshBtn") || null;
+
+function ensureRefreshBtn(){
+  if(refreshBtn) return refreshBtn;
+  if(!addMenuBtn) return null;
+
+  refreshBtn = document.createElement("button");
+  refreshBtn.id = "refreshBtn";
+  refreshBtn.className = addMenuBtn.className || "btnGhost";
+  refreshBtn.type = "button";
+  refreshBtn.textContent = "⟳";
+
+  // вставим сразу после "+" (addMenuBtn)
+  const parent = addMenuBtn.parentElement;
+  if(parent){
+    if(addMenuBtn.nextSibling) parent.insertBefore(refreshBtn, addMenuBtn.nextSibling);
+    else parent.appendChild(refreshBtn);
+  }
+
+  return refreshBtn;
+}
+
+/** ===========================
  *  STATE (cloud-first)
  *  =========================== */
 let currentPuchokId = null;
@@ -536,6 +562,10 @@ function setHeaderForList(){
   addMenuBtn.style.display = "none";
   closeAddMenu();
 
+  // refresh hidden on list
+  ensureRefreshBtn();
+  if(refreshBtn) refreshBtn.style.display = "none";
+
   newPuchokBtn.style.display = "";
   chatHint.textContent = "Совет: сначала открой пучок → тогда “В пучок” будет сохранять ответы прямо туда.";
 }
@@ -548,6 +578,15 @@ function setHeaderForPuchok(p){
   editPuchokBtn.style.display = "";
   addMenuBtn.style.display = "";
   closeAddMenu();
+
+  // show refresh inside puchok
+  ensureRefreshBtn();
+  if(refreshBtn){
+    refreshBtn.style.display = "";
+    // подсказка в title (на ПК)
+    refreshBtn.title = "Обновить пучок";
+    refreshBtn.setAttribute("aria-label","Обновить пучок");
+  }
 
   chatHint.textContent = "Ты в пучке: ответы бота можно сохранять кнопкой “В пучок”.";
 }
@@ -826,6 +865,31 @@ function ensureCurrentPuchok(){
 async function refreshCurrentPuchok(){
   if(!currentPuchokId) return;
   await loadPuchokWithItems(currentPuchokId);
+}
+
+/** ===========================
+ *  REFRESH ACTION (no page reload, no kick to home)
+ *  =========================== */
+async function refreshCurrentPuchokAndStay(){
+  if(isBusy) return;
+  if(!currentPuchokId) return;
+
+  isBusy = true;
+  try{
+    // сохраняем позицию списка
+    const prevScroll = mainPanel ? mainPanel.scrollTop : 0;
+
+    await refreshCurrentPuchok();
+
+    render();
+
+    // вернём скролл (чтобы не "прыгало")
+    if(mainPanel) mainPanel.scrollTop = prevScroll;
+  }catch(e){
+    addMsg("Ошибка обновления: " + (e?.message || e), "err");
+  }finally{
+    isBusy = false;
+  }
 }
 
 async function addTextItemToCurrent(initialText = ""){
@@ -1393,6 +1457,16 @@ addMenuBtn.addEventListener("click", (e)=>{
   e.stopPropagation();
   toggleAddMenu();
 });
+
+// refresh click (created on demand)
+ensureRefreshBtn();
+if(refreshBtn){
+  refreshBtn.addEventListener("click", async (e)=>{
+    e.stopPropagation();
+    closeAddMenu();
+    await refreshCurrentPuchokAndStay();
+  });
+}
 
 menuAddText.addEventListener("click", ()=>{
   closeAddMenu();
