@@ -25,11 +25,13 @@ function itemBlobPath(itemId, qs = "") {
   return qs ? `${base}?${qs}` : base;
 }
 
-// NEW for big files (direct upload via presign)
-// - POST /r2/presign   -> returns { ok:true, upload:{ url, method, headers?, key? } }
-// - POST /r2/complete  -> finalize item metadata in D1 after direct upload
+// BIG FILE "obhod" (direct upload via presign)
+// ✅ Worker now supports:
+// - POST /r2/presign  (compat)  -> returns { ok:true, uploadUrl, key, expiresSec, ... }
+//   (or older format { ok:true, upload:{ url, method, headers?, key? } })
+// - POST /items/:id/blob/complete -> finalize meta/url/mime/size in D1 after direct upload
 function r2PresignPath(){ return `/r2/presign`; }
-function r2CompletePath(){ return `/r2/complete`; }
+function itemBlobCompletePath(itemId){ return `/items/${encodeURIComponent(itemId)}/blob/complete`; }
 
 /** ===========================
  *  TOKEN HELPERS
@@ -414,13 +416,15 @@ async function deleteItemBlobFromR2(itemId){
 async function directUploadLargeFileToR2({ itemId, puchokId, file }){
   if(!file) throw new Error("NO_FILE");
 
+  // 1) presign (compat endpoint)
   let presign;
   try{
     presign = await apiJson(r2PresignPath(), {
       method: "POST",
       json: {
-        item_id: itemId,
-        puchok_id: puchokId,
+        itemId,                 // ✅ поддержим оба варианта на бэке (мы шлём itemId)
+        item_id: itemId,        // ✅ и старый
+        puchok_id: puchokId,    // пусть будет, если воркеру нужно для key
         name: (file.name || "file").toString(),
         mime: (file.type || "application/octet-stream").toString(),
         size: Number(file.size || 0),
@@ -430,21 +434,24 @@ async function directUploadLargeFileToR2({ itemId, puchokId, file }){
   }catch(e){
     throw new Error(
       `Обходная загрузка не настроена в воркере.\n` +
-      `Нужны эндпойнты: POST ${r2PresignPath()} и POST ${r2CompletePath()}.\n` +
+      `Нужен эндпойнт: POST ${r2PresignPath()}.\n` +
       `Детали: ${(e?.message || e)}`
     );
   }
 
-  const up = presign?.upload || null;
-  if(!up || !up.url){
-    throw new Error("Воркер вернул presign без upload.url (неожиданный формат ответа).");
+  // ✅ Поддержка двух форматов ответа:
+  // A) { ok:true, uploadUrl, key, expiresSec, desired... }
+  // B) { ok:true, upload:{ url, method, headers?, key? } }
+  const uploadUrl = presign?.uploadUrl || presign?.upload?.url || "";
+  const method = ((presign?.upload?.method) || "PUT").toString().toUpperCase();
+  const extraHeaders = (presign?.upload?.headers && typeof presign.upload.headers === "object") ? presign.upload.headers : {};
+  const key = presign?.key || presign?.upload?.key || presign?.completed?.key || null;
+
+  if(!uploadUrl){
+    throw new Error("Воркер вернул presign без uploadUrl / upload.url (неожиданный формат ответа).");
   }
 
-  const uploadUrl = up.url;
-  const method = (up.method || "PUT").toString().toUpperCase();
-  const extraHeaders = (up.headers && typeof up.headers === "object") ? up.headers : {};
-  const key = up.key || null;
-
+  // 2) direct PUT to R2
   const directResp = await fetch(uploadUrl, {
     method,
     headers: {
@@ -459,12 +466,11 @@ async function directUploadLargeFileToR2({ itemId, puchokId, file }){
     throw new Error(`Direct upload в R2 не прошёл: HTTP ${directResp.status} ${txt || ""}`.trim());
   }
 
-  const done = await apiJson(r2CompletePath(), {
+  // 3) complete in Worker (writes url/mime/size/meta in D1)
+  const done = await apiJson(itemBlobCompletePath(itemId), {
     method: "POST",
     json: {
-      item_id: itemId,
-      puchok_id: puchokId,
-      key,
+      key, // может быть null — воркер сам деривит key
       name: (file.name || "file").toString(),
       mime: (file.type || "application/octet-stream").toString(),
       size: Number(file.size || 0),
@@ -661,7 +667,6 @@ function setHeaderForPuchok(p){
   ensureRefreshBtn();
   if(refreshBtn){
     refreshBtn.style.display = "";
-    // подсказка в title (на ПК)
     refreshBtn.title = "Обновить пучок";
     refreshBtn.setAttribute("aria-label","Обновить пучок");
   }
@@ -768,7 +773,6 @@ function renderPuchokInside(p){
       const thumb = document.createElement("div");
       thumb.className = "thumb";
 
-      // Пока без thumbnail — просто иконка
       if(it.type==="file") thumb.innerHTML = icoSVG("file");
       else if(it.type==="image") thumb.innerHTML = icoSVG("image");
       else if(it.type==="audio") thumb.innerHTML = icoSVG("audio");
@@ -906,12 +910,10 @@ async function deleteCurrentPuchok(){
 
   isBusy = true;
   try{
-    // best-effort: удаляем R2 blobs для file/image
     for(const it of (p.items || [])){
       if(it && (it.type === "file" || it.type === "image")){
         try{ await deleteItemBlobFromR2(it.id); }catch{}
       }else{
-        // audio segments local-only (пока)
         await cleanupItemBlobsSafe(it);
       }
     }
@@ -954,14 +956,9 @@ async function refreshCurrentPuchokAndStay(){
 
   isBusy = true;
   try{
-    // сохраняем позицию списка
     const prevScroll = mainPanel ? mainPanel.scrollTop : 0;
-
     await refreshCurrentPuchok();
-
     render();
-
-    // вернём скролл (чтобы не "прыгало")
     if(mainPanel) mainPanel.scrollTop = prevScroll;
   }catch(e){
     addMsg("Ошибка обновления: " + (e?.message || e), "err");
@@ -1096,10 +1093,8 @@ async function addFileItemToCurrent(file){
 
     // 2) грузим blob в R2
     if(isImg){
-      // Фото: всегда через Worker, без front-limit
       await uploadItemBlobToR2(it.id, file, { enforceLimit:false });
     }else{
-      // Обычный файл: <=20MB через Worker, >20MB "обход"
       if((file.size || 0) <= WORKER_UPLOAD_LIMIT_BYTES){
         await uploadItemBlobToR2(it.id, file, { enforceLimit:true });
       }else{
@@ -1421,11 +1416,9 @@ async function deleteModal(){
 
   isBusy = true;
   try{
-    // удаляем blob для file/image
     if(it.type === "file" || it.type === "image"){
       try{ await deleteItemBlobFromR2(it.id); }catch{}
     }else{
-      // audio segments local-only (пока)
       await cleanupItemBlobsSafe(it);
     }
 
@@ -1570,7 +1563,6 @@ menuAddAudio.addEventListener("click", async ()=>{
   closeAddMenu();
   if(!currentPuchokId){ alert("Сначала открой пучок."); return; }
   try{
-    // Create cloud item first, then let audio.js record into it (пока локальные сегменты)
     const it = await createAudioItemCloud();
     if(!it){
       alert("Не удалось создать голос-элемент в облаке.");
