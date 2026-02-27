@@ -430,7 +430,10 @@ function itemToPatchPayload(it){
   if(it.type) payload.type = it.type === "image" ? "file" : it.type;
   if(it.title !== undefined) payload.title = it.title;
   if(it.content !== undefined) payload.content = it.content;
-  if(it.url !== undefined) payload.url = it.url;
+
+  // ✅ FIX: не отправляем url:null (и пустую строку) — чтобы не затирать url в D1
+  if(it.url != null && String(it.url).trim() !== "") payload.url = it.url;
+
   if(it.mime !== undefined) payload.mime = it.mime;
   if(it.size !== undefined) payload.size = it.size;
   payload.meta = Object.keys(meta).length ? meta : null;
