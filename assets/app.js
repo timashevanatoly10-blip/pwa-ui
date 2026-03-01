@@ -308,6 +308,200 @@ window.modalViewer = modalViewer;
 window.modalHint = modalHint;
 
 /** ===========================
+ *  TRANSFER UI (upload/download progress) — JS-only (no HTML/CSS edits)
+ *  =========================== */
+let _xferToast = null;
+let _xferLastPaint = 0;
+
+function _ensureXferToast(){
+  if(_xferToast) return _xferToast;
+
+  const wrap = document.createElement("div");
+  wrap.id = "xferToast";
+  wrap.style.position = "fixed";
+  wrap.style.left = "12px";
+  wrap.style.right = "12px";
+  wrap.style.bottom = "12px";
+  wrap.style.zIndex = "99999";
+  wrap.style.background = "rgba(17,19,23,0.92)";
+  wrap.style.color = "#fff";
+  wrap.style.borderRadius = "14px";
+  wrap.style.padding = "12px 12px";
+  wrap.style.boxShadow = "0 10px 30px rgba(0,0,0,0.25)";
+  wrap.style.backdropFilter = "blur(8px)";
+  wrap.style.display = "none";
+
+  wrap.innerHTML = `
+    <div style="display:flex; align-items:center; gap:10px;">
+      <div id="xferSpin" aria-hidden="true"
+        style="width:18px;height:18px;border-radius:50%;
+               border:2px solid rgba(255,255,255,0.25);
+               border-top-color:#fff;
+               animation:xferSpin 0.9s linear infinite;"></div>
+      <div style="flex:1; min-width:0;">
+        <div id="xferTitle" style="font-weight:700; font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">Передача…</div>
+        <div id="xferSub" style="margin-top:2px; font-size:12px; opacity:0.9; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">—</div>
+      </div>
+      <button id="xferHideBtn"
+        style="appearance:none;border:0;background:rgba(255,255,255,0.14);color:#fff;
+               border-radius:10px;padding:6px 10px;font-size:12px;cursor:pointer;">Скрыть</button>
+    </div>
+    <div style="margin-top:10px;">
+      <div style="height:8px; background:rgba(255,255,255,0.18); border-radius:999px; overflow:hidden;">
+        <div id="xferBar" style="height:100%; width:0%; background:#fff; border-radius:999px;"></div>
+      </div>
+      <div id="xferPct" style="margin-top:6px; font-size:12px; opacity:0.9;">—</div>
+    </div>
+  `;
+
+  const style = document.createElement("style");
+  style.textContent = `
+    @keyframes xferSpin { from { transform:rotate(0deg);} to { transform:rotate(360deg);} }
+  `;
+  document.head.appendChild(style);
+
+  document.body.appendChild(wrap);
+
+  const hideBtn = wrap.querySelector("#xferHideBtn");
+  if(hideBtn) hideBtn.addEventListener("click", ()=>{ wrap.style.display="none"; });
+
+  _xferToast = wrap;
+  return _xferToast;
+}
+
+function showXfer({ title="Передача…", sub="—", determinate=false } = {}){
+  const wrap = _ensureXferToast();
+  wrap.style.display = "block";
+
+  const elTitle = wrap.querySelector("#xferTitle");
+  const elSub = wrap.querySelector("#xferSub");
+  const elBar = wrap.querySelector("#xferBar");
+  const elPct = wrap.querySelector("#xferPct");
+  const elSpin = wrap.querySelector("#xferSpin");
+
+  if(elTitle) elTitle.textContent = title;
+  if(elSub) elSub.textContent = sub;
+
+  if(elSpin) elSpin.style.display = "block";
+
+  if(elBar) elBar.style.width = determinate ? "0%" : "12%";
+  if(elPct) elPct.textContent = determinate ? "0%" : "…";
+}
+
+function updateXfer({ loaded=0, total=null, title=null, sub=null } = {}){
+  const now = Date.now();
+  if(now - _xferLastPaint < 70) return; // throttle UI
+  _xferLastPaint = now;
+
+  const wrap = _ensureXferToast();
+  if(wrap.style.display !== "block") wrap.style.display = "block";
+
+  const elTitle = wrap.querySelector("#xferTitle");
+  const elSub = wrap.querySelector("#xferSub");
+  const elBar = wrap.querySelector("#xferBar");
+  const elPct = wrap.querySelector("#xferPct");
+
+  if(title != null && elTitle) elTitle.textContent = title;
+  if(sub != null && elSub) elSub.textContent = sub;
+
+  const hasTotal = Number.isFinite(total) && total > 0;
+  if(hasTotal){
+    const pct = clamp((loaded / total) * 100, 0, 100);
+    if(elBar) elBar.style.width = pct.toFixed(1) + "%";
+    if(elPct) elPct.textContent = `${pct.toFixed(1)}% • ${fmtBytes(loaded)} / ${fmtBytes(total)}`;
+  }else{
+    if(elBar){
+      // pseudo progress when unknown total
+      const pseudo = clamp((loaded / (20 * 1024 * 1024)) * 100, 5, 95);
+      elBar.style.width = pseudo.toFixed(0) + "%";
+    }
+    if(elPct) elPct.textContent = `${fmtBytes(loaded)} • …`;
+  }
+}
+
+function finishXfer({ ok=true, title=null, sub=null, autoHideMs=900 } = {}){
+  const wrap = _ensureXferToast();
+  const elTitle = wrap.querySelector("#xferTitle");
+  const elSub = wrap.querySelector("#xferSub");
+  const elBar = wrap.querySelector("#xferBar");
+  const elPct = wrap.querySelector("#xferPct");
+  const elSpin = wrap.querySelector("#xferSpin");
+
+  if(title != null && elTitle) elTitle.textContent = title;
+  if(sub != null && elSub) elSub.textContent = sub;
+
+  if(elSpin) elSpin.style.display = "none";
+  if(elBar) elBar.style.width = ok ? "100%" : (elBar.style.width || "0%");
+  if(elPct && ok) elPct.textContent = "Готово";
+
+  if(autoHideMs > 0){
+    setTimeout(()=>{ if(wrap) wrap.style.display = "none"; }, autoHideMs);
+  }
+}
+
+/** ===========================
+ *  XHR HELPERS (progress for uploads)
+ *  =========================== */
+function xhrRequest({ url, method="GET", headers={}, body=null, responseType="" , onUploadProgress=null, onDownloadProgress=null } = {}){
+  return new Promise((resolve, reject)=>{
+    const xhr = new XMLHttpRequest();
+    xhr.open(method, url, true);
+
+    if(responseType) xhr.responseType = responseType;
+
+    try{
+      for(const [k,v] of Object.entries(headers || {})){
+        if(v == null) continue;
+        xhr.setRequestHeader(k, String(v));
+      }
+    }catch{}
+
+    if(xhr.upload && typeof onUploadProgress === "function"){
+      xhr.upload.onprogress = (e)=>{
+        try{
+          onUploadProgress({
+            loaded: Number(e.loaded || 0),
+            total: e.lengthComputable ? Number(e.total || 0) : null
+          });
+        }catch{}
+      };
+    }
+
+    if(typeof onDownloadProgress === "function"){
+      xhr.onprogress = (e)=>{
+        try{
+          onDownloadProgress({
+            loaded: Number(e.loaded || 0),
+            total: e.lengthComputable ? Number(e.total || 0) : null
+          });
+        }catch{}
+      };
+    }
+
+    xhr.onerror = ()=> reject(new Error("XHR_NETWORK_ERROR"));
+    xhr.ontimeout = ()=> reject(new Error("XHR_TIMEOUT"));
+    xhr.onload = ()=>{
+      const status = xhr.status || 0;
+      const text = (typeof xhr.response === "string") ? xhr.response : (xhr.responseText || "");
+      resolve({
+        ok: status >= 200 && status < 300,
+        status,
+        statusText: xhr.statusText || "",
+        responseText: text,
+        response: xhr.response,
+        getHeader: (name)=> { try{ return xhr.getResponseHeader(name); }catch{ return null; } }
+      });
+    };
+
+    try{
+      xhr.send(body);
+    }catch(e){
+      reject(e);
+    }
+  });
+}
+
+/** ===========================
  *  NETWORK (Worker API)
  *  =========================== */
 async function apiFetch(path, { method="GET", json=null, headers={}, retryAuth=true, body=null } = {}){
@@ -372,24 +566,51 @@ async function uploadItemBlobToR2(itemId, file, { enforceLimit = true } = {}){
   qs.set("name", (file.name || "file").toString());
   qs.set("mime", (file.type || "application/octet-stream").toString());
 
-  const resp = await apiFetch(itemBlobPath(itemId, qs.toString()), {
-    method: "PUT",
-    headers: {
-      "Content-Type": (file.type || "application/octet-stream"),
-    },
-    body: file,
+  // IMPORTANT: Worker needs token -> XHR must include Authorization header
+  const url = WORKER_URL + itemBlobPath(itemId, qs.toString());
+  const headers = {
+    ...authHeaders(),
+    "Content-Type": (file.type || "application/octet-stream"),
+  };
+
+  showXfer({
+    title: "Загрузка в облако",
+    sub: `${file.name || "file"} • ${fmtBytes(file.size || 0)}`,
+    determinate: true
   });
 
-  const raw = await resp.text().catch(()=> "");
+  const res = await xhrRequest({
+    url,
+    method: "PUT",
+    headers,
+    body: file,
+    responseType: "",
+    onUploadProgress: ({ loaded, total })=>{
+      updateXfer({
+        loaded,
+        total: total || (file.size || null),
+        title: "Загрузка в облако",
+        sub: `${file.name || "file"}`
+      });
+    }
+  });
+
+  const raw = (res.responseText || "").toString();
   let data = {};
   try{ data = JSON.parse(raw); }catch{}
-  if(!resp.ok || data.ok === false){
-    const msg = (data && data.error) ? data.error : (raw || `HTTP ${resp.status}`);
+  if(!res.ok || data.ok === false){
+    const msg = (data && data.error) ? data.error : (raw || `HTTP ${res.status}`);
+    finishXfer({ ok:false, title:"Ошибка загрузки", sub: msg, autoHideMs: 2200 });
     throw new Error(msg);
   }
+
+  finishXfer({ ok:true, title:"Загружено", sub: "Файл в облаке", autoHideMs: 650 });
   return data;
 }
 
+/** ===========================
+ *  DOWNLOAD with progress (Fetch + StreamReader)
+ *  =========================== */
 async function downloadItemBlobFromR2(itemId){
   const resp = await apiFetch(itemBlobPath(itemId), { method:"GET" });
   if(resp.status === 404) return null;
@@ -397,7 +618,49 @@ async function downloadItemBlobFromR2(itemId){
     const t = await resp.text().catch(()=> "");
     throw new Error(t || `HTTP ${resp.status}`);
   }
-  return await resp.blob();
+
+  // If no streaming (very old), fallback to blob()
+  if(!resp.body || typeof resp.body.getReader !== "function"){
+    return await resp.blob();
+  }
+
+  // Try total from headers (if present)
+  let total = null;
+  try{
+    const cl = resp.headers.get("content-length");
+    if(cl) total = Number(cl) || null;
+  }catch{}
+
+  showXfer({
+    title: "Скачиваю из облака",
+    sub: "…",
+    determinate: !!(total && total > 0)
+  });
+
+  const reader = resp.body.getReader();
+  const chunks = [];
+  let loaded = 0;
+
+  while(true){
+    const { done, value } = await reader.read();
+    if(done) break;
+    if(value){
+      chunks.push(value);
+      loaded += value.byteLength || value.length || 0;
+      updateXfer({
+        loaded,
+        total,
+        title: "Скачиваю из облака",
+        sub: total ? "" : ""
+      });
+    }
+  }
+
+  finishXfer({ ok:true, title:"Скачано", sub: total ? "Готово" : `Получено: ${fmtBytes(loaded)}`, autoHideMs: 600 });
+
+  // Build blob from chunks
+  const blob = new Blob(chunks);
+  return blob;
 }
 
 async function deleteItemBlobFromR2(itemId){
@@ -422,9 +685,9 @@ async function directUploadLargeFileToR2({ itemId, puchokId, file }){
     presign = await apiJson(r2PresignPath(), {
       method: "POST",
       json: {
-        itemId,                 // ✅ поддержим оба варианта на бэке (мы шлём itemId)
-        item_id: itemId,        // ✅ и старый
-        puchok_id: puchokId,    // пусть будет, если воркеру нужно для key
+        itemId,
+        item_id: itemId,
+        puchok_id: puchokId,
         name: (file.name || "file").toString(),
         mime: (file.type || "application/octet-stream").toString(),
         size: Number(file.size || 0),
@@ -440,7 +703,7 @@ async function directUploadLargeFileToR2({ itemId, puchokId, file }){
   }
 
   // ✅ Поддержка двух форматов ответа:
-  // A) { ok:true, uploadUrl, key, expiresSec, desired... }
+  // A) { ok:true, uploadUrl, key, expiresSec, ... }
   // B) { ok:true, upload:{ url, method, headers?, key? } }
   const uploadUrl = presign?.uploadUrl || presign?.upload?.url || "";
   const method = ((presign?.upload?.method) || "PUT").toString().toUpperCase();
@@ -451,22 +714,41 @@ async function directUploadLargeFileToR2({ itemId, puchokId, file }){
     throw new Error("Воркер вернул presign без uploadUrl / upload.url (неожиданный формат ответа).");
   }
 
-  // 2) direct PUT to R2
-  const directResp = await fetch(uploadUrl, {
+  // 2) direct PUT to R2 (XHR for progress)
+  showXfer({
+    title: "Загрузка (direct)",
+    sub: `${file.name || "file"} • ${fmtBytes(file.size || 0)}`,
+    determinate: true
+  });
+
+  const upRes = await xhrRequest({
+    url: uploadUrl,
     method,
     headers: {
       ...extraHeaders,
       ...(extraHeaders["Content-Type"] ? {} : { "Content-Type": (file.type || "application/octet-stream") }),
     },
     body: file,
+    responseType: "",
+    onUploadProgress: ({ loaded, total })=>{
+      updateXfer({
+        loaded,
+        total: total || (file.size || null),
+        title: "Загрузка (direct)",
+        sub: `${file.name || "file"}`
+      });
+    }
   });
 
-  if(!directResp.ok){
-    const txt = await directResp.text().catch(()=> "");
-    throw new Error(`Direct upload в R2 не прошёл: HTTP ${directResp.status} ${txt || ""}`.trim());
+  if(!upRes.ok){
+    const txt = (upRes.responseText || "").toString();
+    finishXfer({ ok:false, title:"Ошибка direct upload", sub: `HTTP ${upRes.status} ${txt}`.trim(), autoHideMs: 2600 });
+    throw new Error(`Direct upload в R2 не прошёл: HTTP ${upRes.status} ${txt || ""}`.trim());
   }
 
   // 3) complete in Worker (writes url/mime/size/meta in D1)
+  finishXfer({ ok:true, title:"Загружено", sub:"Файл в R2. Финализирую…", autoHideMs: 0 });
+
   const done = await apiJson(itemBlobCompletePath(itemId), {
     method: "POST",
     json: {
@@ -478,6 +760,7 @@ async function directUploadLargeFileToR2({ itemId, puchokId, file }){
     }
   });
 
+  finishXfer({ ok:true, title:"Готово", sub:"Запись завершена", autoHideMs: 700 });
   return done;
 }
 
