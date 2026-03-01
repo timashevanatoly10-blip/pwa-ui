@@ -123,7 +123,7 @@ function ensureRefreshBtn(){
   refreshBtn.type = "button";
   refreshBtn.textContent = "⟳";
 
-  // вставим сразу после "+" (addMenuBtn)
+  // по умолчанию вставим рядом с "+" (потом переупорядочим в setHeaderForPuchok)
   const parent = addMenuBtn.parentElement;
   if(parent){
     if(addMenuBtn.nextSibling) parent.insertBefore(refreshBtn, addMenuBtn.nextSibling);
@@ -954,6 +954,24 @@ function setHeaderForPuchok(p){
     refreshBtn.setAttribute("aria-label","Обновить пучок");
   }
 
+  // ✅ ПОРЯДОК КНОПОК В ХЕДЕРЕ (как ты хотел):
+  // [ ⟳ ] [ Переименовать ] [ + ]
+  // делаем через DOM reorder, без HTML/CSS правок
+  try{
+    const parent = addMenuBtn && addMenuBtn.parentElement;
+    if(parent && refreshBtn && editPuchokBtn && addMenuBtn){
+      // гарантируем что все внутри одного контейнера
+      if(refreshBtn.parentElement !== parent) parent.appendChild(refreshBtn);
+      if(editPuchokBtn.parentElement !== parent) parent.appendChild(editPuchokBtn);
+      if(addMenuBtn.parentElement !== parent) parent.appendChild(addMenuBtn);
+
+      // порядок
+      parent.insertBefore(refreshBtn, editPuchokBtn);
+      parent.insertBefore(editPuchokBtn, addMenuBtn);
+      // addMenuBtn останется последним (самый правый)
+    }
+  }catch{}
+
   chatHint.textContent = "Ты в пучке: ответы бота можно сохранять кнопкой “В пучок”.";
 }
 
@@ -1398,8 +1416,9 @@ async function addFileItemToCurrent(file){
     // 4) обновляем локальную модель гарантированно из облака (подтянуть url/size/meta)
     await refreshCurrentPuchok();
 
+    // ✅ ВАРИАНТ A: после загрузки НЕ открываем файл (нет автодоунлоада)
+    // просто перерендерим список — файл появится, а просмотр по клику.
     render();
-    await openItem(p.id, it.id);
   }catch(e){
     addMsg("Ошибка добавления файла: " + (e?.message || e), "err");
   }finally{
