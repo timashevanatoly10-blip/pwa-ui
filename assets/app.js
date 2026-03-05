@@ -1503,18 +1503,16 @@ async function createRowInPuchok(puchokId, { type, title=null }){
   return rowId;
 }
 
-
-// === PATCHED FUNCTION FOR APP.JS ===
-// Replace the existing ensureRowForType() with this version.
-// It ALWAYS creates a new row instead of reusing an existing one.
-
 async function ensureRowForType(puchok, type){
-  // Always create a new row of the requested type
+  // Look for existing row entry of this type (enriched entry.rowType)
+  const entries = (puchok.entries || []);
+  const hit = entries.find(e => (e.kind||"").toLowerCase()==="row" && ((e.rowType||"").toLowerCase() === type.toLowerCase()));
+  if(hit && hit.refId) return hit.refId;
+
+  // else create new row
   const rowId = await createRowInPuchok(puchok.id, { type, title: null });
-
-  // Reload entries so UI sees the new row
   await loadPuchokWithEntries(puchok.id);
-
+  // cache may still not know rowType; ok
   return rowId;
 }
 
@@ -1565,7 +1563,13 @@ async function addTextItemToCurrent(initialText = ""){
 
   isBusy = true;
   try{
-    const rowId = await ensureRowForType(p, "text");
+    let rowId;
+    if(viewMode === "row" && currentRowId){
+      rowId = currentRowId;
+    }else{
+      rowId = await createRowInPuchok(p.id, { type:"text", title:null });
+      await loadPuchokWithEntries(p.id);
+    }
     const created = await createItemInRow(rowId, { type:"text", title, content });
 
     await loadRowWithItems(rowId);
@@ -1590,7 +1594,13 @@ async function addCodeItemToCurrent(initialCode = ""){
 
   isBusy = true;
   try{
-    const rowId = await ensureRowForType(p, "code");
+    let rowId;
+    if(viewMode === "row" && currentRowId){
+      rowId = currentRowId;
+    }else{
+      rowId = await createRowInPuchok(p.id, { type:"code", title:null });
+      await loadPuchokWithEntries(p.id);
+    }
     const created = await createItemInRow(rowId, { type:"code", title, content });
 
     await loadRowWithItems(rowId);
@@ -1622,7 +1632,13 @@ async function addLinkItemsToCurrent(rawInput){
 
   isBusy = true;
   try{
-    const rowId = await ensureRowForType(p, "link");
+    let rowId;
+    if(viewMode === "row" && currentRowId){
+      rowId = currentRowId;
+    }else{
+      rowId = await createRowInPuchok(p.id, { type:"link", title:null });
+      await loadPuchokWithEntries(p.id);
+    }
     for(const line of lines){
       const u = normalizeUrl(line);
       if(!u) continue;
@@ -1655,7 +1671,13 @@ async function addFileItemToCurrent(file){
     // - images -> photo row
     // - others -> file row
     const rowType = isImg ? "photo" : "file";
-    const rowId = await ensureRowForType(p, rowType);
+    let rowId;
+    if(viewMode === "row" && currentRowId){
+      rowId = currentRowId;
+    }else{
+      rowId = await createRowInPuchok(p.id, { type:rowType, title:null });
+      await loadPuchokWithEntries(p.id);
+    }
 
     // 1) create item in D1
     const created = await createItemInRow(rowId, {
@@ -2161,6 +2183,26 @@ if(refreshBtn){
  * - When in P U C H O K view: кнопки создают/добавляют в нужные ряды
  * - When in R O W view: кнопки добавляют items в текущий ряд (по типу ряда)
  */
+
+// --- ensure Subpuchok button exists in add menu ---
+let menuAddSubpuchok = document.getElementById("menuAddSubpuchok");
+if(!menuAddSubpuchok && addMenu){
+  const btn = document.createElement("div");
+  btn.id = "menuAddSubpuchok";
+  btn.textContent = "Подпучок";
+  btn.className = "menuItem";
+  addMenu.prepend(btn);
+  menuAddSubpuchok = btn;
+}
+if(menuAddSubpuchok){
+  menuAddSubpuchok.addEventListener("click", ()=>{
+    closeAddMenu();
+    if(viewMode === "puchok"){
+      createSubpuchokInCurrent();
+    }
+  });
+}
+
 menuAddText.addEventListener("click", ()=>{
   closeAddMenu();
   if(viewMode === "row"){
