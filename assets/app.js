@@ -1503,16 +1503,18 @@ async function createRowInPuchok(puchokId, { type, title=null }){
   return rowId;
 }
 
-async function ensureRowForType(puchok, type){
-  // Look for existing row entry of this type (enriched entry.rowType)
-  const entries = (puchok.entries || []);
-  const hit = entries.find(e => (e.kind||"").toLowerCase()==="row" && ((e.rowType||"").toLowerCase() === type.toLowerCase()));
-  if(hit && hit.refId) return hit.refId;
 
-  // else create new row
+// === PATCHED FUNCTION FOR APP.JS ===
+// Replace the existing ensureRowForType() with this version.
+// It ALWAYS creates a new row instead of reusing an existing one.
+
+async function ensureRowForType(puchok, type){
+  // Always create a new row of the requested type
   const rowId = await createRowInPuchok(puchok.id, { type, title: null });
+
+  // Reload entries so UI sees the new row
   await loadPuchokWithEntries(puchok.id);
-  // cache may still not know rowType; ok
+
   return rowId;
 }
 
