@@ -85,7 +85,7 @@ const editPuchokBtn = document.getElementById("editPuchokBtn");
 const addMenuBtn = document.getElementById("addMenuBtn");
 const addMenu = document.getElementById("addMenu");
 const menuAddText = document.getElementById("menuAddText");
-const menuAddPhoto = document.getElementById("menuAddPhoto");
+let menuAddPhoto = document.getElementById("menuAddPhoto");
 const menuAddFile = document.getElementById("menuAddFile");
 const menuAddAudio = document.getElementById("menuAddAudio");
 const menuAddCode = document.getElementById("menuAddCode");
@@ -141,6 +141,18 @@ function ensureRefreshBtn(){
 /** ===========================
  *  ADD MENU EXTRA BUTTONS
  *  =========================== */
+function bindMenuAddPhotoButton(btn){
+  if(!btn || btn.dataset.photoBound === "1") return;
+  btn.dataset.photoBound = "1";
+  btn.addEventListener("click", (e)=>{
+    e.preventDefault();
+    e.stopPropagation();
+    closeAddMenu();
+    if(viewMode === "list"){ alert("Сначала открой пучок."); return; }
+    addPhotoFromCamera();
+  });
+}
+
 function ensureAddMenuExtras(){
   if(!addMenu) return;
 
@@ -153,9 +165,13 @@ function ensureAddMenuExtras(){
     if(menuAddFile && menuAddFile.parentElement === addMenu) addMenu.insertBefore(photoBtn, menuAddFile);
     else addMenu.appendChild(photoBtn);
   }
-  photoBtn.style.display = "";
+  menuAddPhoto = photoBtn;
   photoBtn.hidden = false;
   photoBtn.disabled = false;
+  photoBtn.style.display = "";
+  photoBtn.style.visibility = "visible";
+  photoBtn.style.opacity = "1";
+  bindMenuAddPhotoButton(photoBtn);
 
   if(!menuAddSubpuchok){
     const btn = document.createElement("button");
@@ -170,21 +186,54 @@ function ensureAddMenuExtras(){
   }
 }
 
+function applyHiddenPickerStyles(el){
+  if(!el) return;
+  el.hidden = false;
+  el.style.display = "";
+  el.style.visibility = "visible";
+  el.style.position = "fixed";
+  el.style.left = "-9999px";
+  el.style.top = "0";
+  el.style.opacity = "0";
+  el.style.width = "1px";
+  el.style.height = "1px";
+  el.style.pointerEvents = "none";
+}
+
+function configurePhotoPickerForCurrentDevice(picker){
+  if(!picker) return picker;
+  const useCamera = shouldUseCameraCapture();
+  picker.accept = "image/*";
+  picker.multiple = !useCamera;
+  if(useCamera) picker.setAttribute("capture", "environment");
+  else picker.removeAttribute("capture");
+  applyHiddenPickerStyles(picker);
+  return picker;
+}
+
 function ensurePhotoPicker(){
   if(photoPicker){
-    photoPicker.accept = "image/*";
-    photoPicker.multiple = true;
-    photoPicker.style.display = "none";
+    configurePhotoPickerForCurrentDevice(photoPicker);
     return photoPicker;
   }
   photoPicker = document.createElement("input");
   photoPicker.type = "file";
   photoPicker.id = "photoPicker";
-  photoPicker.accept = "image/*";
-  photoPicker.multiple = true;
-  photoPicker.style.display = "none";
+  configurePhotoPickerForCurrentDevice(photoPicker);
   document.body.appendChild(photoPicker);
   return photoPicker;
+}
+
+function openPhotoPicker(picker){
+  const target = configurePhotoPickerForCurrentDevice(picker || ensurePhotoPicker());
+  target.value = "";
+  if(typeof target.showPicker === "function"){
+    try{
+      target.showPicker();
+      return;
+    }catch{}
+  }
+  target.click();
 }
 
 /** ===========================
@@ -2094,14 +2143,7 @@ async function addPhotoFromCamera(){
     }
 
     const picker = ensurePhotoPicker();
-    picker.value = "";
-    picker.accept = "image/*";
-    picker.multiple = true;
-
-    if(shouldUseCameraCapture()) picker.setAttribute("capture", "environment");
-    else picker.removeAttribute("capture");
-
-    picker.click();
+    openPhotoPicker(picker);
   }catch(e){
     addMsg("Ошибка подготовки фото: " + (e?.message || e), "err");
   }
@@ -2605,20 +2647,6 @@ menuAddText.addEventListener("click", ()=>{
 });
 
 
-const bindAddPhotoFromMenu = ()=>{
-  closeAddMenu();
-  if(viewMode === "list"){ alert("Сначала открой пучок."); return; }
-  addPhotoFromCamera();
-};
-
-document.addEventListener("click", (e)=>{
-  const btn = e.target && e.target.closest ? e.target.closest("#menuAddPhoto") : null;
-  if(!btn) return;
-  e.preventDefault();
-  e.stopPropagation();
-  bindAddPhotoFromMenu();
-});
-
 document.addEventListener("click", (e)=>{
   const btn = e.target && e.target.closest ? e.target.closest("#menuAddSubpuchok") : null;
   if(!btn) return;
@@ -2692,7 +2720,7 @@ filePicker.addEventListener("change", async () => {
 
 ensurePhotoPicker();
 photoPicker.addEventListener("change", async () => {
-  const picker = ensurePhotoPicker();
+  const picker = configurePhotoPickerForCurrentDevice(ensurePhotoPicker());
   const files = Array.from(picker.files || []).filter(Boolean);
   if(files.length === 0){
     isBusy = false;
