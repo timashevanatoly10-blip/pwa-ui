@@ -89,6 +89,7 @@ const menuAddFile = document.getElementById("menuAddFile");
 const menuAddAudio = document.getElementById("menuAddAudio");
 const menuAddCode = document.getElementById("menuAddCode");
 const menuAddLink = document.getElementById("menuAddLink");
+let menuAddSubpuchok = document.getElementById("menuAddSubpuchok");
 const menuDeletePuchok = document.getElementById("menuDeletePuchok");
 
 const chatDock = document.getElementById("chatDock");
@@ -133,6 +134,22 @@ function ensureRefreshBtn(){
     else parent.appendChild(refreshBtn);
   }
   return refreshBtn;
+}
+
+/** ===========================
+ *  ADD MENU EXTRA BUTTONS
+ *  =========================== */
+function ensureAddMenuExtras(){
+  if(!addMenu) return;
+
+  if(!menuAddSubpuchok){
+    const btn = document.createElement("button");
+    btn.id = "menuAddSubpuchok";
+    btn.type = "button";
+    btn.textContent = "Подпучок";
+    addMenu.insertBefore(btn, addMenu.firstChild);
+    menuAddSubpuchok = btn;
+  }
 }
 
 /** ===========================
@@ -1244,78 +1261,123 @@ function renderRowInside(p, cached){
   const row = cached.row;
   const items = cached.items || [];
 
+  const top = document.createElement("div");
+  top.className = "itemRow";
+  top.style.cursor = "default";
+
+  const left = document.createElement("div");
+  left.className = "itemLeft";
+
+  const thumb = document.createElement("div");
+  thumb.className = "thumb";
+  thumb.innerHTML = icoSVG(rowTypeLabel(row.type).ico);
+
+  const textWrap = document.createElement("div");
+  textWrap.className = "itemText";
+
+  const title = document.createElement("div");
+  title.className = "itemTitle";
+  title.textContent = row.title || rowTypeLabel(row.type).text;
+
+  const desc = document.createElement("div");
+  desc.className = "itemDesc";
+  desc.textContent = `Элементов: ${items.length}`;
+
+  textWrap.appendChild(title);
+  textWrap.appendChild(desc);
+  left.appendChild(thumb);
+  left.appendChild(textWrap);
+  top.appendChild(left);
+
+  const delBtn = document.createElement("button");
+  delBtn.className = "btnGhost";
+  delBtn.textContent = "Удалить ряд";
+  delBtn.addEventListener("click", async (e)=>{
+    e.stopPropagation();
+    if(!confirm("Удалить весь ряд?")) return;
+    isBusy = true;
+    try{
+      await apiJson(`/rows/${encodeURIComponent(row.id)}`, { method:"DELETE" });
+      delete db.rows[row.id];
+      await loadPuchokWithEntries(currentPuchokId);
+      viewMode = "puchok";
+      currentRowId = null;
+      render();
+    }catch(err){
+      addMsg("Ошибка удаления ряда: " + (err?.message || err), "err");
+    }finally{
+      isBusy = false;
+    }
+  });
+  top.appendChild(delBtn);
+  wrap.appendChild(top);
+
   if(items.length === 0){
     const empty = document.createElement("div");
     empty.className = "empty";
     empty.innerHTML = "Ряд пуст.<br>Нажми <b>+</b> сверху → добавь элемент.";
     wrap.appendChild(empty);
   }else{
-    // In stage 1: показываем по updated desc (как было)
-    const sorted = [...items].sort((a,b)=> (b.updatedAt||b.createdAt||"").localeCompare(a.updatedAt||a.createdAt||""));
+    const rail = document.createElement("div");
+    rail.className = "rowCarousel";
+    rail.style.display = "flex";
+    rail.style.gap = "12px";
+    rail.style.overflowX = "auto";
+    rail.style.paddingBottom = "8px";
+    rail.style.scrollSnapType = "x mandatory";
+    rail.style.WebkitOverflowScrolling = "touch";
+
+    const sorted = [...items].sort((a,b)=> (a.createdAt||a.updatedAt||"").localeCompare(b.createdAt||b.updatedAt||""));
     for(const it of sorted){
-      const rowEl = document.createElement("div");
-      rowEl.className = "itemRow";
-      rowEl.addEventListener("click", () => openItemFromRow(row.id, it.id));
+      const card = document.createElement("div");
+      card.className = "card";
+      card.style.minWidth = "260px";
+      card.style.maxWidth = "320px";
+      card.style.flex = "0 0 82%";
+      card.style.scrollSnapAlign = "start";
+      card.style.display = "flex";
+      card.style.flexDirection = "column";
+      card.style.gap = "10px";
+      card.style.cursor = "pointer";
+      card.addEventListener("click", () => openItemFromRow(row.id, it.id));
 
-      const left = document.createElement("div");
-      left.className = "itemLeft";
+      const t = typeLabel(it);
 
-      const thumb = document.createElement("div");
-      thumb.className = "thumb";
-
-      if(it.type==="file") thumb.innerHTML = icoSVG("file");
-      else if(it.type==="image") thumb.innerHTML = icoSVG("photo");
-      else if(it.type==="audio") thumb.innerHTML = icoSVG("audio");
-      else if(it.type==="code") thumb.innerHTML = icoSVG("code");
-      else if(it.type==="link") thumb.innerHTML = icoSVG("link");
-      else thumb.innerHTML = icoSVG("text");
-
-      const textWrap = document.createElement("div");
-      textWrap.className = "itemText";
-
-      const title = document.createElement("div");
-      title.className = "itemTitle";
-      title.textContent = it.title || "Элемент";
-
-      const desc = document.createElement("div");
-      desc.className = "itemDesc";
-
+      let preview = "";
       if(it.type === "text"){
-        const preview = (it.content || "").toString().trim().replace(/\s+/g," ");
-        desc.textContent = preview ? (preview.length > 90 ? preview.slice(0,90)+"…" : preview) : "Пусто";
+        preview = escapeHTML((it.content || "").toString().trim().replace(/\s+/g," ").slice(0,220) || "Пусто");
       }else if(it.type === "code"){
-        const preview = (it.content || "").toString().replace(/\s+$/,"");
-        const oneLine = preview.replace(/\s+/g," ").trim();
-        desc.textContent = oneLine ? (oneLine.length > 90 ? oneLine.slice(0,90)+"…" : oneLine) : "Пусто";
+        preview = `<pre style="margin:0;white-space:pre-wrap;font-family:monospace;font-size:12px;">${escapeHTML((it.content || "").toString().slice(0,220) || "Пусто")}</pre>`;
       }else if(it.type === "link"){
-        desc.textContent = it.url ? it.url : "—";
+        preview = `<div class="itemDesc" style="word-break:break-all">${escapeHTML(it.url || "—")}</div>`;
       }else if(it.type === "image"){
-        desc.textContent = `${fmtBytes(it.size)} • ${fmtDate(it.createdAt || it.updatedAt || nowISO())}`;
+        preview = `<div class="itemDesc">${fmtBytes(it.size)} • фото</div>`;
       }else if(it.type === "file"){
-        desc.textContent = `${fmtBytes(it.size)} • ${it.mime || "file"} • ${fmtDate(it.createdAt || it.updatedAt || nowISO())}`;
+        preview = `<div class="itemDesc">${escapeHTML(it.mime || "file")} • ${fmtBytes(it.size)}</div>`;
       }else if(it.type === "audio"){
         const segs = (it.segments || []).length;
-        const total = (it.segments || []).reduce((s,x)=> s + (x.size || 0), 0);
-        desc.textContent = `Сегментов: ${segs} • ${fmtBytes(total)} • ${fmtDate(it.createdAt || it.updatedAt || nowISO())}`;
+        preview = `<div class="itemDesc">Сегментов: ${segs}</div>`;
       }else{
-        desc.textContent = fmtDate(it.createdAt || it.updatedAt || nowISO());
+        preview = `<div class="itemDesc">${fmtDate(it.createdAt || it.updatedAt || nowISO())}</div>`;
       }
 
-      textWrap.appendChild(title);
-      textWrap.appendChild(desc);
-
-      left.appendChild(thumb);
-      left.appendChild(textWrap);
-
-      const right = document.createElement("div");
-      const t = typeLabel(it);
-      right.className = t.cls;
-      right.textContent = t.text;
-
-      rowEl.appendChild(left);
-      rowEl.appendChild(right);
-      wrap.appendChild(rowEl);
+      card.innerHTML = `
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
+          <div style="display:flex;align-items:center;gap:10px;min-width:0;">
+            <div class="thumb">${icoSVG(it.type==="image" ? "photo" : (it.type || "file"))}</div>
+            <div class="itemText" style="min-width:0;">
+              <div class="itemTitle">${escapeHTML(it.title || "Элемент")}</div>
+              <div class="itemDesc">${fmtDate(it.updatedAt || it.createdAt || nowISO())}</div>
+            </div>
+          </div>
+          <div class="${t.cls}">${t.text}</div>
+        </div>
+        <div style="min-height:72px;">${preview}</div>
+      `;
+      rail.appendChild(card);
     }
+
+    wrap.appendChild(rail);
   }
 
   mainPanel.appendChild(wrap);
@@ -1503,17 +1565,22 @@ async function createRowInPuchok(puchokId, { type, title=null }){
   return rowId;
 }
 
-async function ensureRowForType(puchok, type){
-  // Look for existing row entry of this type (enriched entry.rowType)
-  const entries = (puchok.entries || []);
-  const hit = entries.find(e => (e.kind||"").toLowerCase()==="row" && ((e.rowType||"").toLowerCase() === type.toLowerCase()));
-  if(hit && hit.refId) return hit.refId;
-
-  // else create new row
+async function createNewRowForType(puchok, type){
   const rowId = await createRowInPuchok(puchok.id, { type, title: null });
   await loadPuchokWithEntries(puchok.id);
-  // cache may still not know rowType; ok
   return rowId;
+}
+
+function getCurrentRowPack(){
+  return currentRowId ? (db.rows[currentRowId] || null) : null;
+}
+
+async function resolveTargetRowForCreate(puchok, type){
+  if(viewMode === "row" && currentRowId){
+    const pack = getCurrentRowPack();
+    if(pack?.row?.id) return pack.row.id;
+  }
+  return await createNewRowForType(puchok, type);
 }
 
 async function createItemInRow(rowId, payload){
@@ -1563,19 +1630,17 @@ async function addTextItemToCurrent(initialText = ""){
 
   isBusy = true;
   try{
-    let rowId;
-    if(viewMode === "row" && currentRowId){
-      rowId = currentRowId;
-    }else{
-      rowId = await createRowInPuchok(p.id, { type:"text", title:null });
-      await loadPuchokWithEntries(p.id);
-    }
+    const rowId = await resolveTargetRowForCreate(p, "text");
     const created = await createItemInRow(rowId, { type:"text", title, content });
 
     await loadRowWithItems(rowId);
-    await openRow(rowId);
 
-    // open created item
+    if(viewMode === "row" && currentRowId === rowId){
+      render();
+    }else{
+      await openRow(rowId);
+    }
+
     const it = (db.rows[rowId]?.items || []).find(x => x.id === created.id) || mapItemRow(created);
     await openItemFromRow(rowId, it.id);
   }catch(e){
@@ -1594,17 +1659,16 @@ async function addCodeItemToCurrent(initialCode = ""){
 
   isBusy = true;
   try{
-    let rowId;
-    if(viewMode === "row" && currentRowId){
-      rowId = currentRowId;
-    }else{
-      rowId = await createRowInPuchok(p.id, { type:"code", title:null });
-      await loadPuchokWithEntries(p.id);
-    }
+    const rowId = await resolveTargetRowForCreate(p, "code");
     const created = await createItemInRow(rowId, { type:"code", title, content });
 
     await loadRowWithItems(rowId);
-    await openRow(rowId);
+
+    if(viewMode === "row" && currentRowId === rowId){
+      render();
+    }else{
+      await openRow(rowId);
+    }
 
     const it = (db.rows[rowId]?.items || []).find(x => x.id === created.id) || mapItemRow(created);
     await openItemFromRow(rowId, it.id);
@@ -1632,13 +1696,7 @@ async function addLinkItemsToCurrent(rawInput){
 
   isBusy = true;
   try{
-    let rowId;
-    if(viewMode === "row" && currentRowId){
-      rowId = currentRowId;
-    }else{
-      rowId = await createRowInPuchok(p.id, { type:"link", title:null });
-      await loadPuchokWithEntries(p.id);
-    }
+    const rowId = await resolveTargetRowForCreate(p, "link");
     for(const line of lines){
       const u = normalizeUrl(line);
       if(!u) continue;
@@ -1648,7 +1706,12 @@ async function addLinkItemsToCurrent(rawInput){
     }
 
     await loadRowWithItems(rowId);
-    await openRow(rowId);
+
+    if(viewMode === "row" && currentRowId === rowId){
+      render();
+    }else{
+      await openRow(rowId);
+    }
   }catch(e){
     addMsg("Ошибка добавления ссылок: " + (e?.message || e), "err");
   }finally{
@@ -1667,19 +1730,9 @@ async function addFileItemToCurrent(file){
 
   isBusy = true;
   try{
-    // choose row type:
-    // - images -> photo row
-    // - others -> file row
     const rowType = isImg ? "photo" : "file";
-    let rowId;
-    if(viewMode === "row" && currentRowId){
-      rowId = currentRowId;
-    }else{
-      rowId = await createRowInPuchok(p.id, { type:rowType, title:null });
-      await loadPuchokWithEntries(p.id);
-    }
+    const rowId = await resolveTargetRowForCreate(p, rowType);
 
-    // 1) create item in D1
     const created = await createItemInRow(rowId, {
       type: "file",
       title,
@@ -1691,7 +1744,6 @@ async function addFileItemToCurrent(file){
     let it = mapItemRow(created);
     if(isImg) it.type = "image";
 
-    // 2) upload blob
     if(isImg){
       await uploadItemBlobToR2(it.id, file, { enforceLimit:false });
     }else{
@@ -1702,7 +1754,6 @@ async function addFileItemToCurrent(file){
       }
     }
 
-    // 3) patch meta => hasBlob:true (and keep _rowId for safety/debug)
     it._rowId = rowId;
     it.r2 = { hasBlob:true, name: title, mime };
     it.meta = it.meta && typeof it.meta === "object" ? it.meta : {};
@@ -1714,9 +1765,13 @@ async function addFileItemToCurrent(file){
       json: itemToPatchPayload(it),
     });
 
-    // 4) refresh row cache + open row
     await loadRowWithItems(rowId);
-    await openRow(rowId);
+
+    if(viewMode === "row" && currentRowId === rowId){
+      render();
+    }else{
+      await openRow(rowId);
+    }
   }catch(e){
     addMsg("Ошибка добавления файла: " + (e?.message || e), "err");
   }finally{
@@ -1730,9 +1785,7 @@ async function createAudioItemCloud(){
 
   isBusy = true;
   try{
-    // ensure audio row
-    const rowId = await ensureRowForType(p, "audio");
-    // remember audioRowId
+    const rowId = await resolveTargetRowForCreate(p, "audio");
     const pp = getPuchokLocal(p.id);
     if(pp) pp.audioRowId = rowId;
 
@@ -1746,7 +1799,6 @@ async function createAudioItemCloud(){
     it.durationSec = 0;
     it._rowId = rowId;
 
-    // legacy mirror for audio.js
     const pLocal = getPuchokLocal(p.id);
     if(pLocal){
       pLocal.items = pLocal.items || [];
@@ -1754,9 +1806,13 @@ async function createAudioItemCloud(){
       pLocal.updatedAt = it.updatedAt || nowISO();
     }
 
-    // load row and open it
     await loadRowWithItems(rowId);
-    await openRow(rowId);
+
+    if(viewMode === "row" && currentRowId === rowId){
+      render();
+    }else{
+      await openRow(rowId);
+    }
 
     return it;
   }finally{
@@ -2183,26 +2239,6 @@ if(refreshBtn){
  * - When in P U C H O K view: кнопки создают/добавляют в нужные ряды
  * - When in R O W view: кнопки добавляют items в текущий ряд (по типу ряда)
  */
-
-// --- ensure Subpuchok button exists in add menu ---
-let menuAddSubpuchok = document.getElementById("menuAddSubpuchok");
-if(!menuAddSubpuchok && addMenu){
-  const btn = document.createElement("div");
-  btn.id = "menuAddSubpuchok";
-  btn.textContent = "Подпучок";
-  btn.className = "menuItem";
-  addMenu.prepend(btn);
-  menuAddSubpuchok = btn;
-}
-if(menuAddSubpuchok){
-  menuAddSubpuchok.addEventListener("click", ()=>{
-    closeAddMenu();
-    if(viewMode === "puchok"){
-      createSubpuchokInCurrent();
-    }
-  });
-}
-
 menuAddText.addEventListener("click", ()=>{
   closeAddMenu();
   if(viewMode === "row"){
@@ -2260,6 +2296,14 @@ menuAddLink.addEventListener("click", ()=>{
   addLinkItemsToCurrent(raw);
 });
 
+if(menuAddSubpuchok){
+  menuAddSubpuchok.addEventListener("click", ()=>{
+    closeAddMenu();
+    if(viewMode !== "puchok"){ alert("Подпучок можно создать только внутри пучка."); return; }
+    createSubpuchokInCurrent();
+  });
+}
+
 menuDeletePuchok.addEventListener("click", async ()=>{
   if(viewMode !== "puchok"){ alert("Удаление доступно только на уровне пучка."); return; }
   await deleteCurrentPuchok();
@@ -2295,6 +2339,7 @@ addMenu.addEventListener("click", (e)=> e.stopPropagation());
  *  INIT
  *  =========================== */
 (async function init(){
+  ensureAddMenuExtras();
   try{
     await loadPuchkiList();
   }catch(e){
