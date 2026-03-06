@@ -85,6 +85,7 @@ const editPuchokBtn = document.getElementById("editPuchokBtn");
 const addMenuBtn = document.getElementById("addMenuBtn");
 const addMenu = document.getElementById("addMenu");
 const menuAddText = document.getElementById("menuAddText");
+const menuAddPhoto = document.getElementById("menuAddPhoto");
 const menuAddFile = document.getElementById("menuAddFile");
 const menuAddAudio = document.getElementById("menuAddAudio");
 const menuAddCode = document.getElementById("menuAddCode");
@@ -102,6 +103,7 @@ const chatHint = document.getElementById("chatHint");
 
 const filePicker = document.getElementById("filePicker");
 const audioPicker = document.getElementById("audioPicker");
+let photoPicker = document.getElementById("photoPicker");
 
 const modalWrap = document.getElementById("modalWrap");
 const modalTitle = document.getElementById("modalTitle");
@@ -142,6 +144,15 @@ function ensureRefreshBtn(){
 function ensureAddMenuExtras(){
   if(!addMenu) return;
 
+  if(!document.getElementById("menuAddPhoto")){
+    const btn = document.createElement("button");
+    btn.id = "menuAddPhoto";
+    btn.type = "button";
+    btn.textContent = "Добавить фото";
+    if(menuAddFile && menuAddFile.parentElement === addMenu) addMenu.insertBefore(btn, menuAddFile);
+    else addMenu.appendChild(btn);
+  }
+
   if(!menuAddSubpuchok){
     const btn = document.createElement("button");
     btn.id = "menuAddSubpuchok";
@@ -150,6 +161,18 @@ function ensureAddMenuExtras(){
     addMenu.insertBefore(btn, addMenu.firstChild);
     menuAddSubpuchok = btn;
   }
+}
+
+function ensurePhotoPicker(){
+  if(photoPicker) return photoPicker;
+  photoPicker = document.createElement("input");
+  photoPicker.type = "file";
+  photoPicker.id = "photoPicker";
+  photoPicker.accept = "image/*";
+  photoPicker.setAttribute("capture", "environment");
+  photoPicker.style.display = "none";
+  document.body.appendChild(photoPicker);
+  return photoPicker;
 }
 
 /** ===========================
@@ -165,6 +188,9 @@ let currentModalRowId = null;
 let currentModalItemIds = [];
 let currentModalItemIndex = -1;
 let modalNavBar = null;
+let modalOverlayNav = null;
+let activePhotoCaptureRowId = null;
+let activePhotoCapturePuchokId = null;
 let isBusy = false;
 
 // In-memory store:
@@ -233,6 +259,30 @@ function escapeHTML(s){
     .replaceAll("'","&#039;");
 }
 function clamp(n,min,max){ return Math.max(min, Math.min(max, n)); }
+
+function sanitizeMimeType(value, fallback = "application/octet-stream"){
+  const raw = (value || "").toString().trim();
+  if(!raw) return fallback;
+  const first = raw.split(";")[0].trim().toLowerCase();
+  if(!first || !/^[a-z0-9!#$&^_.+-]+\/[a-z0-9!#$&^_.+-]+$/i.test(first)) return fallback;
+  return first;
+}
+function chooseBlobMimeType(responseType, fallbackType, itemType = ""){
+  const fallback = sanitizeMimeType(
+    fallbackType || (itemType === "image" ? "image/*" : "application/octet-stream"),
+    itemType === "image" ? "image/*" : "application/octet-stream"
+  );
+  const responseMime = sanitizeMimeType(responseType || "", "");
+  const lower = responseMime.toLowerCase();
+  const looksGeneric =
+    !responseMime ||
+    lower === "application/octet-stream" ||
+    lower === "binary/octet-stream" ||
+    lower === "application/binary" ||
+    lower === "text/plain";
+  return looksGeneric ? fallback : responseMime;
+}
+
 
 function normalizeUrl(raw){
   const s = (raw || "").toString().trim();
@@ -312,6 +362,7 @@ function rebuildModalNavState(rowId, itemId){
   currentModalItemIds = getSortedRowItems(rowId).map(x => x.id);
   currentModalItemIndex = currentModalItemIds.indexOf(itemId);
 }
+
 function ensureModalNavBar(){
   const parent = modalTextarea?.parentElement || modalViewer?.parentElement || null;
   if(!parent) return null;
@@ -325,64 +376,112 @@ function ensureModalNavBar(){
   modalNavBar.id = "modalNavBar";
   modalNavBar.style.display = "none";
   modalNavBar.style.alignItems = "center";
-  modalNavBar.style.justifyContent = "space-between";
+  modalNavBar.style.justifyContent = "center";
   modalNavBar.style.gap = "10px";
   modalNavBar.style.margin = "0 0 10px 0";
 
   parent.insertBefore(modalNavBar, modalTextarea || modalViewer || null);
   return modalNavBar;
 }
+function ensureModalOverlayNav(){
+  if(!modalWrap) return null;
+  if(modalOverlayNav && modalOverlayNav.parentElement === modalWrap) return modalOverlayNav;
+
+  if(modalOverlayNav && modalOverlayNav.parentElement){
+    try{ modalOverlayNav.parentElement.removeChild(modalOverlayNav); }catch{}
+  }
+
+  if(getComputedStyle(modalWrap).position === "static"){
+    modalWrap.style.position = "fixed";
+  }
+
+  modalOverlayNav = document.createElement("div");
+  modalOverlayNav.id = "modalOverlayNav";
+  modalOverlayNav.style.position = "absolute";
+  modalOverlayNav.style.inset = "0";
+  modalOverlayNav.style.pointerEvents = "none";
+  modalOverlayNav.style.zIndex = "50";
+  modalOverlayNav.innerHTML = `
+    <button type="button" id="modalOverlayPrev" aria-label="Предыдущий элемент"
+      style="position:absolute;left:12px;top:50%;transform:translateY(-50%);
+             min-width:48px;height:48px;padding:0 14px;border:0;border-radius:999px;
+             background:rgba(17,19,23,0.82);color:#fff;font-size:26px;line-height:1;
+             cursor:pointer;pointer-events:auto;display:none;box-shadow:0 8px 24px rgba(0,0,0,.28);">←</button>
+    <div id="modalOverlayCounter"
+      style="position:absolute;left:50%;top:12px;transform:translateX(-50%);
+             min-width:64px;padding:8px 12px;border-radius:999px;background:rgba(17,19,23,0.72);
+             color:#fff;font-size:12px;line-height:1;pointer-events:none;display:none;
+             box-shadow:0 8px 24px rgba(0,0,0,.22);text-align:center;"></div>
+    <button type="button" id="modalOverlayNext" aria-label="Следующий элемент"
+      style="position:absolute;right:12px;top:50%;transform:translateY(-50%);
+             min-width:48px;height:48px;padding:0 14px;border:0;border-radius:999px;
+             background:rgba(17,19,23,0.82);color:#fff;font-size:26px;line-height:1;
+             cursor:pointer;pointer-events:auto;display:none;box-shadow:0 8px 24px rgba(0,0,0,.28);">→</button>
+  `;
+  modalWrap.appendChild(modalOverlayNav);
+  return modalOverlayNav;
+}
 function renderModalNav(rowId, itemId){
   const bar = ensureModalNavBar();
+  const overlay = ensureModalOverlayNav();
   if(!bar) return;
 
   rebuildModalNavState(rowId, itemId);
 
-  if(!rowId || currentModalItemIndex < 0 || currentModalItemIds.length <= 1){
+  const hasNav = !!rowId && currentModalItemIndex >= 0 && currentModalItemIds.length > 1;
+  if(!hasNav){
     bar.style.display = "none";
     bar.innerHTML = "";
+    if(overlay){
+      const prev = overlay.querySelector("#modalOverlayPrev");
+      const next = overlay.querySelector("#modalOverlayNext");
+      const counter = overlay.querySelector("#modalOverlayCounter");
+      if(prev) prev.style.display = "none";
+      if(next) next.style.display = "none";
+      if(counter) counter.style.display = "none";
+    }
     return;
   }
 
   const hasPrev = currentModalItemIndex > 0;
   const hasNext = currentModalItemIndex < currentModalItemIds.length - 1;
+  const counterText = `${currentModalItemIndex + 1} / ${currentModalItemIds.length}`;
 
   bar.style.display = "flex";
-  bar.innerHTML = `
-    <button type="button" class="btnGhost" id="modalPrevBtn" ${hasPrev ? "" : 'style="visibility:hidden" aria-hidden="true" tabindex="-1"'}>←</button>
-    <div style="font-size:12px;opacity:.8;white-space:nowrap;">${currentModalItemIndex + 1} / ${currentModalItemIds.length}</div>
-    <button type="button" class="btnGhost" id="modalNextBtn" ${hasNext ? "" : 'style="visibility:hidden" aria-hidden="true" tabindex="-1"'}>→</button>
-  `;
+  bar.innerHTML = `<div style="font-size:12px;opacity:.8;white-space:nowrap;">${counterText}</div>`;
 
-  const prevBtn = document.getElementById("modalPrevBtn");
-  const nextBtn = document.getElementById("modalNextBtn");
+  if(overlay){
+    const prev = overlay.querySelector("#modalOverlayPrev");
+    const next = overlay.querySelector("#modalOverlayNext");
+    const counter = overlay.querySelector("#modalOverlayCounter");
 
-  if(prevBtn && hasPrev){
-    prevBtn.onclick = async (e)=>{
-      e.stopPropagation();
-      const prevId = currentModalItemIds[currentModalItemIndex - 1];
-      if(prevId) await openItemFromRow(rowId, prevId);
-    };
-  }
-  if(nextBtn && hasNext){
-    nextBtn.onclick = async (e)=>{
-      e.stopPropagation();
-      const nextId = currentModalItemIds[currentModalItemIndex + 1];
-      if(nextId) await openItemFromRow(rowId, nextId);
-    };
+    if(counter){
+      counter.textContent = counterText;
+      counter.style.display = "block";
+    }
+    if(prev){
+      prev.style.display = hasPrev ? "block" : "none";
+      prev.onclick = async (e)=>{
+        e.stopPropagation();
+        const prevId = currentModalItemIds[currentModalItemIndex - 1];
+        if(prevId) await openItemFromRow(rowId, prevId);
+      };
+    }
+    if(next){
+      next.style.display = hasNext ? "block" : "none";
+      next.onclick = async (e)=>{
+        e.stopPropagation();
+        const nextId = currentModalItemIds[currentModalItemIndex + 1];
+        if(nextId) await openItemFromRow(rowId, nextId);
+      };
+    }
   }
 }
-async function refreshRowAndKeepUI(rowId){
-  if(!rowId) return null;
-  await loadRowWithItems(rowId);
-  if(currentPuchokId){
-    try{ await loadPuchokWithEntries(currentPuchokId); }catch{}
-  }
-  if(viewMode === "row"){
-    currentRowId = rowId;
-  }
-  render();
-  return db.rows[rowId] || null;
+
+function getModalSiblingItemId(step){
+  const nextIndex = currentModalItemIndex + step;
+  if(nextIndex < 0 || nextIndex >= currentModalItemIds.length) return null;
+  return currentModalItemIds[nextIndex] || null;
 }
 
 /** ===========================
@@ -728,7 +827,7 @@ async function uploadItemBlobToR2(itemId, file, { enforceLimit = true } = {}){
   return data;
 }
 
-async function downloadItemBlobFromR2(itemId, fallbackType = "application/octet-stream"){
+async function downloadItemBlobFromR2(itemId, fallbackType = "application/octet-stream", itemType = ""){
   const resp = await apiFetch(itemBlobPath(itemId), { method:"GET" });
   if(resp.status === 404) return null;
   if(!resp.ok){
@@ -737,11 +836,13 @@ async function downloadItemBlobFromR2(itemId, fallbackType = "application/octet-
   }
 
   const responseContentType = (resp.headers.get("content-type") || "").trim();
-  const blobType = responseContentType || (fallbackType || "application/octet-stream");
+  const blobType = chooseBlobMimeType(responseContentType, fallbackType, itemType);
 
   if(!resp.body || typeof resp.body.getReader !== "function"){
     const ready = await resp.blob();
-    if(ready && ready.type) return ready;
+    if(ready && ready.type && sanitizeMimeType(ready.type, "") && sanitizeMimeType(ready.type, "") !== "application/octet-stream"){
+      return ready;
+    }
     return new Blob([ready], { type: blobType });
   }
 
@@ -1756,12 +1857,14 @@ async function addCodeItemToCurrent(initialCode = ""){
     const rowId = await resolveTargetRowForCreate(p, "code");
     const created = await createItemInRow(rowId, { type:"code", title, content });
 
-    await loadRowWithItems(rowId);
+    await refreshRowAndKeepUI(rowId);
 
     if(viewMode === "row" && currentRowId === rowId){
       render();
     }else{
-      await openRow(rowId);
+      currentRowId = rowId;
+      viewMode = "row";
+      render();
     }
 
     const it = (db.rows[rowId]?.items || []).find(x => x.id === created.id) || mapItemRow(created);
@@ -1799,12 +1902,14 @@ async function addLinkItemsToCurrent(rawInput){
       await createItemInRow(rowId, { type:"link", title, url: u });
     }
 
-    await loadRowWithItems(rowId);
+    await refreshRowAndKeepUI(rowId);
 
     if(viewMode === "row" && currentRowId === rowId){
       render();
     }else{
-      await openRow(rowId);
+      currentRowId = rowId;
+      viewMode = "row";
+      render();
     }
   }catch(e){
     addMsg("Ошибка добавления ссылок: " + (e?.message || e), "err");
@@ -1813,62 +1918,124 @@ async function addLinkItemsToCurrent(rawInput){
   }
 }
 
+
+async function addFileItemToSpecificRow(p, rowId, file){
+  const isImg = (file.type || "").startsWith("image/");
+  const title = file.name || (isImg ? "Фото" : "Файл");
+  const mime  = sanitizeMimeType(file.type || (isImg ? "image/*" : "application/octet-stream"), isImg ? "image/*" : "application/octet-stream");
+  const size  = file.size || 0;
+
+  const created = await createItemInRow(rowId, {
+    type: "file",
+    title,
+    mime,
+    size,
+    meta: { r2: { hasBlob:false, name:title, mime } }
+  });
+
+  let it = mapItemRow(created);
+  if(isImg) it.type = "image";
+
+  if(isImg){
+    await uploadItemBlobToR2(it.id, file, { enforceLimit:false });
+  }else{
+    if((file.size || 0) <= WORKER_UPLOAD_LIMIT_BYTES){
+      await uploadItemBlobToR2(it.id, file, { enforceLimit:true });
+    }else{
+      await directUploadLargeFileToR2({ itemId: it.id, puchokId: p.id, file });
+    }
+  }
+
+  it._rowId = rowId;
+  it.r2 = { hasBlob:true, name: title, mime };
+  it.meta = it.meta && typeof it.meta === "object" ? it.meta : {};
+  it.meta.r2 = it.r2;
+  it.meta._rowId = rowId;
+
+  await apiJson(`/items/${encodeURIComponent(it.id)}`, {
+    method:"PATCH",
+    json: itemToPatchPayload(it),
+  });
+
+  await refreshRowAndKeepUI(rowId);
+
+  if(isImg){
+    activePhotoCaptureRowId = rowId;
+    activePhotoCapturePuchokId = p.id;
+  }
+
+  return { rowId, itemId: it.id };
+}
+
+async function ensurePhotoRowForCapture(p){
+  if(!p) return null;
+
+  if(viewMode === "row" && currentRowId){
+    const pack = getCurrentRowPack();
+    if(pack?.row?.type === "photo") return pack.row.id;
+  }
+
+  if(activePhotoCaptureRowId && activePhotoCapturePuchokId === p.id){
+    const cached = db.rows[activePhotoCaptureRowId];
+    if(cached?.row?.id && cached.row.puchokId === p.id && cached.row.type === "photo"){
+      return cached.row.id;
+    }
+    try{
+      const fresh = await loadRowWithItems(activePhotoCaptureRowId);
+      if(fresh?.row?.id && fresh.row.puchokId === p.id && fresh.row.type === "photo"){
+        return fresh.row.id;
+      }
+    }catch{}
+  }
+
+  const rowId = await createNewRowForType(p, "photo");
+  activePhotoCaptureRowId = rowId;
+  activePhotoCapturePuchokId = p.id;
+  return rowId;
+}
+
 async function addFileItemToCurrent(file){
   const p = ensureCurrentPuchok();
   if(!p) return;
 
-  const isImg = (file.type || "").startsWith("image/");
-  const title = file.name || (isImg ? "Фото" : "Файл");
-  const mime  = file.type || (isImg ? "image/*" : "application/octet-stream");
-  const size  = file.size || 0;
-
   isBusy = true;
   try{
-    const rowType = isImg ? "photo" : "file";
+    const rowType = (file.type || "").startsWith("image/") ? "photo" : "file";
     const rowId = await resolveTargetRowForCreate(p, rowType);
-
-    const created = await createItemInRow(rowId, {
-      type: "file",
-      title,
-      mime,
-      size,
-      meta: { r2: { hasBlob:false, name:title, mime } }
-    });
-
-    let it = mapItemRow(created);
-    if(isImg) it.type = "image";
-
-    if(isImg){
-      await uploadItemBlobToR2(it.id, file, { enforceLimit:false });
-    }else{
-      if((file.size || 0) <= WORKER_UPLOAD_LIMIT_BYTES){
-        await uploadItemBlobToR2(it.id, file, { enforceLimit:true });
-      }else{
-        await directUploadLargeFileToR2({ itemId: it.id, puchokId: p.id, file });
-      }
-    }
-
-    it._rowId = rowId;
-    it.r2 = { hasBlob:true, name: title, mime };
-    it.meta = it.meta && typeof it.meta === "object" ? it.meta : {};
-    it.meta.r2 = it.r2;
-    it.meta._rowId = rowId;
-
-    await apiJson(`/items/${encodeURIComponent(it.id)}`, {
-      method:"PATCH",
-      json: itemToPatchPayload(it),
-    });
-
-    await loadRowWithItems(rowId);
+    const created = await addFileItemToSpecificRow(p, rowId, file);
 
     if(viewMode === "row" && currentRowId === rowId){
       render();
     }else{
-      await openRow(rowId);
+      currentRowId = rowId;
+      viewMode = "row";
+      render();
     }
+
+    await openItemFromRow(rowId, created.itemId);
   }catch(e){
     addMsg("Ошибка добавления файла: " + (e?.message || e), "err");
   }finally{
+    isBusy = false;
+  }
+}
+
+async function addPhotoFromCamera(){
+  const p = ensureCurrentPuchok();
+  if(!p) return;
+
+  isBusy = true;
+  try{
+    const rowId = await ensurePhotoRowForCapture(p);
+    currentRowId = rowId;
+    const picker = ensurePhotoPicker();
+    picker.value = "";
+    picker.setAttribute("capture", "environment");
+    isBusy = false;
+    picker.click();
+    return;
+  }catch(e){
+    addMsg("Ошибка подготовки фото: " + (e?.message || e), "err");
     isBusy = false;
   }
 }
@@ -1931,6 +2098,14 @@ function closeModal(){
   if(modalNavBar){
     modalNavBar.style.display = "none";
     modalNavBar.innerHTML = "";
+  }
+  if(modalOverlayNav){
+    const prev = modalOverlayNav.querySelector("#modalOverlayPrev");
+    const next = modalOverlayNav.querySelector("#modalOverlayNext");
+    const counter = modalOverlayNav.querySelector("#modalOverlayCounter");
+    if(prev){ prev.style.display = "none"; prev.onclick = null; }
+    if(next){ next.style.display = "none"; next.onclick = null; }
+    if(counter){ counter.style.display = "none"; counter.textContent = ""; }
   }
   openItemId = null;
   openItemType = null;
@@ -2031,7 +2206,7 @@ async function openItemFromRow(rowId, itemId){
 
     let blob = null;
     try{
-      blob = await downloadItemBlobFromR2(it.id, it.mime || (it.type === "image" ? "image/*" : "application/octet-stream"));
+      blob = await downloadItemBlobFromR2(it.id, it.mime || (it.type === "image" ? "image/*" : "application/octet-stream"), it.type);
     }catch(e){
       modalViewer.innerHTML = `<div class="empty">Ошибка загрузки: ${escapeHTML(e?.message || e)}</div>`;
       return;
@@ -2042,7 +2217,10 @@ async function openItemFromRow(rowId, itemId){
       return;
     }
 
-    const typedBlob = (blob && blob.type) ? blob : new Blob([blob], { type: it.mime || (it.type === "image" ? "image/*" : "application/octet-stream") });
+    const finalMime = chooseBlobMimeType(blob?.type || "", it.mime || (it.type === "image" ? "image/*" : "application/octet-stream"), it.type);
+    const typedBlob = (blob && sanitizeMimeType(blob.type || "", "") === finalMime)
+      ? blob
+      : new Blob([blob], { type: finalMime });
     const url = URL.createObjectURL(typedBlob);
 
     if(it.type === "image"){
@@ -2353,6 +2531,31 @@ menuAddText.addEventListener("click", ()=>{
   }
 });
 
+
+const bindAddPhotoFromMenu = ()=>{
+  closeAddMenu();
+  if(viewMode === "list"){ alert("Сначала открой пучок."); return; }
+  addPhotoFromCamera();
+};
+
+document.addEventListener("click", (e)=>{
+  const btn = e.target && e.target.closest ? e.target.closest("#menuAddPhoto") : null;
+  if(!btn) return;
+  e.preventDefault();
+  e.stopPropagation();
+  bindAddPhotoFromMenu();
+});
+
+document.addEventListener("click", (e)=>{
+  const btn = e.target && e.target.closest ? e.target.closest("#menuAddSubpuchok") : null;
+  if(!btn) return;
+  e.preventDefault();
+  e.stopPropagation();
+  closeAddMenu();
+  if(viewMode !== "puchok"){ alert("Подпучок можно создать только внутри пучка."); return; }
+  createSubpuchokInCurrent();
+});
+
 menuAddFile.addEventListener("click", ()=>{
   closeAddMenu();
   if(viewMode === "list"){ alert("Сначала открой пучок."); return; }
@@ -2400,13 +2603,6 @@ menuAddLink.addEventListener("click", ()=>{
   addLinkItemsToCurrent(raw);
 });
 
-if(menuAddSubpuchok){
-  menuAddSubpuchok.addEventListener("click", ()=>{
-    closeAddMenu();
-    if(viewMode !== "puchok"){ alert("Подпучок можно создать только внутри пучка."); return; }
-    createSubpuchokInCurrent();
-  });
-}
 
 menuDeletePuchok.addEventListener("click", async ()=>{
   if(viewMode !== "puchok"){ alert("Удаление доступно только на уровне пучка."); return; }
@@ -2414,9 +2610,49 @@ menuDeletePuchok.addEventListener("click", async ()=>{
 });
 
 filePicker.addEventListener("change", async () => {
-  const f = filePicker.files && filePicker.files[0];
-  if(!f) return;
-  await addFileItemToCurrent(f);
+  const files = Array.from(filePicker.files || []).filter(Boolean);
+  if(files.length === 0) return;
+  for(const f of files){
+    await addFileItemToCurrent(f);
+  }
+});
+
+ensurePhotoPicker();
+photoPicker.addEventListener("change", async () => {
+  const files = Array.from(photoPicker.files || []).filter(Boolean);
+  if(files.length === 0){
+    isBusy = false;
+    return;
+  }
+
+  const p = ensureCurrentPuchok();
+  if(!p){
+    isBusy = false;
+    return;
+  }
+
+  try{
+    const rowId = await ensurePhotoRowForCapture(p);
+    let lastItemId = null;
+
+    for(const f of files){
+      const created = await addFileItemToSpecificRow(p, rowId, f);
+      lastItemId = created.itemId;
+    }
+
+    currentRowId = rowId;
+    viewMode = "row";
+    render();
+
+    if(lastItemId){
+      await openItemFromRow(rowId, lastItemId);
+    }
+  }catch(e){
+    addMsg("Ошибка добавления фото: " + (e?.message || e), "err");
+  }finally{
+    isBusy = false;
+    photoPicker.value = "";
+  }
 });
 
 // audioPicker handler is in audio.js (it appends segments to legacy item, then saveDBLocal() persists)
@@ -2435,6 +2671,26 @@ modalWrap.addEventListener("click", (e)=>{ if(e.target === modalWrap) closeModal
 modalSave.addEventListener("click", saveModal);
 modalDelete.addEventListener("click", deleteModal);
 modalCopy.addEventListener("click", copyModal);
+
+document.addEventListener("keydown", async (e)=>{
+  if(modalWrap.style.display !== "flex") return;
+  if(e.key === "ArrowLeft"){
+    const prevId = getModalSiblingItemId(-1);
+    if(prevId){
+      e.preventDefault();
+      await openItemFromRow(currentModalRowId, prevId);
+    }
+  }else if(e.key === "ArrowRight"){
+    const nextId = getModalSiblingItemId(1);
+    if(nextId){
+      e.preventDefault();
+      await openItemFromRow(currentModalRowId, nextId);
+    }
+  }else if(e.key === "Escape"){
+    e.preventDefault();
+    closeModal();
+  }
+});
 
 document.addEventListener("click", ()=> closeAddMenu());
 addMenu.addEventListener("click", (e)=> e.stopPropagation());
