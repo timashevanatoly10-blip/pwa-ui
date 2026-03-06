@@ -161,6 +161,10 @@ let currentRowId = null;            // row id (when viewMode==="row")
 
 let openItemId = null;
 let openItemType = null;
+let currentModalRowId = null;
+let currentModalItemIds = [];
+let currentModalItemIndex = -1;
+let modalNavBar = null;
 let isBusy = false;
 
 // In-memory store:
@@ -296,6 +300,89 @@ function rowTypeLabel(type){
   if(t === "file")  return { text:"Файлы-ряд", cls:"tagText tagFile", ico:"file" };
   if(t === "text")  return { text:"Текст-ряд", cls:"tagText", ico:"text" };
   return { text: (type || "Ряд"), cls:"tagText", ico:"file" };
+}
+
+function getSortedRowItems(rowId){
+  const pack = rowId ? db.rows[rowId] : null;
+  const items = Array.isArray(pack?.items) ? pack.items : [];
+  return [...items].sort((a,b)=> (a.createdAt||a.updatedAt||"").localeCompare(b.createdAt||b.updatedAt||""));
+}
+function rebuildModalNavState(rowId, itemId){
+  currentModalRowId = rowId || null;
+  currentModalItemIds = getSortedRowItems(rowId).map(x => x.id);
+  currentModalItemIndex = currentModalItemIds.indexOf(itemId);
+}
+function ensureModalNavBar(){
+  const parent = modalTextarea?.parentElement || modalViewer?.parentElement || null;
+  if(!parent) return null;
+  if(modalNavBar && modalNavBar.parentElement === parent) return modalNavBar;
+
+  if(modalNavBar && modalNavBar.parentElement){
+    try{ modalNavBar.parentElement.removeChild(modalNavBar); }catch{}
+  }
+
+  modalNavBar = document.createElement("div");
+  modalNavBar.id = "modalNavBar";
+  modalNavBar.style.display = "none";
+  modalNavBar.style.alignItems = "center";
+  modalNavBar.style.justifyContent = "space-between";
+  modalNavBar.style.gap = "10px";
+  modalNavBar.style.margin = "0 0 10px 0";
+
+  parent.insertBefore(modalNavBar, modalTextarea || modalViewer || null);
+  return modalNavBar;
+}
+function renderModalNav(rowId, itemId){
+  const bar = ensureModalNavBar();
+  if(!bar) return;
+
+  rebuildModalNavState(rowId, itemId);
+
+  if(!rowId || currentModalItemIndex < 0 || currentModalItemIds.length <= 1){
+    bar.style.display = "none";
+    bar.innerHTML = "";
+    return;
+  }
+
+  const hasPrev = currentModalItemIndex > 0;
+  const hasNext = currentModalItemIndex < currentModalItemIds.length - 1;
+
+  bar.style.display = "flex";
+  bar.innerHTML = `
+    <button type="button" class="btnGhost" id="modalPrevBtn" ${hasPrev ? "" : 'style="visibility:hidden" aria-hidden="true" tabindex="-1"'}>←</button>
+    <div style="font-size:12px;opacity:.8;white-space:nowrap;">${currentModalItemIndex + 1} / ${currentModalItemIds.length}</div>
+    <button type="button" class="btnGhost" id="modalNextBtn" ${hasNext ? "" : 'style="visibility:hidden" aria-hidden="true" tabindex="-1"'}>→</button>
+  `;
+
+  const prevBtn = document.getElementById("modalPrevBtn");
+  const nextBtn = document.getElementById("modalNextBtn");
+
+  if(prevBtn && hasPrev){
+    prevBtn.onclick = async (e)=>{
+      e.stopPropagation();
+      const prevId = currentModalItemIds[currentModalItemIndex - 1];
+      if(prevId) await openItemFromRow(rowId, prevId);
+    };
+  }
+  if(nextBtn && hasNext){
+    nextBtn.onclick = async (e)=>{
+      e.stopPropagation();
+      const nextId = currentModalItemIds[currentModalItemIndex + 1];
+      if(nextId) await openItemFromRow(rowId, nextId);
+    };
+  }
+}
+async function refreshRowAndKeepUI(rowId){
+  if(!rowId) return null;
+  await loadRowWithItems(rowId);
+  if(currentPuchokId){
+    try{ await loadPuchokWithEntries(currentPuchokId); }catch{}
+  }
+  if(viewMode === "row"){
+    currentRowId = rowId;
+  }
+  render();
+  return db.rows[rowId] || null;
 }
 
 /** ===========================
@@ -641,7 +728,7 @@ async function uploadItemBlobToR2(itemId, file, { enforceLimit = true } = {}){
   return data;
 }
 
-async function downloadItemBlobFromR2(itemId){
+async function downloadItemBlobFromR2(itemId, fallbackType = "application/octet-stream"){
   const resp = await apiFetch(itemBlobPath(itemId), { method:"GET" });
   if(resp.status === 404) return null;
   if(!resp.ok){
@@ -649,8 +736,13 @@ async function downloadItemBlobFromR2(itemId){
     throw new Error(t || `HTTP ${resp.status}`);
   }
 
+  const responseContentType = (resp.headers.get("content-type") || "").trim();
+  const blobType = responseContentType || (fallbackType || "application/octet-stream");
+
   if(!resp.body || typeof resp.body.getReader !== "function"){
-    return await resp.blob();
+    const ready = await resp.blob();
+    if(ready && ready.type) return ready;
+    return new Blob([ready], { type: blobType });
   }
 
   let total = null;
@@ -680,7 +772,7 @@ async function downloadItemBlobFromR2(itemId){
   }
 
   finishXfer({ ok:true, title:"Скачано", sub: total ? "Готово" : `Получено: ${fmtBytes(loaded)}`, autoHideMs: 600 });
-  return new Blob(chunks);
+  return new Blob(chunks, { type: blobType });
 }
 
 async function deleteItemBlobFromR2(itemId){
@@ -1633,12 +1725,14 @@ async function addTextItemToCurrent(initialText = ""){
     const rowId = await resolveTargetRowForCreate(p, "text");
     const created = await createItemInRow(rowId, { type:"text", title, content });
 
-    await loadRowWithItems(rowId);
+    await refreshRowAndKeepUI(rowId);
 
     if(viewMode === "row" && currentRowId === rowId){
       render();
     }else{
-      await openRow(rowId);
+      currentRowId = rowId;
+      viewMode = "row";
+      render();
     }
 
     const it = (db.rows[rowId]?.items || []).find(x => x.id === created.id) || mapItemRow(created);
@@ -1834,8 +1928,15 @@ function closeModal(){
   modalViewer.innerHTML = "";
   modalTextarea.classList.remove("codeTextarea");
   modalCopy.style.display = "none";
+  if(modalNavBar){
+    modalNavBar.style.display = "none";
+    modalNavBar.innerHTML = "";
+  }
   openItemId = null;
   openItemType = null;
+  currentModalRowId = null;
+  currentModalItemIds = [];
+  currentModalItemIndex = -1;
 }
 
 async function openItemFromRow(rowId, itemId){
@@ -1848,6 +1949,7 @@ async function openItemFromRow(rowId, itemId){
 
   openItemId = itemId;
   openItemType = it.type;
+  currentModalRowId = rowId;
 
   modalTitle.textContent = it.title || "Элемент";
   modalHint.textContent = "";
@@ -1857,6 +1959,7 @@ async function openItemFromRow(rowId, itemId){
   modalSave.style.display = "none";
   modalCopy.style.display = "none";
   modalTextarea.classList.remove("codeTextarea");
+  renderModalNav(rowId, itemId);
 
   if(it.type === "text"){
     modalTextarea.style.display = "block";
@@ -1928,7 +2031,7 @@ async function openItemFromRow(rowId, itemId){
 
     let blob = null;
     try{
-      blob = await downloadItemBlobFromR2(it.id);
+      blob = await downloadItemBlobFromR2(it.id, it.mime || (it.type === "image" ? "image/*" : "application/octet-stream"));
     }catch(e){
       modalViewer.innerHTML = `<div class="empty">Ошибка загрузки: ${escapeHTML(e?.message || e)}</div>`;
       return;
@@ -1939,7 +2042,8 @@ async function openItemFromRow(rowId, itemId){
       return;
     }
 
-    const url = URL.createObjectURL(blob);
+    const typedBlob = (blob && blob.type) ? blob : new Blob([blob], { type: it.mime || (it.type === "image" ? "image/*" : "application/octet-stream") });
+    const url = URL.createObjectURL(typedBlob);
 
     if(it.type === "image"){
       modalViewer.innerHTML = `
