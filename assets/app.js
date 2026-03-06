@@ -144,14 +144,18 @@ function ensureRefreshBtn(){
 function ensureAddMenuExtras(){
   if(!addMenu) return;
 
-  if(!document.getElementById("menuAddPhoto")){
-    const btn = document.createElement("button");
-    btn.id = "menuAddPhoto";
-    btn.type = "button";
-    btn.textContent = "Добавить фото";
-    if(menuAddFile && menuAddFile.parentElement === addMenu) addMenu.insertBefore(btn, menuAddFile);
-    else addMenu.appendChild(btn);
+  let photoBtn = document.getElementById("menuAddPhoto");
+  if(!photoBtn){
+    photoBtn = document.createElement("button");
+    photoBtn.id = "menuAddPhoto";
+    photoBtn.type = "button";
+    photoBtn.textContent = "Добавить фото";
+    if(menuAddFile && menuAddFile.parentElement === addMenu) addMenu.insertBefore(photoBtn, menuAddFile);
+    else addMenu.appendChild(photoBtn);
   }
+  photoBtn.style.display = "";
+  photoBtn.hidden = false;
+  photoBtn.disabled = false;
 
   if(!menuAddSubpuchok){
     const btn = document.createElement("button");
@@ -160,16 +164,24 @@ function ensureAddMenuExtras(){
     btn.textContent = "Подпучок";
     addMenu.insertBefore(btn, addMenu.firstChild);
     menuAddSubpuchok = btn;
+  }else{
+    menuAddSubpuchok.style.display = "";
+    menuAddSubpuchok.hidden = false;
   }
 }
 
 function ensurePhotoPicker(){
-  if(photoPicker) return photoPicker;
+  if(photoPicker){
+    photoPicker.accept = "image/*";
+    photoPicker.multiple = true;
+    photoPicker.style.display = "none";
+    return photoPicker;
+  }
   photoPicker = document.createElement("input");
   photoPicker.type = "file";
   photoPicker.id = "photoPicker";
   photoPicker.accept = "image/*";
-  photoPicker.setAttribute("capture", "environment");
+  photoPicker.multiple = true;
   photoPicker.style.display = "none";
   document.body.appendChild(photoPicker);
   return photoPicker;
@@ -219,6 +231,15 @@ function canUseWebAudio(){
 }
 function chooseAudioMode(){
   return hasMediaRecorder() ? "mediarecorder" : "capture";
+}
+function isCoarsePointerDevice(){
+  try{
+    if(window.matchMedia && window.matchMedia("(pointer: coarse)").matches) return true;
+  }catch{}
+  return Number(navigator.maxTouchPoints || 0) > 0;
+}
+function shouldUseCameraCapture(){
+  return isIOS() || isCoarsePointerDevice();
 }
 
 /** ===========================
@@ -363,8 +384,11 @@ function rebuildModalNavState(rowId, itemId){
   currentModalItemIndex = currentModalItemIds.indexOf(itemId);
 }
 
+function getModalPanelEl(){
+  return modalTextarea?.parentElement || modalViewer?.parentElement || modalWrap?.firstElementChild || modalWrap || null;
+}
 function ensureModalNavBar(){
-  const parent = modalTextarea?.parentElement || modalViewer?.parentElement || null;
+  const parent = getModalPanelEl();
   if(!parent) return null;
   if(modalNavBar && modalNavBar.parentElement === parent) return modalNavBar;
 
@@ -379,46 +403,56 @@ function ensureModalNavBar(){
   modalNavBar.style.justifyContent = "center";
   modalNavBar.style.gap = "10px";
   modalNavBar.style.margin = "0 0 10px 0";
+  modalNavBar.style.position = "relative";
+  modalNavBar.style.zIndex = "70";
 
   parent.insertBefore(modalNavBar, modalTextarea || modalViewer || null);
   return modalNavBar;
 }
 function ensureModalOverlayNav(){
-  if(!modalWrap) return null;
-  if(modalOverlayNav && modalOverlayNav.parentElement === modalWrap) return modalOverlayNav;
+  const panel = getModalPanelEl();
+  if(!panel) return null;
+  if(modalOverlayNav && modalOverlayNav.parentElement === panel) return modalOverlayNav;
 
   if(modalOverlayNav && modalOverlayNav.parentElement){
     try{ modalOverlayNav.parentElement.removeChild(modalOverlayNav); }catch{}
   }
 
-  if(getComputedStyle(modalWrap).position === "static"){
-    modalWrap.style.position = "fixed";
+  if(getComputedStyle(panel).position === "static"){
+    panel.style.position = "relative";
   }
+  panel.style.overflow = "visible";
 
   modalOverlayNav = document.createElement("div");
   modalOverlayNav.id = "modalOverlayNav";
   modalOverlayNav.style.position = "absolute";
-  modalOverlayNav.style.inset = "0";
+  modalOverlayNav.style.left = "0";
+  modalOverlayNav.style.right = "0";
+  modalOverlayNav.style.top = "0";
+  modalOverlayNav.style.bottom = "0";
   modalOverlayNav.style.pointerEvents = "none";
-  modalOverlayNav.style.zIndex = "50";
+  modalOverlayNav.style.overflow = "visible";
+  modalOverlayNav.style.zIndex = "9999";
   modalOverlayNav.innerHTML = `
     <button type="button" id="modalOverlayPrev" aria-label="Предыдущий элемент"
       style="position:absolute;left:12px;top:50%;transform:translateY(-50%);
-             min-width:48px;height:48px;padding:0 14px;border:0;border-radius:999px;
-             background:rgba(17,19,23,0.82);color:#fff;font-size:26px;line-height:1;
-             cursor:pointer;pointer-events:auto;display:none;box-shadow:0 8px 24px rgba(0,0,0,.28);">←</button>
+             min-width:52px;height:52px;padding:0 16px;border:0;border-radius:999px;
+             background:rgba(17,19,23,0.88);color:#fff;font-size:28px;line-height:1;
+             cursor:pointer;pointer-events:auto;display:none;z-index:10000;
+             box-shadow:0 8px 24px rgba(0,0,0,.28);">←</button>
     <div id="modalOverlayCounter"
       style="position:absolute;left:50%;top:12px;transform:translateX(-50%);
              min-width:64px;padding:8px 12px;border-radius:999px;background:rgba(17,19,23,0.72);
              color:#fff;font-size:12px;line-height:1;pointer-events:none;display:none;
-             box-shadow:0 8px 24px rgba(0,0,0,.22);text-align:center;"></div>
+             z-index:10000;box-shadow:0 8px 24px rgba(0,0,0,.22);text-align:center;"></div>
     <button type="button" id="modalOverlayNext" aria-label="Следующий элемент"
       style="position:absolute;right:12px;top:50%;transform:translateY(-50%);
-             min-width:48px;height:48px;padding:0 14px;border:0;border-radius:999px;
-             background:rgba(17,19,23,0.82);color:#fff;font-size:26px;line-height:1;
-             cursor:pointer;pointer-events:auto;display:none;box-shadow:0 8px 24px rgba(0,0,0,.28);">→</button>
+             min-width:52px;height:52px;padding:0 16px;border:0;border-radius:999px;
+             background:rgba(17,19,23,0.88);color:#fff;font-size:28px;line-height:1;
+             cursor:pointer;pointer-events:auto;display:none;z-index:10000;
+             box-shadow:0 8px 24px rgba(0,0,0,.28);">→</button>
   `;
-  modalWrap.appendChild(modalOverlayNav);
+  panel.appendChild(modalOverlayNav);
   return modalOverlayNav;
 }
 function renderModalNav(rowId, itemId){
@@ -436,9 +470,18 @@ function renderModalNav(rowId, itemId){
       const prev = overlay.querySelector("#modalOverlayPrev");
       const next = overlay.querySelector("#modalOverlayNext");
       const counter = overlay.querySelector("#modalOverlayCounter");
-      if(prev) prev.style.display = "none";
-      if(next) next.style.display = "none";
-      if(counter) counter.style.display = "none";
+      if(prev){
+        prev.style.display = "none";
+        prev.onclick = null;
+      }
+      if(next){
+        next.style.display = "none";
+        next.onclick = null;
+      }
+      if(counter){
+        counter.style.display = "none";
+        counter.textContent = "";
+      }
     }
     return;
   }
@@ -461,19 +504,23 @@ function renderModalNav(rowId, itemId){
     }
     if(prev){
       prev.style.display = hasPrev ? "block" : "none";
-      prev.onclick = async (e)=>{
+      prev.disabled = !hasPrev;
+      prev.onclick = hasPrev ? async (e)=>{
+        e.preventDefault();
         e.stopPropagation();
         const prevId = currentModalItemIds[currentModalItemIndex - 1];
         if(prevId) await openItemFromRow(rowId, prevId);
-      };
+      } : null;
     }
     if(next){
       next.style.display = hasNext ? "block" : "none";
-      next.onclick = async (e)=>{
+      next.disabled = !hasNext;
+      next.onclick = hasNext ? async (e)=>{
+        e.preventDefault();
         e.stopPropagation();
         const nextId = currentModalItemIds[currentModalItemIndex + 1];
         if(nextId) await openItemFromRow(rowId, nextId);
-      };
+      } : null;
     }
   }
 }
@@ -1282,6 +1329,7 @@ function setHeaderForRow(p, row){
  *  UI RENDER
  *  =========================== */
 function render(){
+  ensureAddMenuExtras();
   mainPanel.innerHTML = "";
   window.currentPuchokId = currentPuchokId;
 
@@ -1810,6 +1858,18 @@ async function refreshStay(){
     isBusy = false;
   }
 }
+async function refreshRowAndKeepUI(rowId){
+  if(!rowId) return null;
+  await loadRowWithItems(rowId);
+  if(currentPuchokId){
+    try{ await loadPuchokWithEntries(currentPuchokId); }catch{}
+  }
+  if(viewMode === "row" || currentRowId === rowId){
+    currentRowId = rowId;
+  }
+  render();
+  return db.rows[rowId] || null;
+}
 
 /** ===========================
  *  ADD actions (stage 1: auto-create row if needed)
@@ -2024,19 +2084,26 @@ async function addPhotoFromCamera(){
   const p = ensureCurrentPuchok();
   if(!p) return;
 
-  isBusy = true;
   try{
-    const rowId = await ensurePhotoRowForCapture(p);
-    currentRowId = rowId;
+    activePhotoCapturePuchokId = p.id;
+
+    const currentPack = getCurrentRowPack();
+    if(viewMode === "row" && currentPack?.row?.type === "photo"){
+      activePhotoCaptureRowId = currentPack.row.id;
+      currentRowId = currentPack.row.id;
+    }
+
     const picker = ensurePhotoPicker();
     picker.value = "";
-    picker.setAttribute("capture", "environment");
-    isBusy = false;
+    picker.accept = "image/*";
+    picker.multiple = true;
+
+    if(shouldUseCameraCapture()) picker.setAttribute("capture", "environment");
+    else picker.removeAttribute("capture");
+
     picker.click();
-    return;
   }catch(e){
     addMsg("Ошибка подготовки фото: " + (e?.message || e), "err");
-    isBusy = false;
   }
 }
 
@@ -2143,6 +2210,7 @@ async function openItemFromRow(rowId, itemId){
     modalSave.style.display = "";
     modalHint.textContent = "Текст хранится в облаке (D1).";
     modalWrap.style.display = "flex";
+    renderModalNav(rowId, itemId);
     setTimeout(()=> modalTextarea.focus(), 50);
     return;
   }
@@ -2156,6 +2224,7 @@ async function openItemFromRow(rowId, itemId){
     modalCopy.style.display = "";
     modalHint.textContent = "Код хранится в облаке (D1).";
     modalWrap.style.display = "flex";
+    renderModalNav(rowId, itemId);
     setTimeout(()=> modalTextarea.focus(), 50);
     return;
   }
@@ -2180,6 +2249,7 @@ async function openItemFromRow(rowId, itemId){
         <button class="btnGhost" id="btnCopyLink" ${url ? "" : "disabled"}>Copy</button>
       </div>
     `;
+    renderModalNav(rowId, itemId);
     const btnOpen = document.getElementById("btnOpenLink");
     const btnCopy = document.getElementById("btnCopyLink");
     if(btnOpen) btnOpen.onclick = () => url && window.open(url, "_blank");
@@ -2248,6 +2318,7 @@ async function openItemFromRow(rowId, itemId){
       `;
     }
 
+    renderModalNav(rowId, itemId);
     const btnOpenNewTab = document.getElementById("btnOpenNewTab");
     const btnDownload = document.getElementById("btnDownload");
 
@@ -2266,9 +2337,11 @@ async function openItemFromRow(rowId, itemId){
     // audio.js expects currentPuchokId + itemId
     // We keep legacy audio item list in puchok.items
     if(typeof renderAudioViewer === "function"){
+      renderModalNav(rowId, itemId);
       await renderAudioViewer(it, currentPuchokId);
     }else{
       modalViewer.innerHTML = `<div class="empty">audio.js не загрузился.</div>`;
+      renderModalNav(rowId, itemId);
     }
     return;
   }
@@ -2619,18 +2692,22 @@ filePicker.addEventListener("change", async () => {
 
 ensurePhotoPicker();
 photoPicker.addEventListener("change", async () => {
-  const files = Array.from(photoPicker.files || []).filter(Boolean);
+  const picker = ensurePhotoPicker();
+  const files = Array.from(picker.files || []).filter(Boolean);
   if(files.length === 0){
     isBusy = false;
+    picker.value = "";
     return;
   }
 
   const p = ensureCurrentPuchok();
   if(!p){
     isBusy = false;
+    picker.value = "";
     return;
   }
 
+  isBusy = true;
   try{
     const rowId = await ensurePhotoRowForCapture(p);
     let lastItemId = null;
@@ -2642,7 +2719,7 @@ photoPicker.addEventListener("change", async () => {
 
     currentRowId = rowId;
     viewMode = "row";
-    render();
+    await refreshRowAndKeepUI(rowId);
 
     if(lastItemId){
       await openItemFromRow(rowId, lastItemId);
@@ -2651,7 +2728,7 @@ photoPicker.addEventListener("change", async () => {
     addMsg("Ошибка добавления фото: " + (e?.message || e), "err");
   }finally{
     isBusy = false;
-    photoPicker.value = "";
+    picker.value = "";
   }
 });
 
