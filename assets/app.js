@@ -254,7 +254,12 @@ let activePhotoCaptureRowId = null;
 let activePhotoCapturePuchokId = null;
 let activeFileCaptureRowId = null;
 let activeFileCapturePuchokId = null;
+let activeCarouselRowId = null;
+let activeCarouselItemId = null;
 let isBusy = false;
+
+const itemPreviewUrlCache = new Map();
+const itemPreviewLoadPromises = new Map();
 
 // In-memory store:
 // - db.puchki: root containers list + cached containers
@@ -925,7 +930,9 @@ async function uploadItemBlobToR2(itemId, file, { enforceLimit = true } = {}){
   return data;
 }
 
-async function downloadItemBlobFromR2(itemId, fallbackType = "application/octet-stream", itemType = ""){
+
+async function downloadItemBlobFromR2(itemId, fallbackType = "application/octet-stream", itemType = "", opts = {}){
+  const showProgress = opts.showProgress !== false;
   const resp = await apiFetch(itemBlobPath(itemId), { method:"GET" });
   if(resp.status === 404) return null;
   if(!resp.ok){
@@ -950,11 +957,13 @@ async function downloadItemBlobFromR2(itemId, fallbackType = "application/octet-
     if(cl) total = Number(cl) || null;
   }catch{}
 
-  showXfer({
-    title: "Скачиваю из облака",
-    sub: "…",
-    determinate: !!(total && total > 0)
-  });
+  if(showProgress){
+    showXfer({
+      title: "Скачиваю из облака",
+      sub: "…",
+      determinate: !!(total && total > 0)
+    });
+  }
 
   const reader = resp.body.getReader();
   const chunks = [];
@@ -966,22 +975,16 @@ async function downloadItemBlobFromR2(itemId, fallbackType = "application/octet-
     if(value){
       chunks.push(value);
       loaded += value.byteLength || value.length || 0;
-      updateXfer({ loaded, total, title:"Скачиваю из облака", sub:"" });
+      if(showProgress){
+        updateXfer({ loaded, total, title:"Скачиваю из облака", sub:"" });
+      }
     }
   }
 
-  finishXfer({ ok:true, title:"Скачано", sub: total ? "Готово" : `Получено: ${fmtBytes(loaded)}`, autoHideMs: 600 });
-  return new Blob(chunks, { type: blobType });
-}
-
-async function deleteItemBlobFromR2(itemId){
-  const resp = await apiFetch(itemBlobPath(itemId), { method:"DELETE" });
-  if(resp.status === 404) return true;
-  if(!resp.ok){
-    const t = await resp.text().catch(()=> "");
-    throw new Error(t || `HTTP ${resp.status}`);
+  if(showProgress){
+    finishXfer({ ok:true, title:"Скачано", sub: total ? "Готово" : `Получено: ${fmtBytes(loaded)}`, autoHideMs: 600 });
   }
-  return true;
+  return new Blob(chunks, { type: blobType });
 }
 
 /** ===========================
@@ -1545,6 +1548,97 @@ function renderPuchokInside(p){
   mainPanel.appendChild(wrap);
 }
 
+function applyActiveTileStyles(card, isActive){
+  if(!card) return;
+  card.style.transition = "transform .16s ease, box-shadow .16s ease, border-color .16s ease";
+  if(isActive){
+    card.style.transform = "scale(1.05)";
+    card.style.border = "1px solid rgba(84,132,255,.95)";
+    card.style.boxShadow = "0 14px 28px rgba(84,132,255,.18), 0 0 0 3px rgba(84,132,255,.14)";
+  }else{
+    card.style.transform = "";
+    card.style.border = "";
+    card.style.boxShadow = "";
+  }
+}
+
+function updateActiveRowTileUI(rowId = null){
+  const targetRowId = rowId || activeCarouselRowId || currentRowId || null;
+  const cards = document.querySelectorAll("[data-row-tile-item-id]");
+  cards.forEach((card)=>{
+    const isActive =
+      !!activeCarouselItemId &&
+      card.dataset.rowTileRowId === String(targetRowId || "") &&
+      card.dataset.rowTileItemId === String(activeCarouselItemId);
+    applyActiveTileStyles(card, isActive);
+  });
+}
+
+function setActiveCarouselItem(rowId, itemId){
+  activeCarouselRowId = rowId || null;
+  activeCarouselItemId = itemId || null;
+  updateActiveRowTileUI(rowId || null);
+}
+
+async function ensureItemPreviewUrl(it){
+  if(!it?.id) return "";
+  if(itemPreviewUrlCache.has(it.id)) return itemPreviewUrlCache.get(it.id) || "";
+  if(itemPreviewLoadPromises.has(it.id)) return await itemPreviewLoadPromises.get(it.id);
+
+  const task = (async ()=>{
+    try{
+      const blob = await downloadItemBlobFromR2(
+        it.id,
+        it.mime || "image/*",
+        it.type || "image",
+        { showProgress:false }
+      );
+      if(!blob) return "";
+      const finalMime = chooseBlobMimeType(blob?.type || "", it.mime || "image/*", it.type || "image");
+      const typedBlob = (blob && sanitizeMimeType(blob.type || "", "") === finalMime)
+        ? blob
+        : new Blob([blob], { type: finalMime });
+      const url = URL.createObjectURL(typedBlob);
+      itemPreviewUrlCache.set(it.id, url);
+      return url;
+    }catch{
+      return "";
+    }finally{
+      itemPreviewLoadPromises.delete(it.id);
+    }
+  })();
+
+  itemPreviewLoadPromises.set(it.id, task);
+  return await task;
+}
+
+function mountImageTilePreview(previewHost, it){
+  if(!previewHost || !it) return;
+  previewHost.dataset.previewItemId = String(it.id || "");
+  previewHost.innerHTML = `
+    <div style="height:132px;border-radius:14px;overflow:hidden;background:rgba(17,19,23,.06);display:flex;align-items:center;justify-content:center;">
+      <div class="itemDesc">Загружаю фото…</div>
+    </div>
+  `;
+
+  ensureItemPreviewUrl(it).then((url)=>{
+    if(previewHost.dataset.previewItemId !== String(it.id || "")) return;
+    if(!url){
+      previewHost.innerHTML = `<div class="itemDesc">${fmtBytes(it.size)} • фото</div>`;
+      return;
+    }
+    previewHost.innerHTML = `
+      <div style="height:132px;border-radius:14px;overflow:hidden;background:rgba(17,19,23,.06);">
+        <img src="${url}" alt="${escapeHTML(it.title || "Фото")}" style="display:block;width:100%;height:100%;object-fit:cover;" />
+      </div>
+    `;
+  }).catch(()=>{
+    if(previewHost.dataset.previewItemId !== String(it.id || "")) return;
+    previewHost.innerHTML = `<div class="itemDesc">${fmtBytes(it.size)} • фото</div>`;
+  });
+}
+
+
 function renderRowInside(p, cached){
   const wrap = document.createElement("div");
   wrap.className = "list";
@@ -1624,28 +1718,32 @@ function renderRowInside(p, cached){
     card.style.flexDirection = "column";
     card.style.gap = "10px";
     card.style.cursor = "pointer";
+    card.dataset.rowTileRowId = row.id;
+    card.dataset.rowTileItemId = it.id;
+    applyActiveTileStyles(card, activeCarouselRowId === row.id && activeCarouselItemId === it.id);
     card.addEventListener("click", () => openItemFromRow(row.id, it.id));
 
     const t = typeLabel(it);
 
-    let preview = "";
+    let previewHTML = "";
     if(it.type === "text"){
-      preview = escapeHTML((it.content || "").toString().trim().replace(/\s+/g," ").slice(0,220) || "Пусто");
+      previewHTML = escapeHTML((it.content || "").toString().trim().replace(/\s+/g," ").slice(0,220) || "Пусто");
     }else if(it.type === "code"){
-      preview = `<pre style="margin:0;white-space:pre-wrap;font-family:monospace;font-size:12px;">${escapeHTML((it.content || "").toString().slice(0,220) || "Пусто")}</pre>`;
+      previewHTML = `<pre style="margin:0;white-space:pre-wrap;font-family:monospace;font-size:12px;">${escapeHTML((it.content || "").toString().slice(0,220) || "Пусто")}</pre>`;
     }else if(it.type === "link"){
-      preview = `<div class="itemDesc" style="word-break:break-all">${escapeHTML(it.url || "—")}</div>`;
+      previewHTML = `<div class="itemDesc" style="word-break:break-all">${escapeHTML(it.url || "—")}</div>`;
     }else if(it.type === "image"){
-      preview = `<div class="itemDesc">${fmtBytes(it.size)} • фото</div>`;
+      previewHTML = `<div class="itemDesc">${fmtBytes(it.size)} • фото</div>`;
     }else if(it.type === "file"){
-      preview = `<div class="itemDesc">${escapeHTML(it.mime || "file")} • ${fmtBytes(it.size)}</div>`;
+      previewHTML = `<div class="itemDesc">${escapeHTML(it.mime || "file")} • ${fmtBytes(it.size)}</div>`;
     }else if(it.type === "audio"){
       const segs = (it.segments || []).length;
-      preview = `<div class="itemDesc">Сегментов: ${segs}</div>`;
+      previewHTML = `<div class="itemDesc">Сегментов: ${segs}</div>`;
     }else{
-      preview = `<div class="itemDesc">${fmtDate(it.createdAt || it.updatedAt || nowISO())}</div>`;
+      previewHTML = `<div class="itemDesc">${fmtDate(it.createdAt || it.updatedAt || nowISO())}</div>`;
     }
 
+    const isPhotoTile = it.type === "image" && (row.type || "").toLowerCase() === "photo";
     card.innerHTML = `
       <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
         <div style="display:flex;align-items:center;gap:10px;min-width:0;">
@@ -1657,8 +1755,14 @@ function renderRowInside(p, cached){
         </div>
         <div class="${t.cls}">${t.text}</div>
       </div>
-      <div style="min-height:72px;">${preview}</div>
+      <div class="rowTilePreviewHost" style="min-height:${isPhotoTile ? "132px" : "72px"};">${previewHTML}</div>
     `;
+
+    if(isPhotoTile){
+      const previewHost = card.querySelector(".rowTilePreviewHost");
+      mountImageTilePreview(previewHost, it);
+    }
+
     rail.appendChild(card);
   }
 
@@ -1702,8 +1806,8 @@ function renderRowInside(p, cached){
 
   wrap.appendChild(rail);
   mainPanel.appendChild(wrap);
+  updateActiveRowTileUI(row.id);
 }
-
 
 /** ===========================
  *  NAV
@@ -2458,6 +2562,7 @@ async function openItemFromRow(rowId, itemId){
   openItemId = itemId;
   openItemType = it.type;
   currentModalRowId = rowId;
+  setActiveCarouselItem(rowId, itemId);
 
   modalTitle.textContent = it.title || "Элемент";
   modalHint.textContent = "";
