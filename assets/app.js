@@ -252,6 +252,8 @@ let modalNavBar = null;
 let modalOverlayNav = null;
 let activePhotoCaptureRowId = null;
 let activePhotoCapturePuchokId = null;
+let activeFileCaptureRowId = null;
+let activeFileCapturePuchokId = null;
 let isBusy = false;
 
 // In-memory store:
@@ -1351,8 +1353,8 @@ function setHeaderForRow(p, row){
   headCrumb.textContent = `${p?.title || "Пучок"} • ${rt.text}`;
 
   newPuchokBtn.style.display = "none";
-  editPuchokBtn.style.display = "none"; // в этапе 1 переименование ряда можно добавить позже
-  addMenuBtn.style.display = "";        // оставляем + как "добавить item"
+  editPuchokBtn.style.display = "none";
+  addMenuBtn.style.display = "none";
   closeAddMenu();
 
   ensureRefreshBtn();
@@ -1363,15 +1365,14 @@ function setHeaderForRow(p, row){
   }
 
   try{
-    const parent = addMenuBtn && addMenuBtn.parentElement;
-    if(parent && refreshBtn && addMenuBtn){
+    const parent = (refreshBtn && refreshBtn.parentElement) || (addMenuBtn && addMenuBtn.parentElement) || null;
+    if(parent && refreshBtn){
       if(refreshBtn.parentElement !== parent) parent.appendChild(refreshBtn);
-      if(addMenuBtn.parentElement !== parent) parent.appendChild(addMenuBtn);
-      parent.insertBefore(refreshBtn, addMenuBtn);
+      if(addMenuBtn && addMenuBtn.parentElement === parent) parent.removeChild(addMenuBtn);
     }
   }catch{}
 
-  chatHint.textContent = "Ты в ряду: добавляй элементы через “+”.";
+  chatHint.textContent = "Ты в ряду: добавляй элементы через плитку “+”.";
 }
 
 /** ===========================
@@ -1602,76 +1603,107 @@ function renderRowInside(p, cached){
   top.appendChild(delBtn);
   wrap.appendChild(top);
 
-  if(items.length === 0){
-    const empty = document.createElement("div");
-    empty.className = "empty";
-    empty.innerHTML = "Ряд пуст.<br>Нажми <b>+</b> сверху → добавь элемент.";
-    wrap.appendChild(empty);
-  }else{
-    const rail = document.createElement("div");
-    rail.className = "rowCarousel";
-    rail.style.display = "flex";
-    rail.style.gap = "12px";
-    rail.style.overflowX = "auto";
-    rail.style.paddingBottom = "8px";
-    rail.style.scrollSnapType = "x mandatory";
-    rail.style.WebkitOverflowScrolling = "touch";
+  const rail = document.createElement("div");
+  rail.className = "rowCarousel";
+  rail.style.display = "flex";
+  rail.style.gap = "12px";
+  rail.style.overflowX = "auto";
+  rail.style.paddingBottom = "8px";
+  rail.style.scrollSnapType = "x mandatory";
+  rail.style.WebkitOverflowScrolling = "touch";
 
-    const sorted = [...items].sort((a,b)=> (a.createdAt||a.updatedAt||"").localeCompare(b.createdAt||b.updatedAt||""));
-    for(const it of sorted){
-      const card = document.createElement("div");
-      card.className = "card";
-      card.style.minWidth = "260px";
-      card.style.maxWidth = "320px";
-      card.style.flex = "0 0 82%";
-      card.style.scrollSnapAlign = "start";
-      card.style.display = "flex";
-      card.style.flexDirection = "column";
-      card.style.gap = "10px";
-      card.style.cursor = "pointer";
-      card.addEventListener("click", () => openItemFromRow(row.id, it.id));
+  const sorted = [...items].sort((a,b)=> (a.createdAt||a.updatedAt||"").localeCompare(b.createdAt||b.updatedAt||""));
+  for(const it of sorted){
+    const card = document.createElement("div");
+    card.className = "card";
+    card.style.minWidth = "260px";
+    card.style.maxWidth = "320px";
+    card.style.flex = "0 0 82%";
+    card.style.scrollSnapAlign = "start";
+    card.style.display = "flex";
+    card.style.flexDirection = "column";
+    card.style.gap = "10px";
+    card.style.cursor = "pointer";
+    card.addEventListener("click", () => openItemFromRow(row.id, it.id));
 
-      const t = typeLabel(it);
+    const t = typeLabel(it);
 
-      let preview = "";
-      if(it.type === "text"){
-        preview = escapeHTML((it.content || "").toString().trim().replace(/\s+/g," ").slice(0,220) || "Пусто");
-      }else if(it.type === "code"){
-        preview = `<pre style="margin:0;white-space:pre-wrap;font-family:monospace;font-size:12px;">${escapeHTML((it.content || "").toString().slice(0,220) || "Пусто")}</pre>`;
-      }else if(it.type === "link"){
-        preview = `<div class="itemDesc" style="word-break:break-all">${escapeHTML(it.url || "—")}</div>`;
-      }else if(it.type === "image"){
-        preview = `<div class="itemDesc">${fmtBytes(it.size)} • фото</div>`;
-      }else if(it.type === "file"){
-        preview = `<div class="itemDesc">${escapeHTML(it.mime || "file")} • ${fmtBytes(it.size)}</div>`;
-      }else if(it.type === "audio"){
-        const segs = (it.segments || []).length;
-        preview = `<div class="itemDesc">Сегментов: ${segs}</div>`;
-      }else{
-        preview = `<div class="itemDesc">${fmtDate(it.createdAt || it.updatedAt || nowISO())}</div>`;
-      }
-
-      card.innerHTML = `
-        <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
-          <div style="display:flex;align-items:center;gap:10px;min-width:0;">
-            <div class="thumb">${icoSVG(it.type==="image" ? "photo" : (it.type || "file"))}</div>
-            <div class="itemText" style="min-width:0;">
-              <div class="itemTitle">${escapeHTML(it.title || "Элемент")}</div>
-              <div class="itemDesc">${fmtDate(it.updatedAt || it.createdAt || nowISO())}</div>
-            </div>
-          </div>
-          <div class="${t.cls}">${t.text}</div>
-        </div>
-        <div style="min-height:72px;">${preview}</div>
-      `;
-      rail.appendChild(card);
+    let preview = "";
+    if(it.type === "text"){
+      preview = escapeHTML((it.content || "").toString().trim().replace(/\s+/g," ").slice(0,220) || "Пусто");
+    }else if(it.type === "code"){
+      preview = `<pre style="margin:0;white-space:pre-wrap;font-family:monospace;font-size:12px;">${escapeHTML((it.content || "").toString().slice(0,220) || "Пусто")}</pre>`;
+    }else if(it.type === "link"){
+      preview = `<div class="itemDesc" style="word-break:break-all">${escapeHTML(it.url || "—")}</div>`;
+    }else if(it.type === "image"){
+      preview = `<div class="itemDesc">${fmtBytes(it.size)} • фото</div>`;
+    }else if(it.type === "file"){
+      preview = `<div class="itemDesc">${escapeHTML(it.mime || "file")} • ${fmtBytes(it.size)}</div>`;
+    }else if(it.type === "audio"){
+      const segs = (it.segments || []).length;
+      preview = `<div class="itemDesc">Сегментов: ${segs}</div>`;
+    }else{
+      preview = `<div class="itemDesc">${fmtDate(it.createdAt || it.updatedAt || nowISO())}</div>`;
     }
 
-    wrap.appendChild(rail);
+    card.innerHTML = `
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
+        <div style="display:flex;align-items:center;gap:10px;min-width:0;">
+          <div class="thumb">${icoSVG(it.type==="image" ? "photo" : (it.type || "file"))}</div>
+          <div class="itemText" style="min-width:0;">
+            <div class="itemTitle">${escapeHTML(it.title || "Элемент")}</div>
+            <div class="itemDesc">${fmtDate(it.updatedAt || it.createdAt || nowISO())}</div>
+          </div>
+        </div>
+        <div class="${t.cls}">${t.text}</div>
+      </div>
+      <div style="min-height:72px;">${preview}</div>
+    `;
+    rail.appendChild(card);
   }
 
+  const addCard = document.createElement("div");
+  addCard.className = "card";
+  addCard.style.minWidth = "260px";
+  addCard.style.maxWidth = "320px";
+  addCard.style.flex = "0 0 82%";
+  addCard.style.scrollSnapAlign = "start";
+  addCard.style.display = "flex";
+  addCard.style.flexDirection = "column";
+  addCard.style.alignItems = "center";
+  addCard.style.justifyContent = "center";
+  addCard.style.gap = "14px";
+  addCard.style.cursor = "pointer";
+  addCard.style.minHeight = "180px";
+  addCard.style.textAlign = "center";
+  addCard.setAttribute("role", "button");
+  addCard.setAttribute("tabindex", "0");
+  addCard.innerHTML = `
+    <div style="width:56px;height:56px;border-radius:16px;display:flex;align-items:center;justify-content:center;background:rgba(17,19,23,.08);font-size:34px;line-height:1;">+</div>
+    <div class="itemText" style="align-items:center;text-align:center;">
+      <div class="itemTitle">Добавить</div>
+      <div class="itemDesc">${escapeHTML(rowTypeLabel(row.type).text.replace("-ряд",""))}</div>
+    </div>
+  `;
+  const triggerAdd = async (e)=>{
+    if(e){
+      e.preventDefault();
+      e.stopPropagation();
+    }
+    await addItemViaRowTile(row.id);
+  };
+  addCard.addEventListener("click", triggerAdd);
+  addCard.addEventListener("keydown", async (e)=>{
+    if(e.key === "Enter" || e.key === " "){
+      await triggerAdd(e);
+    }
+  });
+  rail.appendChild(addCard);
+
+  wrap.appendChild(rail);
   mainPanel.appendChild(wrap);
 }
+
 
 /** ===========================
  *  NAV
@@ -1863,6 +1895,196 @@ async function createNewRowForType(puchok, type){
 
 function getCurrentRowPack(){
   return currentRowId ? (db.rows[currentRowId] || null) : null;
+}
+
+function getCurrentRowType(){
+  return (getCurrentRowPack()?.row?.type || "").toLowerCase();
+}
+
+function isRowAddTileSupported(rowType){
+  return ["photo","text","code","file","link","audio"].includes((rowType || "").toLowerCase());
+}
+
+function openFilePickerForRow(rowId){
+  if(!rowId || !filePicker) return;
+  const p = ensureCurrentPuchok();
+  if(!p) return;
+  activeFileCaptureRowId = rowId;
+  activeFileCapturePuchokId = p.id;
+  filePicker.value = "";
+  filePicker.click();
+}
+
+async function addTextItemToSpecificRow(rowId, initialText = ""){
+  const p = ensureCurrentPuchok();
+  if(!p || !rowId) return;
+
+  const content = (initialText || "").toString();
+  const title = safeTitleFromText(content) || "Текст";
+
+  isBusy = true;
+  try{
+    const created = await createItemInRow(rowId, { type:"text", title, content });
+    currentRowId = rowId;
+    viewMode = "row";
+    await refreshRowAndKeepUI(rowId);
+    const it = (db.rows[rowId]?.items || []).find(x => x.id === created.id) || mapItemRow(created);
+    await openItemFromRow(rowId, it.id);
+  }catch(e){
+    addMsg("Ошибка добавления текста: " + (e?.message || e), "err");
+  }finally{
+    isBusy = false;
+  }
+}
+
+async function addCodeItemToSpecificRow(rowId, initialCode = ""){
+  const p = ensureCurrentPuchok();
+  if(!p || !rowId) return;
+
+  const content = (initialCode || "").toString();
+  const title = safeTitleFromText(content) || "Код";
+
+  isBusy = true;
+  try{
+    const created = await createItemInRow(rowId, { type:"code", title, content });
+    currentRowId = rowId;
+    viewMode = "row";
+    await refreshRowAndKeepUI(rowId);
+    const it = (db.rows[rowId]?.items || []).find(x => x.id === created.id) || mapItemRow(created);
+    await openItemFromRow(rowId, it.id);
+  }catch(e){
+    addMsg("Ошибка добавления кода: " + (e?.message || e), "err");
+  }finally{
+    isBusy = false;
+  }
+}
+
+async function addLinkItemsToSpecificRow(rowId, rawInput){
+  const p = ensureCurrentPuchok();
+  if(!p || !rowId) return;
+
+  const lines = (rawInput || "")
+    .toString()
+    .split(/\r?\n/)
+    .map(s => s.trim())
+    .filter(Boolean);
+
+  if(lines.length === 0){
+    alert("Вставь ссылку (или несколько строк — несколько ссылок).");
+    return;
+  }
+
+  isBusy = true;
+  try{
+    for(const line of lines){
+      const u = normalizeUrl(line);
+      if(!u) continue;
+      const title = urlTitle(u);
+      await createItemInRow(rowId, { type:"link", title, url: u });
+    }
+
+    currentRowId = rowId;
+    viewMode = "row";
+    await refreshRowAndKeepUI(rowId);
+  }catch(e){
+    addMsg("Ошибка добавления ссылок: " + (e?.message || e), "err");
+  }finally{
+    isBusy = false;
+  }
+}
+
+async function createAudioItemInSpecificRow(rowId){
+  const p = ensureCurrentPuchok();
+  if(!p || !rowId) return null;
+
+  isBusy = true;
+  try{
+    const title = `Голос ${new Date().toLocaleDateString()}`;
+    const meta = { segments: [], durationSec: 0, localOnly: true, _rowId: rowId };
+    const created = await createItemInRow(rowId, { type:"audio", title, meta });
+    const it = mapItemRow(created);
+    it.type = "audio";
+    it.segments = [];
+    it.durationSec = 0;
+    it._rowId = rowId;
+
+    const pLocal = getPuchokLocal(p.id);
+    if(pLocal){
+      pLocal.items = pLocal.items || [];
+      pLocal.items.unshift(it);
+      pLocal.updatedAt = it.updatedAt || nowISO();
+      pLocal.audioRowId = rowId;
+    }
+
+    currentRowId = rowId;
+    viewMode = "row";
+    await refreshRowAndKeepUI(rowId);
+    return (db.rows[rowId]?.items || []).find(x => x.id === it.id) || it;
+  }finally{
+    isBusy = false;
+  }
+}
+
+async function addItemViaRowTile(rowId){
+  const pack = rowId ? db.rows[rowId] : null;
+  const row = pack?.row || null;
+  if(!row) return;
+
+  const rowType = (row.type || "").toLowerCase();
+
+  if(rowType === "photo"){
+    activePhotoCaptureRowId = rowId;
+    activePhotoCapturePuchokId = currentPuchokId;
+    await addPhotoFromCamera();
+    return;
+  }
+
+  if(rowType === "text"){
+    await addTextItemToSpecificRow(rowId, "");
+    return;
+  }
+
+  if(rowType === "code"){
+    await addCodeItemToSpecificRow(rowId, "");
+    return;
+  }
+
+  if(rowType === "file"){
+    openFilePickerForRow(rowId);
+    return;
+  }
+
+  if(rowType === "link"){
+    const raw = prompt("Вставь ссылку (или несколько строк):", "");
+    if(raw === null) return;
+    await addLinkItemsToSpecificRow(rowId, raw);
+    return;
+  }
+
+  if(rowType === "audio"){
+    try{
+      const it = await createAudioItemInSpecificRow(rowId);
+      if(!it){
+        alert("Не удалось создать голос-элемент в облаке.");
+        return;
+      }
+      modalWrap.style.display = "flex";
+      await openItemFromRow(rowId, it.id);
+
+      if(typeof startRecordingToAudioItem === "function"){
+        await startRecordingToAudioItem(currentPuchokId, it.id);
+      }else if(typeof createAudioItemAndRecord === "function"){
+        await createAudioItemAndRecord();
+      }else{
+        alert("audio.js не загрузился (нет startRecordingToAudioItem).");
+      }
+    }catch(e){
+      addMsg("Ошибка голоса: " + (e?.message || e), "err");
+    }
+    return;
+  }
+
+  alert("Для этого типа ряда добавление через плитку пока не поддерживается.");
 }
 
 async function resolveTargetRowForCreate(puchok, type){
@@ -2140,6 +2362,8 @@ async function addPhotoFromCamera(){
     if(viewMode === "row" && currentPack?.row?.type === "photo"){
       activePhotoCaptureRowId = currentPack.row.id;
       currentRowId = currentPack.row.id;
+    }else if(activePhotoCaptureRowId && activePhotoCapturePuchokId === p.id){
+      currentRowId = activePhotoCaptureRowId;
     }
 
     const picker = ensurePhotoPicker();
@@ -2638,12 +2862,8 @@ if(refreshBtn){
  */
 menuAddText.addEventListener("click", ()=>{
   closeAddMenu();
-  if(viewMode === "row"){
-    // add text item into current row (if row type differs, still allow)
-    addTextItemToCurrent("");
-  }else{
-    addTextItemToCurrent("");
-  }
+  if(viewMode === "row"){ return; }
+  addTextItemToCurrent("");
 });
 
 
@@ -2660,6 +2880,9 @@ document.addEventListener("click", (e)=>{
 menuAddFile.addEventListener("click", ()=>{
   closeAddMenu();
   if(viewMode === "list"){ alert("Сначала открой пучок."); return; }
+  if(viewMode === "row"){ return; }
+  activeFileCaptureRowId = null;
+  activeFileCapturePuchokId = null;
   filePicker.value = "";
   filePicker.click();
 });
@@ -2667,6 +2890,7 @@ menuAddFile.addEventListener("click", ()=>{
 menuAddAudio.addEventListener("click", async ()=>{
   closeAddMenu();
   if(viewMode === "list"){ alert("Сначала открой пучок."); return; }
+  if(viewMode === "row"){ return; }
   try{
     const it = await createAudioItemCloud();
     if(!it){
@@ -2674,7 +2898,6 @@ menuAddAudio.addEventListener("click", async ()=>{
       return;
     }
     render();
-    // open audio item viewer (uses legacy puchok items list)
     modalWrap.style.display = "flex";
     await openItemFromRow(currentRowId, it.id);
 
@@ -2693,12 +2916,14 @@ menuAddAudio.addEventListener("click", async ()=>{
 menuAddCode.addEventListener("click", ()=>{
   closeAddMenu();
   if(viewMode === "list"){ alert("Сначала открой пучок."); return; }
+  if(viewMode === "row"){ return; }
   addCodeItemToCurrent("");
 });
 
 menuAddLink.addEventListener("click", ()=>{
   closeAddMenu();
   if(viewMode === "list"){ alert("Сначала открой пучок."); return; }
+  if(viewMode === "row"){ return; }
   const raw = prompt("Вставь ссылку (или несколько строк):", "");
   if(raw === null) return;
   addLinkItemsToCurrent(raw);
@@ -2713,8 +2938,45 @@ menuDeletePuchok.addEventListener("click", async ()=>{
 filePicker.addEventListener("change", async () => {
   const files = Array.from(filePicker.files || []).filter(Boolean);
   if(files.length === 0) return;
-  for(const f of files){
-    await addFileItemToCurrent(f);
+
+  const targetRowId = activeFileCaptureRowId;
+  const targetPuchokId = activeFileCapturePuchokId;
+
+  try{
+    if(targetRowId && targetPuchokId && targetPuchokId === currentPuchokId){
+      const p = ensureCurrentPuchok();
+      if(!p){
+        activeFileCaptureRowId = null;
+        activeFileCapturePuchokId = null;
+        return;
+      }
+
+      isBusy = true;
+      let lastItemId = null;
+      for(const f of files){
+        const created = await addFileItemToSpecificRow(p, targetRowId, f);
+        lastItemId = created.itemId;
+      }
+
+      currentRowId = targetRowId;
+      viewMode = "row";
+      await refreshRowAndKeepUI(targetRowId);
+
+      if(lastItemId){
+        await openItemFromRow(targetRowId, lastItemId);
+      }
+    }else{
+      for(const f of files){
+        await addFileItemToCurrent(f);
+      }
+    }
+  }catch(e){
+    addMsg("Ошибка добавления файла: " + (e?.message || e), "err");
+  }finally{
+    activeFileCaptureRowId = null;
+    activeFileCapturePuchokId = null;
+    filePicker.value = "";
+    isBusy = false;
   }
 });
 
