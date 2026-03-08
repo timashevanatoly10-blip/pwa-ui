@@ -83,6 +83,7 @@ const newPuchokBtn = document.getElementById("newPuchokBtn");
 
 const editPuchokBtn = document.getElementById("editPuchokBtn");
 const addMenuBtn = document.getElementById("addMenuBtn");
+const headerActionsHost = addMenuBtn ? addMenuBtn.parentElement : null;
 const addMenu = document.getElementById("addMenu");
 const menuAddText = document.getElementById("menuAddText");
 let menuAddPhoto = document.getElementById("menuAddPhoto");
@@ -1330,7 +1331,6 @@ function setHeaderForPuchok(p){
 
   newPuchokBtn.style.display = "none";
   editPuchokBtn.style.display = "";
-  addMenuBtn.style.display = "";
   closeAddMenu();
 
   ensureRefreshBtn();
@@ -1340,16 +1340,24 @@ function setHeaderForPuchok(p){
     refreshBtn.setAttribute("aria-label","Обновить");
   }
 
+  if(addMenuBtn){
+    addMenuBtn.style.display = "";
+    addMenuBtn.hidden = false;
+    addMenuBtn.disabled = false;
+    addMenuBtn.style.visibility = "visible";
+    addMenuBtn.style.opacity = "1";
+  }
+
   // порядок кнопок: [⟳] [rename] [+]
   try{
-    const parent = addMenuBtn && addMenuBtn.parentElement;
-    if(parent && refreshBtn && editPuchokBtn && addMenuBtn){
-      if(refreshBtn.parentElement !== parent) parent.appendChild(refreshBtn);
-      if(editPuchokBtn.parentElement !== parent) parent.appendChild(editPuchokBtn);
-      if(addMenuBtn.parentElement !== parent) parent.appendChild(addMenuBtn);
+    const parent = headerActionsHost || (addMenuBtn && addMenuBtn.parentElement) || (editPuchokBtn && editPuchokBtn.parentElement) || (refreshBtn && refreshBtn.parentElement) || null;
+    if(parent){
+      if(refreshBtn && refreshBtn.parentElement !== parent) parent.appendChild(refreshBtn);
+      if(editPuchokBtn && editPuchokBtn.parentElement !== parent) parent.appendChild(editPuchokBtn);
+      if(addMenuBtn && addMenuBtn.parentElement !== parent) parent.appendChild(addMenuBtn);
 
-      parent.insertBefore(refreshBtn, editPuchokBtn);
-      parent.insertBefore(editPuchokBtn, addMenuBtn);
+      if(refreshBtn && editPuchokBtn) parent.insertBefore(refreshBtn, editPuchokBtn);
+      if(editPuchokBtn && addMenuBtn) parent.insertBefore(editPuchokBtn, addMenuBtn);
     }
   }catch{}
 
@@ -1364,8 +1372,14 @@ function setHeaderForRow(p, row){
 
   newPuchokBtn.style.display = "none";
   editPuchokBtn.style.display = "none";
-  addMenuBtn.style.display = "none";
   closeAddMenu();
+
+  if(addMenuBtn){
+    addMenuBtn.style.display = "none";
+    addMenuBtn.hidden = true;
+    addMenuBtn.style.visibility = "hidden";
+    addMenuBtn.style.opacity = "0";
+  }
 
   ensureRefreshBtn();
   if(refreshBtn){
@@ -1375,10 +1389,12 @@ function setHeaderForRow(p, row){
   }
 
   try{
-    const parent = (refreshBtn && refreshBtn.parentElement) || (addMenuBtn && addMenuBtn.parentElement) || null;
-    if(parent && refreshBtn){
-      if(refreshBtn.parentElement !== parent) parent.appendChild(refreshBtn);
-      if(addMenuBtn && addMenuBtn.parentElement === parent) parent.removeChild(addMenuBtn);
+    const parent = headerActionsHost || (refreshBtn && refreshBtn.parentElement) || (addMenuBtn && addMenuBtn.parentElement) || null;
+    if(parent && refreshBtn && refreshBtn.parentElement !== parent){
+      parent.appendChild(refreshBtn);
+    }
+    if(parent && addMenuBtn && addMenuBtn.parentElement !== parent){
+      parent.appendChild(addMenuBtn);
     }
   }catch{}
 
@@ -2896,9 +2912,8 @@ async function openItemFromRow(rowId, itemId){
 
     if(it.type === "image"){
       modalViewer.innerHTML = `
-        <img src="${url}" alt="Фото" />
+        <img src="${url}" alt="Фото" style="display:block;max-width:100%;max-height:min(78vh, 82vw);width:auto;height:auto;margin:0 auto;object-fit:contain;" />
         <div class="viewerActions">
-          <button class="btnGhost" id="btnOpenNewTab">Открыть</button>
           <button class="btnGhost" id="btnDownload">Скачать</button>
         </div>
       `;
@@ -2923,7 +2938,7 @@ async function openItemFromRow(rowId, itemId){
     const btnOpenNewTab = document.getElementById("btnOpenNewTab");
     const btnDownload = document.getElementById("btnDownload");
 
-    if(btnOpenNewTab) btnOpenNewTab.onclick = () => window.open(url, "_blank");
+    if(it.type !== "image" && btnOpenNewTab) btnOpenNewTab.onclick = () => window.open(url, "_blank");
     if(btnDownload) btnDownload.onclick = () => {
       const a = document.createElement("a");
       a.href = url;
