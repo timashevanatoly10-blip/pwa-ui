@@ -121,8 +121,6 @@ const modalHint = document.getElementById("modalHint");
  *  =========================== */
 let refreshBtn = document.getElementById("refreshBtn") || null;
 let deletePuchokHeaderBtn = document.getElementById("deletePuchokHeaderBtn") || null;
-let exportZipBtn = document.getElementById("exportZipBtn") || null;
-let exportHtmlBtn = document.getElementById("exportHtmlBtn") || null;
 
 function ensureRefreshBtn(){
   if(refreshBtn) return refreshBtn;
@@ -155,73 +153,111 @@ function ensureDeletePuchokHeaderBtn(){
   return deletePuchokHeaderBtn;
 }
 
-function ensureExportZipBtn(){
-  if(exportZipBtn) return exportZipBtn;
-  const base = addMenuBtn || editPuchokBtn || refreshBtn;
-  if(!base) return null;
-  exportZipBtn = document.createElement("button");
-  exportZipBtn.id = "exportZipBtn";
-  exportZipBtn.className = base.className || "btnGhost";
-  exportZipBtn.type = "button";
-  exportZipBtn.textContent = "📦";
-  exportZipBtn.title = "Скачать ZIP";
-  exportZipBtn.setAttribute("aria-label", "Скачать ZIP");
-  return exportZipBtn;
-}
-
-function ensureExportHtmlBtn(){
-  if(exportHtmlBtn) return exportHtmlBtn;
-  const base = addMenuBtn || editPuchokBtn || refreshBtn;
-  if(!base) return null;
-  exportHtmlBtn = document.createElement("button");
-  exportHtmlBtn.id = "exportHtmlBtn";
-  exportHtmlBtn.className = base.className || "btnGhost";
-  exportHtmlBtn.type = "button";
-  exportHtmlBtn.textContent = "🌐";
-  exportHtmlBtn.title = "Скачать HTML";
-  exportHtmlBtn.setAttribute("aria-label", "Скачать HTML");
-  return exportHtmlBtn;
-}
 
 function hidePuchokHeaderActionButtons(){
   if(deletePuchokHeaderBtn) deletePuchokHeaderBtn.style.display = "none";
-  if(exportZipBtn) exportZipBtn.style.display = "none";
-  if(exportHtmlBtn) exportHtmlBtn.style.display = "none";
 }
 
-function getDownloadFilenameFromResponse(resp, fallbackName){
-  try{
-    const cd = resp.headers.get("content-disposition") || "";
-    const m = cd.match(/filename\*?=(?:UTF-8''|")?([^";]+)/i);
-    if(m && m[1]) return decodeURIComponent(m[1].replace(/"/g, "").trim());
-  }catch{}
-  return fallbackName;
+function sanitizeDownloadName(name, fallback = "download"){
+  const cleaned = (name || "").toString().trim().replace(/[\\/:*?"<>|]+/g, "_").replace(/\s+/g, " ");
+  return cleaned || fallback;
 }
 
-async function downloadPuchokExport(kind){
-  const p = getPuchokLocal(currentPuchokId);
-  if(!p) return;
-  const fallbackName = kind === "zip" ? "bundle.zip" : "bundle.html";
-  try{
-    const resp = await apiFetch(`/api/export/${kind}/${encodeURIComponent(p.id)}`, { method:"GET" });
-    if(!resp.ok){
-      const t = await resp.text().catch(()=> "");
-      throw new Error(t || `HTTP ${resp.status}`);
-    }
-    const blob = await resp.blob();
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = getDownloadFilenameFromResponse(resp, fallbackName);
-    document.body.appendChild(a);
-    a.click();
-    setTimeout(()=>{
-      try{ URL.revokeObjectURL(url); }catch{}
-      try{ a.remove(); }catch{}
-    }, 1200);
-  }catch(e){
-    addMsg(`Ошибка экспорта ${kind.toUpperCase()}: ` + (e?.message || e), "err");
+function triggerBlobDownload(blob, filename){
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(()=>{
+    try{ URL.revokeObjectURL(url); }catch{}
+    try{ a.remove(); }catch{}
+  }, 1200);
+}
+
+async function fetchRowItemsForExport(rowId){
+  const data = await apiJson(`/rows/${encodeURIComponent(rowId)}`, { method:"GET" });
+  return (data.items || []).map(mapItemRow).filter(Boolean);
+}
+
+async function exportPhotoRowZip(rowId, rowTitle){
+  if(typeof JSZip === "undefined"){
+    alert("JSZip не найден.");
+    return;
   }
+
+  const items = await fetchRowItemsForExport(rowId);
+  const photos = items.filter(it => it && it.type === "image");
+  if(photos.length === 0){
+    alert("В этом photo-row нет фото.");
+    return;
+  }
+
+  const zip = new JSZip();
+  for(let i = 0; i < photos.length; i++){
+    const it = photos[i];
+    const blob = await downloadItemBlobFromR2(it.id, it.mime || "image/*", "image");
+    if(!blob) continue;
+
+    const extFromMime = (() => {
+      const mime = sanitizeMimeType(it.mime || blob.type || "", "");
+      if(!mime || !mime.includes("/")) return "jpg";
+      const part = mime.split("/")[1].toLowerCase();
+      if(part === "jpeg") return "jpg";
+      if(part === "svg+xml") return "svg";
+      return part.replace(/[^a-z0-9]+/g, "") || "jpg";
+    })();
+
+    const baseName = sanitizeDownloadName(it.title || `photo_${i + 1}`, `photo_${i + 1}`);
+    zip.file(`${baseName}.${extFromMime}`, blob);
+  }
+
+  const zipBlob = await zip.generateAsync({ type:"blob" });
+  triggerBlobDownload(zipBlob, `${sanitizeDownloadName(rowTitle || "row", "row")}.zip`);
+}
+
+function buildPhotoRowHtml(rowTitle, items){
+  const photos = (items || []).filter(it => it && it.type === "image");
+  const imagesHtml = photos.map((it)=> {
+    const src = `${WORKER_URL}${itemBlobPath(it.id)}`;
+    const alt = escapeHTML(it.title || "photo");
+    return `<figure><img src="${src}" alt="${alt}"></figure>`;
+  }).join("\n");
+
+  return `<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${escapeHTML(rowTitle || "Photo Row")}</title>
+<style>
+body{margin:0;padding:24px;font-family:Arial,sans-serif;background:#f6f7f9;color:#111317;}
+h1{margin:0 0 18px 0;font-size:24px;}
+.gallery{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:16px;}
+figure{margin:0;background:#fff;border-radius:14px;padding:10px;box-shadow:0 6px 20px rgba(0,0,0,.08);}
+img{display:block;width:100%;height:auto;border-radius:10px;}
+</style>
+</head>
+<body>
+<h1>${escapeHTML(rowTitle || "Photo Row")}</h1>
+<div class="gallery">
+${imagesHtml}
+</div>
+</body>
+</html>`;
+}
+
+async function exportPhotoRowHtml(rowId, rowTitle){
+  const items = await fetchRowItemsForExport(rowId);
+  const photos = items.filter(it => it && it.type === "image");
+  if(photos.length === 0){
+    alert("В этом photo-row нет фото.");
+    return;
+  }
+  const html = buildPhotoRowHtml(rowTitle, photos);
+  const blob = new Blob([html], { type:"text/html;charset=utf-8" });
+  triggerBlobDownload(blob, `${sanitizeDownloadName(rowTitle || "row", "row")}.html`);
 }
 
 /** ===========================
@@ -1713,8 +1749,6 @@ function setHeaderForPuchok(p){
 
   ensureRefreshBtn();
   ensureDeletePuchokHeaderBtn();
-  ensureExportZipBtn();
-  ensureExportHtmlBtn();
 
   if(refreshBtn){
     refreshBtn.style.display = "";
@@ -1722,8 +1756,6 @@ function setHeaderForPuchok(p){
     refreshBtn.setAttribute("aria-label","Обновить");
   }
   if(deletePuchokHeaderBtn) deletePuchokHeaderBtn.style.display = "inline-flex";
-  if(exportZipBtn) exportZipBtn.style.display = "inline-flex";
-  if(exportHtmlBtn) exportHtmlBtn.style.display = "inline-flex";
 
   forceShowPuchokAddButton();
 
@@ -1733,15 +1765,11 @@ function setHeaderForPuchok(p){
       if(refreshBtn && refreshBtn.parentElement !== parent) parent.appendChild(refreshBtn);
       if(editPuchokBtn && editPuchokBtn.parentElement !== parent) parent.appendChild(editPuchokBtn);
       if(deletePuchokHeaderBtn && deletePuchokHeaderBtn.parentElement !== parent) parent.appendChild(deletePuchokHeaderBtn);
-      if(exportZipBtn && exportZipBtn.parentElement !== parent) parent.appendChild(exportZipBtn);
-      if(exportHtmlBtn && exportHtmlBtn.parentElement !== parent) parent.appendChild(exportHtmlBtn);
       if(addMenuBtn && addMenuBtn.parentElement !== parent) parent.appendChild(addMenuBtn);
 
       if(refreshBtn && editPuchokBtn) parent.insertBefore(refreshBtn, editPuchokBtn);
       if(editPuchokBtn && deletePuchokHeaderBtn) parent.insertBefore(editPuchokBtn, deletePuchokHeaderBtn);
-      if(deletePuchokHeaderBtn && exportZipBtn) parent.insertBefore(deletePuchokHeaderBtn, exportZipBtn);
-      if(exportZipBtn && exportHtmlBtn) parent.insertBefore(exportZipBtn, exportHtmlBtn);
-      if(exportHtmlBtn && addMenuBtn) parent.insertBefore(exportHtmlBtn, addMenuBtn);
+      if(deletePuchokHeaderBtn && addMenuBtn) parent.insertBefore(deletePuchokHeaderBtn, addMenuBtn);
     }
   }catch{}
 
@@ -1865,6 +1893,132 @@ function renderPuchokList(){
   mainPanel.appendChild(wrap);
 }
 
+
+function renderStandardRowEntry(p, e){
+  const block = document.createElement("div");
+  block.className = "rowInlineBlock";
+  block.dataset.rowInlineId = e.refId;
+  block.style.display = "flex";
+  block.style.flexDirection = "column";
+  block.style.gap = "12px";
+
+  const header = document.createElement("div");
+  header.className = "itemRow";
+  header.style.cursor = "pointer";
+
+  const left = document.createElement("div");
+  left.className = "itemLeft";
+
+  const thumb = document.createElement("div");
+  thumb.className = "thumb";
+  const rt = rowTypeLabel(e.rowType || "row");
+  thumb.innerHTML = icoSVG(rt.ico);
+
+  const textWrap = document.createElement("div");
+  textWrap.className = "itemText";
+
+  const title = document.createElement("div");
+  title.className = "itemTitle";
+  title.textContent = e.rowTitle || rt.text;
+
+  const cached = db.rows[e.refId];
+  const expanded = isRowExpanded(e.refId);
+  const cnt = cached ? (cached.items || []).length : null;
+
+  const desc = document.createElement("div");
+  desc.className = "itemDesc";
+  if(cnt != null){
+    desc.textContent = `Элементов: ${cnt}${expanded ? " • раскрыт" : ""}`;
+  }else{
+    desc.textContent = expanded ? "Загружаю ряд…" : "Нажми, чтобы раскрыть";
+  }
+
+  const right = document.createElement("div");
+  right.className = rt.cls;
+  right.textContent = expanded ? "Свернуть" : rt.text.replace("-ряд","");
+
+  textWrap.appendChild(title);
+  textWrap.appendChild(desc);
+  left.appendChild(thumb);
+  left.appendChild(textWrap);
+  header.appendChild(left);
+  header.appendChild(right);
+
+  header.addEventListener("click", ()=> openRow(e.refId));
+
+  block.appendChild(header);
+
+  if(expanded){
+    if(cached){
+      block.appendChild(buildInlineRowContent(p, cached));
+    }else{
+      const loading = document.createElement("div");
+      loading.className = "empty";
+      loading.textContent = "Загружаю ряд…";
+      block.appendChild(loading);
+    }
+  }
+
+  return block;
+}
+
+function renderPhotoRow(p, e){
+  const block = renderStandardRowEntry(p, e);
+  const header = block.firstElementChild;
+  if(!header) return block;
+
+  const right = header.lastElementChild;
+  if(right){
+    right.style.display = "flex";
+    right.style.alignItems = "center";
+    right.style.gap = "8px";
+
+    const rowExportBtns = document.createElement("div");
+    rowExportBtns.className = "rowExportBtns";
+    rowExportBtns.style.display = "flex";
+    rowExportBtns.style.alignItems = "center";
+    rowExportBtns.style.gap = "6px";
+
+    const rowZipBtn = document.createElement("button");
+    rowZipBtn.className = "rowZipBtn btnGhost";
+    rowZipBtn.type = "button";
+    rowZipBtn.textContent = "📦 ZIP";
+    rowZipBtn.title = "Скачать ZIP";
+
+    const rowHtmlBtn = document.createElement("button");
+    rowHtmlBtn.className = "rowHtmlBtn btnGhost";
+    rowHtmlBtn.type = "button";
+    rowHtmlBtn.textContent = "🌐 HTML";
+    rowHtmlBtn.title = "Скачать HTML";
+
+    rowZipBtn.addEventListener("click", async (ev)=>{
+      ev.preventDefault();
+      ev.stopPropagation();
+      try{
+        await exportPhotoRowZip(e.refId, e.rowTitle || "photo-row");
+      }catch(err){
+        addMsg("Ошибка экспорта ZIP: " + (err?.message || err), "err");
+      }
+    });
+
+    rowHtmlBtn.addEventListener("click", async (ev)=>{
+      ev.preventDefault();
+      ev.stopPropagation();
+      try{
+        await exportPhotoRowHtml(e.refId, e.rowTitle || "photo-row");
+      }catch(err){
+        addMsg("Ошибка экспорта HTML: " + (err?.message || err), "err");
+      }
+    });
+
+    rowExportBtns.appendChild(rowZipBtn);
+    rowExportBtns.appendChild(rowHtmlBtn);
+    right.appendChild(rowExportBtns);
+  }
+
+  return block;
+}
+
 function renderPuchokInside(p){
   const wrap = document.createElement("div");
   wrap.className = "list";
@@ -1915,70 +2069,8 @@ function renderPuchokInside(p){
         continue;
       }
 
-      const block = document.createElement("div");
-      block.className = "rowInlineBlock";
-      block.dataset.rowInlineId = e.refId;
-      block.style.display = "flex";
-      block.style.flexDirection = "column";
-      block.style.gap = "12px";
-
-      const header = document.createElement("div");
-      header.className = "itemRow";
-      header.style.cursor = "pointer";
-
-      const left = document.createElement("div");
-      left.className = "itemLeft";
-
-      const thumb = document.createElement("div");
-      thumb.className = "thumb";
-      const rt = rowTypeLabel(e.rowType || "row");
-      thumb.innerHTML = icoSVG(rt.ico);
-
-      const textWrap = document.createElement("div");
-      textWrap.className = "itemText";
-
-      const title = document.createElement("div");
-      title.className = "itemTitle";
-      title.textContent = e.rowTitle || rt.text;
-
-      const cached = db.rows[e.refId];
-      const expanded = isRowExpanded(e.refId);
-      const cnt = cached ? (cached.items || []).length : null;
-
-      const desc = document.createElement("div");
-      desc.className = "itemDesc";
-      if(cnt != null){
-        desc.textContent = `Элементов: ${cnt}${expanded ? " • раскрыт" : ""}`;
-      }else{
-        desc.textContent = expanded ? "Загружаю ряд…" : "Нажми, чтобы раскрыть";
-      }
-
-      const right = document.createElement("div");
-      right.className = rt.cls;
-      right.textContent = expanded ? "Свернуть" : rt.text.replace("-ряд","");
-
-      textWrap.appendChild(title);
-      textWrap.appendChild(desc);
-      left.appendChild(thumb);
-      left.appendChild(textWrap);
-      header.appendChild(left);
-      header.appendChild(right);
-
-      header.addEventListener("click", ()=> openRow(e.refId));
-
-      block.appendChild(header);
-
-      if(expanded){
-        if(cached){
-          block.appendChild(buildInlineRowContent(p, cached));
-        }else{
-          const loading = document.createElement("div");
-          loading.className = "empty";
-          loading.textContent = "Загружаю ряд…";
-          block.appendChild(loading);
-        }
-      }
-
+      const rowType = (e.rowType || "").toLowerCase();
+      const block = rowType === "photo" ? renderPhotoRow(p, e) : renderStandardRowEntry(p, e);
       wrap.appendChild(block);
     }
   }
@@ -2372,12 +2464,12 @@ async function createPuchok(){
     currentRowId = null;
     expandedRowIds.clear();
     viewMode = "list";
-    await loadPuchkiList();
+    await loadCurrentPuchok();
+    render();
   }catch(e){
     addMsg("Ошибка создания пучка: " + (e?.message || e), "err");
   }finally{
     isBusy = false;
-    render();
   }
 }
 
@@ -2706,6 +2798,10 @@ async function createItemInRow(rowId, payload){
 async function refreshCurrentPuchok(){
   if(!currentPuchokId) return;
   await loadPuchokWithEntries(currentPuchokId);
+}
+async function loadCurrentPuchok(){
+  if(currentPuchokId) return await loadPuchokWithEntries(currentPuchokId);
+  return await loadPuchkiList();
 }
 async function refreshCurrentRow(){
   if(!currentRowId) return;
@@ -3649,23 +3745,6 @@ if(deletePuchokHeaderBtn){
   });
 }
 
-ensureExportZipBtn();
-if(exportZipBtn){
-  exportZipBtn.addEventListener("click", async (e)=>{
-    e.preventDefault();
-    e.stopPropagation();
-    await downloadPuchokExport("zip");
-  });
-}
-
-ensureExportHtmlBtn();
-if(exportHtmlBtn){
-  exportHtmlBtn.addEventListener("click", async (e)=>{
-    e.preventDefault();
-    e.stopPropagation();
-    await downloadPuchokExport("html");
-  });
-}
 
 addMenuBtn.addEventListener("click", (e)=>{
   e.stopPropagation();
