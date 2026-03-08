@@ -120,6 +120,9 @@ const modalHint = document.getElementById("modalHint");
  *  REFRESH BUTTON (inside puchok/row)
  *  =========================== */
 let refreshBtn = document.getElementById("refreshBtn") || null;
+let deletePuchokHeaderBtn = document.getElementById("deletePuchokHeaderBtn") || null;
+let exportZipBtn = document.getElementById("exportZipBtn") || null;
+let exportHtmlBtn = document.getElementById("exportHtmlBtn") || null;
 
 function ensureRefreshBtn(){
   if(refreshBtn) return refreshBtn;
@@ -137,6 +140,88 @@ function ensureRefreshBtn(){
     else parent.appendChild(refreshBtn);
   }
   return refreshBtn;
+}
+
+function ensureDeletePuchokHeaderBtn(){
+  if(deletePuchokHeaderBtn) return deletePuchokHeaderBtn;
+  const base = addMenuBtn || editPuchokBtn || refreshBtn;
+  if(!base) return null;
+  deletePuchokHeaderBtn = document.createElement("button");
+  deletePuchokHeaderBtn.id = "deletePuchokHeaderBtn";
+  deletePuchokHeaderBtn.className = base.className || "btnGhost";
+  deletePuchokHeaderBtn.type = "button";
+  deletePuchokHeaderBtn.textContent = "Удалить пучок";
+  deletePuchokHeaderBtn.title = "Удалить пучок";
+  return deletePuchokHeaderBtn;
+}
+
+function ensureExportZipBtn(){
+  if(exportZipBtn) return exportZipBtn;
+  const base = addMenuBtn || editPuchokBtn || refreshBtn;
+  if(!base) return null;
+  exportZipBtn = document.createElement("button");
+  exportZipBtn.id = "exportZipBtn";
+  exportZipBtn.className = base.className || "btnGhost";
+  exportZipBtn.type = "button";
+  exportZipBtn.textContent = "📦";
+  exportZipBtn.title = "Скачать ZIP";
+  exportZipBtn.setAttribute("aria-label", "Скачать ZIP");
+  return exportZipBtn;
+}
+
+function ensureExportHtmlBtn(){
+  if(exportHtmlBtn) return exportHtmlBtn;
+  const base = addMenuBtn || editPuchokBtn || refreshBtn;
+  if(!base) return null;
+  exportHtmlBtn = document.createElement("button");
+  exportHtmlBtn.id = "exportHtmlBtn";
+  exportHtmlBtn.className = base.className || "btnGhost";
+  exportHtmlBtn.type = "button";
+  exportHtmlBtn.textContent = "🌐";
+  exportHtmlBtn.title = "Скачать HTML";
+  exportHtmlBtn.setAttribute("aria-label", "Скачать HTML");
+  return exportHtmlBtn;
+}
+
+function hidePuchokHeaderActionButtons(){
+  if(deletePuchokHeaderBtn) deletePuchokHeaderBtn.style.display = "none";
+  if(exportZipBtn) exportZipBtn.style.display = "none";
+  if(exportHtmlBtn) exportHtmlBtn.style.display = "none";
+}
+
+function getDownloadFilenameFromResponse(resp, fallbackName){
+  try{
+    const cd = resp.headers.get("content-disposition") || "";
+    const m = cd.match(/filename\*?=(?:UTF-8''|")?([^";]+)/i);
+    if(m && m[1]) return decodeURIComponent(m[1].replace(/"/g, "").trim());
+  }catch{}
+  return fallbackName;
+}
+
+async function downloadPuchokExport(kind){
+  const p = getPuchokLocal(currentPuchokId);
+  if(!p) return;
+  const fallbackName = kind === "zip" ? "bundle.zip" : "bundle.html";
+  try{
+    const resp = await apiFetch(`/api/export/${kind}/${encodeURIComponent(p.id)}`, { method:"GET" });
+    if(!resp.ok){
+      const t = await resp.text().catch(()=> "");
+      throw new Error(t || `HTTP ${resp.status}`);
+    }
+    const blob = await resp.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = getDownloadFilenameFromResponse(resp, fallbackName);
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(()=>{
+      try{ URL.revokeObjectURL(url); }catch{}
+      try{ a.remove(); }catch{}
+    }, 1200);
+  }catch(e){
+    addMsg(`Ошибка экспорта ${kind.toUpperCase()}: ` + (e?.message || e), "err");
+  }
 }
 
 /** ===========================
@@ -1611,6 +1696,7 @@ function setHeaderForList(){
 
   ensureRefreshBtn();
   if(refreshBtn) refreshBtn.style.display = "none";
+  hidePuchokHeaderActionButtons();
 
   newPuchokBtn.style.display = "";
   chatHint.textContent = "Совет: открой пучок → тогда “В пучок” сохранит ответ туда.";
@@ -1626,24 +1712,36 @@ function setHeaderForPuchok(p){
   closeAddMenu();
 
   ensureRefreshBtn();
+  ensureDeletePuchokHeaderBtn();
+  ensureExportZipBtn();
+  ensureExportHtmlBtn();
+
   if(refreshBtn){
     refreshBtn.style.display = "";
     refreshBtn.title = "Обновить";
     refreshBtn.setAttribute("aria-label","Обновить");
   }
+  if(deletePuchokHeaderBtn) deletePuchokHeaderBtn.style.display = "inline-flex";
+  if(exportZipBtn) exportZipBtn.style.display = "inline-flex";
+  if(exportHtmlBtn) exportHtmlBtn.style.display = "inline-flex";
 
   forceShowPuchokAddButton();
 
-  // порядок кнопок: [⟳] [rename] [+]
   try{
     const parent = headerActionsHost || (addMenuBtn && addMenuBtn.parentElement) || (editPuchokBtn && editPuchokBtn.parentElement) || (refreshBtn && refreshBtn.parentElement) || null;
     if(parent){
       if(refreshBtn && refreshBtn.parentElement !== parent) parent.appendChild(refreshBtn);
       if(editPuchokBtn && editPuchokBtn.parentElement !== parent) parent.appendChild(editPuchokBtn);
+      if(deletePuchokHeaderBtn && deletePuchokHeaderBtn.parentElement !== parent) parent.appendChild(deletePuchokHeaderBtn);
+      if(exportZipBtn && exportZipBtn.parentElement !== parent) parent.appendChild(exportZipBtn);
+      if(exportHtmlBtn && exportHtmlBtn.parentElement !== parent) parent.appendChild(exportHtmlBtn);
       if(addMenuBtn && addMenuBtn.parentElement !== parent) parent.appendChild(addMenuBtn);
 
       if(refreshBtn && editPuchokBtn) parent.insertBefore(refreshBtn, editPuchokBtn);
-      if(editPuchokBtn && addMenuBtn) parent.insertBefore(editPuchokBtn, addMenuBtn);
+      if(editPuchokBtn && deletePuchokHeaderBtn) parent.insertBefore(editPuchokBtn, deletePuchokHeaderBtn);
+      if(deletePuchokHeaderBtn && exportZipBtn) parent.insertBefore(deletePuchokHeaderBtn, exportZipBtn);
+      if(exportZipBtn && exportHtmlBtn) parent.insertBefore(exportZipBtn, exportHtmlBtn);
+      if(exportHtmlBtn && addMenuBtn) parent.insertBefore(exportHtmlBtn, addMenuBtn);
     }
   }catch{}
 
@@ -1661,6 +1759,7 @@ function setHeaderForRow(p, row){
   closeAddMenu();
 
   forceHideRowAddButton();
+  hidePuchokHeaderActionButtons();
 
   ensureRefreshBtn();
   if(refreshBtn){
@@ -2268,10 +2367,12 @@ async function createPuchok(){
   const title = (name || "").trim() || "Новый пучок";
   isBusy = true;
   try{
-    const data = await apiJson("/puchki", { method:"POST", json:{ title } });
-    const p = mapPuchokRow(data.puchok);
-    db.puchki.unshift(p);
-    await openPuchok(p.id);
+    await apiJson("/puchki", { method:"POST", json:{ title } });
+    currentPuchokId = null;
+    currentRowId = null;
+    expandedRowIds.clear();
+    viewMode = "list";
+    await loadPuchkiList();
   }catch(e){
     addMsg("Ошибка создания пучка: " + (e?.message || e), "err");
   }finally{
@@ -2307,7 +2408,7 @@ async function deleteCurrentPuchok(){
   if(!p) return;
 
   closeAddMenu();
-  const ok = confirm(`Удалить пучок “${p.title || "Без названия"}”?`);
+  const ok = confirm("Удалить пучок и все ряды?");
   if(!ok) return;
 
   isBusy = true;
@@ -3539,6 +3640,33 @@ editPuchokBtn.addEventListener("click", () => {
   renameCurrentPuchok();
 });
 
+ensureDeletePuchokHeaderBtn();
+if(deletePuchokHeaderBtn){
+  deletePuchokHeaderBtn.addEventListener("click", async (e)=>{
+    e.preventDefault();
+    e.stopPropagation();
+    await deleteCurrentPuchok();
+  });
+}
+
+ensureExportZipBtn();
+if(exportZipBtn){
+  exportZipBtn.addEventListener("click", async (e)=>{
+    e.preventDefault();
+    e.stopPropagation();
+    await downloadPuchokExport("zip");
+  });
+}
+
+ensureExportHtmlBtn();
+if(exportHtmlBtn){
+  exportHtmlBtn.addEventListener("click", async (e)=>{
+    e.preventDefault();
+    e.stopPropagation();
+    await downloadPuchokExport("html");
+  });
+}
+
 addMenuBtn.addEventListener("click", (e)=>{
   e.stopPropagation();
   toggleAddMenu();
@@ -3566,15 +3694,6 @@ menuAddText.addEventListener("click", ()=>{
 });
 
 
-document.addEventListener("click", (e)=>{
-  const btn = e.target && e.target.closest ? e.target.closest("#menuAddSubpuchok") : null;
-  if(!btn) return;
-  e.preventDefault();
-  e.stopPropagation();
-  closeAddMenu();
-  if(viewMode !== "puchok"){ alert("Подпучок можно создать только внутри пучка."); return; }
-  createSubpuchokInCurrent();
-});
 
 menuAddFile.addEventListener("click", ()=>{
   closeAddMenu();
@@ -3833,58 +3952,3 @@ addMenu.addEventListener("click", (e)=> e.stopPropagation());
   addMenuBtn.addEventListener("mouseleave", stop);
 })();
 
-
-async function exportPhotoRowZIP(row){
-  const images = (row.items||[]).filter(i=>i.type==="image");
-  if(!images.length){ alert("В этом фото-ряду нет изображений."); return; }
-  if(typeof JSZip === "undefined"){
-    await loadScript("https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js");
-  }
-  const zip = new JSZip();
-  let index=1;
-  for(const it of images){
-    const blob = await downloadItemBlobFromR2(it);
-    const ext = (blob.type||"").includes("png")?".png":(blob.type||"").includes("webp")?".webp":".jpg";
-    const name = (it.title||("photo_"+String(index).padStart(3,"0"))) + ext;
-    zip.file(name, blob);
-    index++;
-  }
-  const out = await zip.generateAsync({type:"blob"});
-  const url = URL.createObjectURL(out);
-  const a=document.createElement("a");
-  a.href=url;
-  a.download="photo_row.zip";
-  document.body.appendChild(a);
-  a.click();
-  setTimeout(()=>{URL.revokeObjectURL(url);a.remove();},1000);
-}
-
-async function exportPhotoRowHTML(row){
-  const images = (row.items||[]).filter(i=>i.type==="image");
-  if(!images.length){ alert("В этом фото-ряду нет изображений."); return; }
-  let html = '<!DOCTYPE html><html><head><meta charset="utf-8"><title>'+ (row.title||"Фото-ряд") +'</title><style>body{font-family:sans-serif;background:#f7f7f7;padding:30px}img{max-width:100%;margin-bottom:20px;border-radius:6px}</style></head><body>';
-  html += '<h1>'+ (row.title||"Фото-ряд") +'</h1>';
-  for(const it of images){
-    const blob = await downloadItemBlobFromR2(it);
-    const b64 = await blobToDataURL(blob);
-    html += '<div><img src="'+b64+'"/>'+(it.title?'<div>'+it.title+'</div>':'')+'</div>';
-  }
-  html += "</body></html>";
-  const blob = new Blob([html],{type:"text/html"});
-  const url = URL.createObjectURL(blob);
-  const a=document.createElement("a");
-  a.href=url;
-  a.download="photo_row.html";
-  document.body.appendChild(a);
-  a.click();
-  setTimeout(()=>{URL.revokeObjectURL(url);a.remove();},1000);
-}
-
-function blobToDataURL(blob){
-  return new Promise((res,rej)=>{
-    const r=new FileReader();
-    r.onload=()=>res(r.result);
-    r.onerror=rej;
-    r.readAsDataURL(blob);
-  });
-}
