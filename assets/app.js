@@ -256,6 +256,10 @@ let activeFileCaptureRowId = null;
 let activeFileCapturePuchokId = null;
 let activeCarouselRowId = null;
 let activeCarouselItemId = null;
+let cameraCaptureModal = null;
+let cameraCaptureStream = null;
+let cameraCaptureTargetRowId = null;
+let cameraCaptureTargetPuchokId = null;
 let isBusy = false;
 
 const itemPreviewUrlCache = new Map();
@@ -296,6 +300,9 @@ function isCoarsePointerDevice(){
 }
 function shouldUseCameraCapture(){
   return isIOS() || isCoarsePointerDevice();
+}
+function isDesktopLikeDevice(){
+  return !shouldUseCameraCapture();
 }
 
 /** ===========================
@@ -1401,6 +1408,13 @@ function render(){
       return;
     }
     setHeaderForPuchok(p);
+    if(addMenuBtn){
+      addMenuBtn.style.display = "";
+      addMenuBtn.hidden = false;
+      addMenuBtn.disabled = false;
+      addMenuBtn.style.visibility = "visible";
+      addMenuBtn.style.opacity = "1";
+    }
     renderPuchokInside(p);
     return;
   }
@@ -1648,7 +1662,12 @@ function renderRowInside(p, cached){
 
   const top = document.createElement("div");
   top.className = "itemRow";
-  top.style.cursor = "default";
+  top.style.cursor = "pointer";
+  top.addEventListener("click", () => {
+    viewMode = "puchok";
+    currentRowId = null;
+    render();
+  });
 
   const left = document.createElement("div");
   left.className = "itemLeft";
@@ -1849,6 +1868,7 @@ async function openRow(rowId){
 
 function goBack(){
   closeAddMenu();
+  closeCameraCaptureModal();
   if(viewMode === "row"){
     viewMode = "puchok";
     currentRowId = null;
@@ -2462,18 +2482,228 @@ async function addPhotoFromCamera(){
   try{
     activePhotoCapturePuchokId = p.id;
 
+    let rowId = null;
     const currentPack = getCurrentRowPack();
     if(viewMode === "row" && currentPack?.row?.type === "photo"){
-      activePhotoCaptureRowId = currentPack.row.id;
-      currentRowId = currentPack.row.id;
+      rowId = currentPack.row.id;
     }else if(activePhotoCaptureRowId && activePhotoCapturePuchokId === p.id){
-      currentRowId = activePhotoCaptureRowId;
+      rowId = activePhotoCaptureRowId;
+    }else{
+      rowId = await ensurePhotoRowForCapture(p);
+    }
+
+    activePhotoCaptureRowId = rowId;
+    activePhotoCapturePuchokId = p.id;
+    currentRowId = rowId;
+
+    if(isDesktopLikeDevice()){
+      const opened = await openCameraCaptureModalForPhotoRow(rowId);
+      if(opened) return;
     }
 
     const picker = ensurePhotoPicker();
     openPhotoPicker(picker);
   }catch(e){
     addMsg("Ошибка подготовки фото: " + (e?.message || e), "err");
+  }
+}
+
+
+function stopCameraCaptureStream(){
+  if(cameraCaptureStream){
+    try{
+      for(const track of cameraCaptureStream.getTracks()){
+        try{ track.stop(); }catch{}
+      }
+    }catch{}
+  }
+  cameraCaptureStream = null;
+}
+
+function ensureCameraCaptureModal(){
+  if(cameraCaptureModal && cameraCaptureModal.parentElement === document.body) return cameraCaptureModal;
+
+  cameraCaptureModal = document.createElement("div");
+  cameraCaptureModal.id = "cameraCaptureModal";
+  cameraCaptureModal.style.position = "fixed";
+  cameraCaptureModal.style.inset = "0";
+  cameraCaptureModal.style.zIndex = "120000";
+  cameraCaptureModal.style.background = "rgba(17,19,23,.82)";
+  cameraCaptureModal.style.display = "none";
+  cameraCaptureModal.style.alignItems = "center";
+  cameraCaptureModal.style.justifyContent = "center";
+  cameraCaptureModal.innerHTML = `
+    <div id="cameraCapturePanel"
+      style="width:min(92vw, 760px);max-height:92vh;background:#fff;border-radius:20px;
+             box-shadow:0 24px 80px rgba(0,0,0,.35);padding:16px;display:flex;
+             flex-direction:column;gap:14px;position:relative;">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
+        <div style="font-weight:700;font-size:18px;">Сделать фото</div>
+        <button type="button" id="cameraCaptureClose"
+          style="appearance:none;border:0;background:rgba(17,19,23,.08);color:#111317;
+                 border-radius:12px;padding:8px 12px;font-size:14px;cursor:pointer;">Закрыть</button>
+      </div>
+      <div style="position:relative;border-radius:18px;overflow:hidden;background:#0f1115;min-height:240px;">
+        <video id="cameraCaptureVideo" autoplay playsinline muted
+          style="display:block;width:100%;height:min(68vh, 520px);object-fit:cover;background:#0f1115;"></video>
+      </div>
+      <div id="cameraCaptureHint" style="font-size:13px;opacity:.8;">Подожди, запускаю камеру…</div>
+      <div style="display:flex;justify-content:flex-end;gap:10px;">
+        <button type="button" id="cameraCaptureFallback"
+          style="appearance:none;border:0;background:rgba(17,19,23,.08);color:#111317;
+                 border-radius:12px;padding:10px 14px;font-size:14px;cursor:pointer;">Выбрать файл</button>
+        <button type="button" id="cameraCaptureShot"
+          style="appearance:none;border:0;background:#111317;color:#fff;
+                 border-radius:12px;padding:10px 16px;font-size:14px;cursor:pointer;">Сделать фото</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(cameraCaptureModal);
+
+  const closeBtn = cameraCaptureModal.querySelector("#cameraCaptureClose");
+  const fallbackBtn = cameraCaptureModal.querySelector("#cameraCaptureFallback");
+  const shotBtn = cameraCaptureModal.querySelector("#cameraCaptureShot");
+
+  if(closeBtn) closeBtn.addEventListener("click", ()=> closeCameraCaptureModal());
+  if(fallbackBtn) fallbackBtn.addEventListener("click", async ()=>{
+    const rowId = cameraCaptureTargetRowId;
+    const puchokId = cameraCaptureTargetPuchokId;
+    closeCameraCaptureModal();
+    if(rowId && puchokId && currentPuchokId === puchokId){
+      activePhotoCaptureRowId = rowId;
+      activePhotoCapturePuchokId = puchokId;
+    }
+    const picker = ensurePhotoPicker();
+    openPhotoPicker(picker);
+  });
+  if(shotBtn) shotBtn.addEventListener("click", async ()=>{
+    await takePhotoFromCameraModal();
+  });
+
+  cameraCaptureModal.addEventListener("click", (e)=>{
+    if(e.target === cameraCaptureModal) closeCameraCaptureModal();
+  });
+
+  return cameraCaptureModal;
+}
+
+function closeCameraCaptureModal(){
+  stopCameraCaptureStream();
+  if(cameraCaptureModal){
+    cameraCaptureModal.style.display = "none";
+    const video = cameraCaptureModal.querySelector("#cameraCaptureVideo");
+    const hint = cameraCaptureModal.querySelector("#cameraCaptureHint");
+    if(video){
+      try{ video.pause(); }catch{}
+      try{ video.srcObject = null; }catch{}
+    }
+    if(hint) hint.textContent = "Подожди, запускаю камеру…";
+  }
+}
+
+function makeCapturedPhotoFile(blob){
+  const ext = "jpg";
+  const name = `camera_${new Date().toISOString().replace(/[:.]/g, "-")}.${ext}`;
+  try{
+    return new File([blob], name, { type: blob.type || "image/jpeg", lastModified: Date.now() });
+  }catch{
+    blob.name = name;
+    blob.lastModified = Date.now();
+    return blob;
+  }
+}
+
+async function openCameraCaptureModalForPhotoRow(rowId){
+  const p = ensureCurrentPuchok();
+  if(!p || !rowId) return false;
+  if(!navigator.mediaDevices || typeof navigator.mediaDevices.getUserMedia !== "function"){
+    return false;
+  }
+
+  const modal = ensureCameraCaptureModal();
+  const video = modal.querySelector("#cameraCaptureVideo");
+  const hint = modal.querySelector("#cameraCaptureHint");
+  const shotBtn = modal.querySelector("#cameraCaptureShot");
+
+  cameraCaptureTargetRowId = rowId;
+  cameraCaptureTargetPuchokId = p.id;
+  modal.style.display = "flex";
+  if(hint) hint.textContent = "Подожди, запускаю камеру…";
+  if(shotBtn) shotBtn.disabled = true;
+
+  stopCameraCaptureStream();
+
+  try{
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: "environment" } },
+      audio: false
+    });
+    cameraCaptureStream = stream;
+    if(video){
+      video.srcObject = stream;
+      try{ await video.play(); }catch{}
+    }
+    if(hint) hint.textContent = "Нажми «Сделать фото».";
+    if(shotBtn) shotBtn.disabled = false;
+    return true;
+  }catch(e){
+    closeCameraCaptureModal();
+    return false;
+  }
+}
+
+async function takePhotoFromCameraModal(){
+  if(!cameraCaptureModal || !cameraCaptureTargetRowId || !cameraCaptureTargetPuchokId) return;
+  if(currentPuchokId !== cameraCaptureTargetPuchokId) return;
+
+  const video = cameraCaptureModal.querySelector("#cameraCaptureVideo");
+  const hint = cameraCaptureModal.querySelector("#cameraCaptureHint");
+  const shotBtn = cameraCaptureModal.querySelector("#cameraCaptureShot");
+  if(!video) return;
+
+  const width = Math.max(1, video.videoWidth || 1280);
+  const height = Math.max(1, video.videoHeight || 720);
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext("2d");
+  if(!ctx) return;
+  ctx.drawImage(video, 0, 0, width, height);
+
+  if(shotBtn) shotBtn.disabled = true;
+  if(hint) hint.textContent = "Сохраняю фото…";
+
+  const blob = await new Promise((resolve)=> canvas.toBlob(resolve, "image/jpeg", 0.92));
+  if(!blob){
+    if(hint) hint.textContent = "Не удалось сделать снимок.";
+    if(shotBtn) shotBtn.disabled = false;
+    return;
+  }
+
+  const file = makeCapturedPhotoFile(blob);
+  const rowId = cameraCaptureTargetRowId;
+  const p = ensureCurrentPuchok();
+  if(!p){
+    if(shotBtn) shotBtn.disabled = false;
+    return;
+  }
+
+  isBusy = true;
+  try{
+    const created = await addFileItemToSpecificRow(p, rowId, file);
+    currentRowId = rowId;
+    viewMode = "row";
+    await refreshRowAndKeepUI(rowId);
+    closeCameraCaptureModal();
+    if(created?.itemId){
+      await openItemFromRow(rowId, created.itemId);
+    }
+  }catch(e){
+    if(hint) hint.textContent = "Ошибка сохранения фото.";
+    addMsg("Ошибка добавления фото: " + (e?.message || e), "err");
+  }finally{
+    isBusy = false;
+    if(shotBtn) shotBtn.disabled = false;
   }
 }
 
@@ -3145,6 +3375,11 @@ modalDelete.addEventListener("click", deleteModal);
 modalCopy.addEventListener("click", copyModal);
 
 document.addEventListener("keydown", async (e)=>{
+  if(cameraCaptureModal && cameraCaptureModal.style.display === "flex" && e.key === "Escape"){
+    e.preventDefault();
+    closeCameraCaptureModal();
+    return;
+  }
   if(modalWrap.style.display !== "flex") return;
   if(e.key === "ArrowLeft"){
     const prevId = getModalSiblingItemId(-1);
