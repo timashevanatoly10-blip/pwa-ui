@@ -185,6 +185,25 @@ function ensureAddMenuExtras(){
     menuAddSubpuchok.style.display = "";
     menuAddSubpuchok.hidden = false;
   }
+
+if(menuAddSubpuchok){
+  menuAddSubpuchok.addEventListener("click", async (e)=>{
+    e.preventDefault();
+    e.stopPropagation();
+    closeAddMenu();
+    if(viewMode !== "puchok"){
+      alert("Подпучок можно создать только внутри пучка.");
+      return;
+    }
+    try{
+      await createSubpuchokInCurrent();
+    }catch(err){
+      console.error(err);
+      alert("Не удалось создать подпучок.");
+    }
+  });
+}
+
 }
 
 function applyHiddenPickerStyles(el){
@@ -3813,3 +3832,59 @@ addMenu.addEventListener("click", (e)=> e.stopPropagation());
   addMenuBtn.addEventListener("mouseup", stop);
   addMenuBtn.addEventListener("mouseleave", stop);
 })();
+
+
+async function exportPhotoRowZIP(row){
+  const images = (row.items||[]).filter(i=>i.type==="image");
+  if(!images.length){ alert("В этом фото-ряду нет изображений."); return; }
+  if(typeof JSZip === "undefined"){
+    await loadScript("https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js");
+  }
+  const zip = new JSZip();
+  let index=1;
+  for(const it of images){
+    const blob = await downloadItemBlobFromR2(it);
+    const ext = (blob.type||"").includes("png")?".png":(blob.type||"").includes("webp")?".webp":".jpg";
+    const name = (it.title||("photo_"+String(index).padStart(3,"0"))) + ext;
+    zip.file(name, blob);
+    index++;
+  }
+  const out = await zip.generateAsync({type:"blob"});
+  const url = URL.createObjectURL(out);
+  const a=document.createElement("a");
+  a.href=url;
+  a.download="photo_row.zip";
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(()=>{URL.revokeObjectURL(url);a.remove();},1000);
+}
+
+async function exportPhotoRowHTML(row){
+  const images = (row.items||[]).filter(i=>i.type==="image");
+  if(!images.length){ alert("В этом фото-ряду нет изображений."); return; }
+  let html = '<!DOCTYPE html><html><head><meta charset="utf-8"><title>'+ (row.title||"Фото-ряд") +'</title><style>body{font-family:sans-serif;background:#f7f7f7;padding:30px}img{max-width:100%;margin-bottom:20px;border-radius:6px}</style></head><body>';
+  html += '<h1>'+ (row.title||"Фото-ряд") +'</h1>';
+  for(const it of images){
+    const blob = await downloadItemBlobFromR2(it);
+    const b64 = await blobToDataURL(blob);
+    html += '<div><img src="'+b64+'"/>'+(it.title?'<div>'+it.title+'</div>':'')+'</div>';
+  }
+  html += "</body></html>";
+  const blob = new Blob([html],{type:"text/html"});
+  const url = URL.createObjectURL(blob);
+  const a=document.createElement("a");
+  a.href=url;
+  a.download="photo_row.html";
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(()=>{URL.revokeObjectURL(url);a.remove();},1000);
+}
+
+function blobToDataURL(blob){
+  return new Promise((res,rej)=>{
+    const r=new FileReader();
+    r.onload=()=>res(r.result);
+    r.onerror=rej;
+    r.readAsDataURL(blob);
+  });
+}
