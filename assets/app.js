@@ -237,6 +237,49 @@ function openPhotoPicker(picker){
   target.click();
 }
 
+
+function forceShowPuchokAddButton(){
+  if(!addMenuBtn) return;
+  addMenuBtn.hidden = false;
+  addMenuBtn.removeAttribute("hidden");
+  addMenuBtn.disabled = false;
+  addMenuBtn.style.display = "inline-flex";
+  addMenuBtn.style.visibility = "visible";
+  addMenuBtn.style.opacity = "1";
+  addMenuBtn.style.pointerEvents = "auto";
+  addMenuBtn.style.position = "";
+  addMenuBtn.style.zIndex = "";
+
+  const parent =
+    headerActionsHost ||
+    (editPuchokBtn && editPuchokBtn.parentElement) ||
+    (refreshBtn && refreshBtn.parentElement) ||
+    addMenuBtn.parentElement ||
+    null;
+
+  if(parent && addMenuBtn.parentElement !== parent){
+    parent.appendChild(addMenuBtn);
+  }
+  if(parent){
+    if(editPuchokBtn && editPuchokBtn.parentElement === parent){
+      if(editPuchokBtn.nextSibling !== addMenuBtn){
+        parent.insertBefore(addMenuBtn, editPuchokBtn.nextSibling);
+      }
+    }else{
+      parent.appendChild(addMenuBtn);
+    }
+  }
+}
+
+function forceHideRowAddButton(){
+  if(!addMenuBtn) return;
+  addMenuBtn.hidden = true;
+  addMenuBtn.style.display = "none";
+  addMenuBtn.style.visibility = "hidden";
+  addMenuBtn.style.opacity = "0";
+  addMenuBtn.style.pointerEvents = "none";
+}
+
 /** ===========================
  *  STATE
  *  =========================== */
@@ -1340,13 +1383,7 @@ function setHeaderForPuchok(p){
     refreshBtn.setAttribute("aria-label","Обновить");
   }
 
-  if(addMenuBtn){
-    addMenuBtn.style.display = "";
-    addMenuBtn.hidden = false;
-    addMenuBtn.disabled = false;
-    addMenuBtn.style.visibility = "visible";
-    addMenuBtn.style.opacity = "1";
-  }
+  forceShowPuchokAddButton();
 
   // порядок кнопок: [⟳] [rename] [+]
   try{
@@ -1374,12 +1411,7 @@ function setHeaderForRow(p, row){
   editPuchokBtn.style.display = "none";
   closeAddMenu();
 
-  if(addMenuBtn){
-    addMenuBtn.style.display = "none";
-    addMenuBtn.hidden = true;
-    addMenuBtn.style.visibility = "hidden";
-    addMenuBtn.style.opacity = "0";
-  }
+  forceHideRowAddButton();
 
   ensureRefreshBtn();
   if(refreshBtn){
@@ -1424,13 +1456,7 @@ function render(){
       return;
     }
     setHeaderForPuchok(p);
-    if(addMenuBtn){
-      addMenuBtn.style.display = "";
-      addMenuBtn.hidden = false;
-      addMenuBtn.disabled = false;
-      addMenuBtn.style.visibility = "visible";
-      addMenuBtn.style.opacity = "1";
-    }
+    forceShowPuchokAddButton();
     renderPuchokInside(p);
     return;
   }
@@ -1680,9 +1706,11 @@ function renderRowInside(p, cached){
   top.className = "itemRow";
   top.style.cursor = "pointer";
   top.addEventListener("click", () => {
+    closeAddMenu();
     viewMode = "puchok";
     currentRowId = null;
     render();
+    forceShowPuchokAddButton();
   });
 
   const left = document.createElement("div");
@@ -2885,15 +2913,45 @@ async function openItemFromRow(rowId, itemId){
     return;
   }
 
-  if(it.type === "image" || it.type === "file"){
-    const label = it.type === "image" ? "Фото" : "Файл";
-    modalHint.textContent = `${label}: метаданные в облаке (D1), blob в облаке (R2).`;
+  if(it.type === "image"){
+    modalWrap.style.display = "none";
+    modalTextarea.style.display = "none";
+    modalViewer.style.display = "none";
+    modalViewer.innerHTML = "";
+
+    let blob = null;
+    try{
+      blob = await downloadItemBlobFromR2(it.id, it.mime || "image/*", it.type);
+    }catch(e){
+      addMsg("Ошибка загрузки фото: " + (e?.message || e), "err");
+      return;
+    }
+
+    if(!blob){
+      addMsg("Blob фото не найден в R2 (404).", "err");
+      return;
+    }
+
+    const finalMime = chooseBlobMimeType(blob?.type || "", it.mime || "image/*", it.type);
+    const typedBlob = (blob && sanitizeMimeType(blob.type || "", "") === finalMime)
+      ? blob
+      : new Blob([blob], { type: finalMime });
+    const url = URL.createObjectURL(typedBlob);
+    window.open(url, "_blank");
+    return;
+  }
+
+  if(it.type === "file"){
+    modalTextarea.style.display = "none";
+    modalViewer.style.display = "block";
+    modalWrap.style.display = "flex";
+    modalHint.textContent = `Файл: метаданные в облаке (D1), blob в облаке (R2).`;
 
     modalViewer.innerHTML = `<div class="empty">Загружаю файл из облака…</div>`;
 
     let blob = null;
     try{
-      blob = await downloadItemBlobFromR2(it.id, it.mime || (it.type === "image" ? "image/*" : "application/octet-stream"), it.type);
+      blob = await downloadItemBlobFromR2(it.id, it.mime || "application/octet-stream", it.type);
     }catch(e){
       modalViewer.innerHTML = `<div class="empty">Ошибка загрузки: ${escapeHTML(e?.message || e)}</div>`;
       return;
@@ -2904,45 +2962,36 @@ async function openItemFromRow(rowId, itemId){
       return;
     }
 
-    const finalMime = chooseBlobMimeType(blob?.type || "", it.mime || (it.type === "image" ? "image/*" : "application/octet-stream"), it.type);
+    const finalMime = chooseBlobMimeType(blob?.type || "", it.mime || "application/octet-stream", it.type);
     const typedBlob = (blob && sanitizeMimeType(blob.type || "", "") === finalMime)
       ? blob
       : new Blob([blob], { type: finalMime });
     const url = URL.createObjectURL(typedBlob);
 
-    if(it.type === "image"){
-      modalViewer.innerHTML = `
-        <img src="${url}" alt="Фото" style="display:block;max-width:100%;max-height:min(78vh, 82vw);width:auto;height:auto;margin:0 auto;object-fit:contain;" />
-        <div class="viewerActions">
-          <button class="btnGhost" id="btnDownload">Скачать</button>
+    modalViewer.innerHTML = `
+      <div class="fileRow">
+        <div class="fileMeta">
+          <div class="fileName">${escapeHTML(it.title || "Файл")}</div>
+          <div class="fileSub">${escapeHTML(it.mime || "file")} • ${fmtBytes(it.size)}</div>
         </div>
-      `;
-    }else{
-      modalViewer.innerHTML = `
-        <div class="fileRow">
-          <div class="fileMeta">
-            <div class="fileName">${escapeHTML(it.title || "Файл")}</div>
-            <div class="fileSub">${escapeHTML(it.mime || "file")} • ${fmtBytes(it.size)}</div>
-          </div>
-          <div class="tagText tagFile">Файл</div>
-        </div>
-        <div class="viewerActions">
-          <button class="btnGhost" id="btnOpenNewTab">Открыть</button>
-          <button class="btnGhost" id="btnDownload">Скачать</button>
-        </div>
-        <div class="hint">Открытие зависит от типа файла и возможностей браузера. Если не откроется — используй “Скачать”.</div>
-      `;
-    }
+        <div class="tagText tagFile">Файл</div>
+      </div>
+      <div class="viewerActions">
+        <button class="btnGhost" id="btnOpenNewTab">Открыть</button>
+        <button class="btnGhost" id="btnDownload">Скачать</button>
+      </div>
+      <div class="hint">Открытие зависит от типа файла и возможностей браузера. Если не откроется — используй “Скачать”.</div>
+    `;
 
     renderModalNav(rowId, itemId);
     const btnOpenNewTab = document.getElementById("btnOpenNewTab");
     const btnDownload = document.getElementById("btnDownload");
 
-    if(it.type !== "image" && btnOpenNewTab) btnOpenNewTab.onclick = () => window.open(url, "_blank");
+    if(btnOpenNewTab) btnOpenNewTab.onclick = () => window.open(url, "_blank");
     if(btnDownload) btnDownload.onclick = () => {
       const a = document.createElement("a");
       a.href = url;
-      a.download = it.title || (it.type === "image" ? "image" : "file");
+      a.download = it.title || "file";
       a.click();
     };
 
