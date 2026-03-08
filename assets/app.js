@@ -1936,7 +1936,7 @@ function mountImageTilePreview(previewHost, it){
   if(!previewHost || !it) return;
   previewHost.dataset.previewItemId = String(it.id || "");
   previewHost.innerHTML = `
-    <div style="height:132px;border-radius:14px;overflow:hidden;background:rgba(17,19,23,.06);display:flex;align-items:center;justify-content:center;">
+    <div style="height:168px;border-radius:14px;overflow:hidden;background:rgba(17,19,23,.06);display:flex;align-items:center;justify-content:center;">
       <div class="itemDesc">Загружаю фото…</div>
     </div>
   `;
@@ -2018,19 +2018,28 @@ function buildInlineRowContent(p, cached){
     }
 
     const isPhotoTile = it.type === "image";
-    card.innerHTML = `
-      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
-        <div style="display:flex;align-items:center;gap:10px;min-width:0;">
-          <div class="thumb">${icoSVG(it.type==="image" ? "photo" : (it.type || "file"))}</div>
-          <div class="itemText" style="min-width:0;">
-            <div class="itemTitle">${escapeHTML(it.title || "Элемент")}</div>
-            <div class="itemDesc">${fmtDate(it.updatedAt || it.createdAt || nowISO())}</div>
-          </div>
+    if(isPhotoTile){
+      card.innerHTML = `
+        <div class="itemText" style="min-width:0;padding-right:84px;">
+          <div class="itemTitle">${escapeHTML(it.title || "Фото")}</div>
         </div>
-        <div class="${t.cls}">${t.text}</div>
-      </div>
-      <div class="rowTilePreviewHost" style="min-height:${isPhotoTile ? "132px" : "72px"};">${previewHTML}</div>
-    `;
+        <div class="rowTilePreviewHost" style="min-height:168px;">${previewHTML}</div>
+      `;
+    }else{
+      card.innerHTML = `
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
+          <div style="display:flex;align-items:center;gap:10px;min-width:0;">
+            <div class="thumb">${icoSVG(it.type==="image" ? "photo" : (it.type || "file"))}</div>
+            <div class="itemText" style="min-width:0;">
+              <div class="itemTitle">${escapeHTML(it.title || "Элемент")}</div>
+              <div class="itemDesc">${fmtDate(it.updatedAt || it.createdAt || nowISO())}</div>
+            </div>
+          </div>
+          <div class="${t.cls}">${t.text}</div>
+        </div>
+        <div class="rowTilePreviewHost" style="min-height:72px;">${previewHTML}</div>
+      `;
+    }
 
     if(isPhotoTile){
       const previewHost = card.querySelector(".rowTilePreviewHost");
@@ -2038,11 +2047,11 @@ function buildInlineRowContent(p, cached){
 
       const bubbles = document.createElement("div");
       bubbles.style.position = "absolute";
-      bubbles.style.top = "10px";
-      bubbles.style.right = "10px";
+      bubbles.style.top = "8px";
+      bubbles.style.right = "8px";
       bubbles.style.display = "flex";
-      bubbles.style.gap = "8px";
-      bubbles.style.zIndex = "5";
+      bubbles.style.gap = "6px";
+      bubbles.style.zIndex = "6";
 
       const makeBubbleBtn = (label, titleText)=>{
         const btn = document.createElement("button");
@@ -2050,18 +2059,21 @@ function buildInlineRowContent(p, cached){
         btn.textContent = label;
         btn.title = titleText;
         btn.style.appearance = "none";
-        btn.style.border = "0";
-        btn.style.width = "34px";
-        btn.style.height = "34px";
+        btn.style.border = "1px solid rgba(255,255,255,.14)";
+        btn.style.width = "28px";
+        btn.style.height = "28px";
         btn.style.borderRadius = "999px";
-        btn.style.background = "rgba(255,255,255,.68)";
-        btn.style.backdropFilter = "blur(8px)";
-        btn.style.boxShadow = "0 8px 24px rgba(0,0,0,.18)";
+        btn.style.background = "rgba(17,19,23,.62)";
+        btn.style.color = "#fff";
+        btn.style.backdropFilter = "blur(10px)";
+        btn.style.boxShadow = "0 6px 18px rgba(0,0,0,.22)";
         btn.style.cursor = "pointer";
         btn.style.display = "inline-flex";
         btn.style.alignItems = "center";
         btn.style.justifyContent = "center";
-        btn.style.fontSize = "16px";
+        btn.style.fontSize = "13px";
+        btn.style.fontWeight = "700";
+        btn.style.lineHeight = "1";
         return btn;
       };
 
