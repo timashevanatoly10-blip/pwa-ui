@@ -306,6 +306,7 @@ let imageViewerRowId = null;
 let imageViewerItemIds = [];
 let imageViewerIndex = -1;
 let imageViewerObjectUrl = "";
+let imageViewerLoadToken = 0;
 let cameraCaptureModal = null;
 let cameraCaptureStream = null;
 let cameraCaptureTargetRowId = null;
@@ -711,7 +712,12 @@ function ensureImageViewer(){
     <div id="imageViewerStage"
       style="position:relative;width:100%;height:100%;display:flex;align-items:center;justify-content:center;padding:56px 16px 24px;">
       <img id="imageViewerImg" alt="Фото"
-        style="display:block;max-width:100%;max-height:100%;object-fit:contain;border-radius:18px;box-shadow:0 24px 80px rgba(0,0,0,.35);" />
+        style="display:none;max-width:100%;max-height:100%;object-fit:contain;border-radius:18px;box-shadow:0 24px 80px rgba(0,0,0,.35);" />
+      <div id="imageViewerStatus"
+        style="max-width:min(86vw,560px);padding:18px 22px;border-radius:18px;background:rgba(255,255,255,.08);
+               color:#fff;font-size:15px;line-height:1.45;text-align:center;backdrop-filter:blur(10px);">
+        Загружаю фото…
+      </div>
     </div>
   `;
   document.body.appendChild(imageViewerWrap);
@@ -745,11 +751,21 @@ function ensureImageViewer(){
   return imageViewerWrap;
 }
 function closeImageViewer(){
+  imageViewerLoadToken++;
   revokeImageViewerUrl();
   if(imageViewerWrap){
     imageViewerWrap.style.display = "none";
     const img = imageViewerWrap.querySelector("#imageViewerImg");
-    if(img) img.removeAttribute("src");
+    const status = imageViewerWrap.querySelector("#imageViewerStatus");
+    if(img){
+      img.style.display = "none";
+      img.removeAttribute("src");
+    }
+    if(status){
+      status.textContent = "Загружаю фото…";
+      status.style.display = "block";
+      status.style.background = "rgba(255,255,255,.08)";
+    }
   }
   imageViewerRowId = null;
   imageViewerItemIds = [];
@@ -774,6 +790,20 @@ function updateImageViewerNav(){
     }
   }
 }
+function setImageViewerStatus(message, isError = false){
+  const wrap = ensureImageViewer();
+  const img = wrap.querySelector("#imageViewerImg");
+  const status = wrap.querySelector("#imageViewerStatus");
+  if(status){
+    status.textContent = message || "";
+    status.style.display = message ? "block" : "none";
+    status.style.background = isError ? "rgba(163,32,53,.28)" : "rgba(255,255,255,.08)";
+  }
+  if(img && message){
+    img.style.display = "none";
+    img.removeAttribute("src");
+  }
+}
 async function openImageViewer(rowId, itemId){
   const items = getSortedImageItems(rowId);
   const idx = items.findIndex(x => x.id === itemId);
@@ -790,21 +820,35 @@ async function openImageViewer(rowId, itemId){
 
   const it = items[idx];
   if(!img || !it) return;
+
+  const loadToken = ++imageViewerLoadToken;
+  revokeImageViewerUrl();
+  img.style.display = "none";
   img.removeAttribute("src");
+  setImageViewerStatus("Загружаю фото…", false);
 
   try{
-    const blob = await downloadItemBlobFromR2(it.id, it.mime || "image/*", "image");
+    const blob = await downloadItemBlobFromR2(it.id, it.mime || "image/*", "image", { showProgress:false });
+    if(loadToken !== imageViewerLoadToken) return;
     if(!blob) throw new Error("Blob фото не найден");
+
     const finalMime = chooseBlobMimeType(blob?.type || "", it.mime || "image/*", "image");
     const typedBlob = (blob && sanitizeMimeType(blob.type || "", "") === finalMime)
       ? blob
       : new Blob([blob], { type: finalMime });
+
     revokeImageViewerUrl();
     imageViewerObjectUrl = URL.createObjectURL(typedBlob);
+
     img.src = imageViewerObjectUrl;
+    img.style.display = "block";
+    setImageViewerStatus("", false);
   }catch(e){
-    closeImageViewer();
-    addMsg("Ошибка загрузки фото: " + (e?.message || e), "err");
+    if(loadToken !== imageViewerLoadToken) return;
+    revokeImageViewerUrl();
+    img.style.display = "none";
+    img.removeAttribute("src");
+    setImageViewerStatus("Ошибка загрузки фото: " + (e?.message || e), true);
   }
 }
 async function openSiblingImageInViewer(step){
@@ -1973,7 +2017,7 @@ function buildInlineRowContent(p, cached){
       previewHTML = `<div class="itemDesc">${fmtDate(it.createdAt || it.updatedAt || nowISO())}</div>`;
     }
 
-    const isPhotoTile = it.type === "image" && (row.type || "").toLowerCase() === "photo";
+    const isPhotoTile = it.type === "image";
     card.innerHTML = `
       <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
         <div style="display:flex;align-items:center;gap:10px;min-width:0;">
@@ -2055,6 +2099,10 @@ function buildInlineRowContent(p, cached){
           if(imageViewerRowId === row.id && imageViewerItemIds.includes(it.id)){
             closeImageViewer();
           }
+          try{
+            const cachedPreviewUrl = itemPreviewUrlCache.get(it.id);
+            if(cachedPreviewUrl) URL.revokeObjectURL(cachedPreviewUrl);
+          }catch{}
           itemPreviewUrlCache.delete(it.id);
           await refreshRowAndKeepUI(row.id);
         }catch(err){
