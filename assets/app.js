@@ -300,6 +300,12 @@ let activeFileCaptureRowId = null;
 let activeFileCapturePuchokId = null;
 let activeCarouselRowId = null;
 let activeCarouselItemId = null;
+const expandedRowIds = new Set();
+let imageViewerWrap = null;
+let imageViewerRowId = null;
+let imageViewerItemIds = [];
+let imageViewerIndex = -1;
+let imageViewerObjectUrl = "";
 let cameraCaptureModal = null;
 let cameraCaptureStream = null;
 let cameraCaptureTargetRowId = null;
@@ -485,6 +491,35 @@ function getSortedRowItems(rowId){
   const items = Array.isArray(pack?.items) ? pack.items : [];
   return [...items].sort((a,b)=> (a.createdAt||a.updatedAt||"").localeCompare(b.createdAt||b.updatedAt||""));
 }
+function getSortedImageItems(rowId){
+  return getSortedRowItems(rowId).filter(x => x && x.type === "image");
+}
+function isRowExpanded(rowId){
+  return !!rowId && expandedRowIds.has(rowId);
+}
+function expandRowInline(rowId){
+  if(!rowId) return;
+  expandedRowIds.add(rowId);
+  currentRowId = rowId;
+}
+function collapseRowInline(rowId){
+  if(!rowId) return;
+  expandedRowIds.delete(rowId);
+  if(currentRowId === rowId){
+    const last = Array.from(expandedRowIds);
+    currentRowId = last.length ? last[last.length - 1] : null;
+  }
+}
+function toggleRowInlineState(rowId){
+  if(!rowId) return false;
+  if(expandedRowIds.has(rowId)){
+    collapseRowInline(rowId);
+    return false;
+  }
+  expandRowInline(rowId);
+  return true;
+}
+
 function rebuildModalNavState(rowId, itemId){
   currentModalRowId = rowId || null;
   currentModalItemIds = getSortedRowItems(rowId).map(x => x.id);
@@ -636,6 +671,147 @@ function getModalSiblingItemId(step){
   const nextIndex = currentModalItemIndex + step;
   if(nextIndex < 0 || nextIndex >= currentModalItemIds.length) return null;
   return currentModalItemIds[nextIndex] || null;
+}
+
+function revokeImageViewerUrl(){
+  if(imageViewerObjectUrl){
+    try{ URL.revokeObjectURL(imageViewerObjectUrl); }catch{}
+    imageViewerObjectUrl = "";
+  }
+}
+function ensureImageViewer(){
+  if(imageViewerWrap && imageViewerWrap.parentElement === document.body) return imageViewerWrap;
+
+  imageViewerWrap = document.createElement("div");
+  imageViewerWrap.id = "imageViewerWrap";
+  imageViewerWrap.style.position = "fixed";
+  imageViewerWrap.style.inset = "0";
+  imageViewerWrap.style.zIndex = "130000";
+  imageViewerWrap.style.display = "none";
+  imageViewerWrap.style.alignItems = "center";
+  imageViewerWrap.style.justifyContent = "center";
+  imageViewerWrap.style.background = "rgba(10,12,16,.92)";
+  imageViewerWrap.innerHTML = `
+    <button type="button" id="imageViewerClose"
+      style="position:absolute;top:14px;right:14px;z-index:3;appearance:none;border:0;
+             width:44px;height:44px;border-radius:999px;background:rgba(255,255,255,.14);
+             color:#fff;font-size:28px;line-height:1;cursor:pointer;">×</button>
+    <button type="button" id="imageViewerPrev"
+      style="position:absolute;left:12px;top:50%;transform:translateY(-50%);z-index:3;appearance:none;border:0;
+             min-width:52px;height:52px;border-radius:999px;background:rgba(17,19,23,.82);
+             color:#fff;font-size:28px;line-height:1;cursor:pointer;display:none;">←</button>
+    <div id="imageViewerCounter"
+      style="position:absolute;left:50%;top:16px;transform:translateX(-50%);z-index:3;display:none;
+             min-width:64px;padding:8px 12px;border-radius:999px;background:rgba(17,19,23,.72);
+             color:#fff;font-size:12px;text-align:center;"></div>
+    <button type="button" id="imageViewerNext"
+      style="position:absolute;right:12px;top:50%;transform:translateY(-50%);z-index:3;appearance:none;border:0;
+             min-width:52px;height:52px;border-radius:999px;background:rgba(17,19,23,.82);
+             color:#fff;font-size:28px;line-height:1;cursor:pointer;display:none;">→</button>
+    <div id="imageViewerStage"
+      style="position:relative;width:100%;height:100%;display:flex;align-items:center;justify-content:center;padding:56px 16px 24px;">
+      <img id="imageViewerImg" alt="Фото"
+        style="display:block;max-width:100%;max-height:100%;object-fit:contain;border-radius:18px;box-shadow:0 24px 80px rgba(0,0,0,.35);" />
+    </div>
+  `;
+  document.body.appendChild(imageViewerWrap);
+
+  const closeBtn = imageViewerWrap.querySelector("#imageViewerClose");
+  const prevBtn = imageViewerWrap.querySelector("#imageViewerPrev");
+  const nextBtn = imageViewerWrap.querySelector("#imageViewerNext");
+
+  if(closeBtn) closeBtn.addEventListener("click", (e)=>{
+    e.preventDefault();
+    e.stopPropagation();
+    closeImageViewer();
+  });
+  if(prevBtn) prevBtn.addEventListener("click", async (e)=>{
+    e.preventDefault();
+    e.stopPropagation();
+    await openSiblingImageInViewer(-1);
+  });
+  if(nextBtn) nextBtn.addEventListener("click", async (e)=>{
+    e.preventDefault();
+    e.stopPropagation();
+    await openSiblingImageInViewer(1);
+  });
+
+  imageViewerWrap.addEventListener("click", (e)=>{
+    if(e.target === imageViewerWrap || e.target.id === "imageViewerStage"){
+      closeImageViewer();
+    }
+  });
+
+  return imageViewerWrap;
+}
+function closeImageViewer(){
+  revokeImageViewerUrl();
+  if(imageViewerWrap){
+    imageViewerWrap.style.display = "none";
+    const img = imageViewerWrap.querySelector("#imageViewerImg");
+    if(img) img.removeAttribute("src");
+  }
+  imageViewerRowId = null;
+  imageViewerItemIds = [];
+  imageViewerIndex = -1;
+}
+function updateImageViewerNav(){
+  if(!imageViewerWrap) return;
+  const prevBtn = imageViewerWrap.querySelector("#imageViewerPrev");
+  const nextBtn = imageViewerWrap.querySelector("#imageViewerNext");
+  const counter = imageViewerWrap.querySelector("#imageViewerCounter");
+  const hasPrev = imageViewerIndex > 0;
+  const hasNext = imageViewerIndex >= 0 && imageViewerIndex < imageViewerItemIds.length - 1;
+  if(prevBtn) prevBtn.style.display = hasPrev ? "block" : "none";
+  if(nextBtn) nextBtn.style.display = hasNext ? "block" : "none";
+  if(counter){
+    if(imageViewerIndex >= 0 && imageViewerItemIds.length > 0){
+      counter.textContent = `${imageViewerIndex + 1} / ${imageViewerItemIds.length}`;
+      counter.style.display = "block";
+    }else{
+      counter.style.display = "none";
+      counter.textContent = "";
+    }
+  }
+}
+async function openImageViewer(rowId, itemId){
+  const items = getSortedImageItems(rowId);
+  const idx = items.findIndex(x => x.id === itemId);
+  if(idx < 0) return;
+
+  const wrap = ensureImageViewer();
+  const img = wrap.querySelector("#imageViewerImg");
+  imageViewerRowId = rowId;
+  imageViewerItemIds = items.map(x => x.id);
+  imageViewerIndex = idx;
+  updateImageViewerNav();
+  wrap.style.display = "flex";
+  setActiveCarouselItem(rowId, itemId);
+
+  const it = items[idx];
+  if(!img || !it) return;
+  img.removeAttribute("src");
+
+  try{
+    const blob = await downloadItemBlobFromR2(it.id, it.mime || "image/*", "image");
+    if(!blob) throw new Error("Blob фото не найден");
+    const finalMime = chooseBlobMimeType(blob?.type || "", it.mime || "image/*", "image");
+    const typedBlob = (blob && sanitizeMimeType(blob.type || "", "") === finalMime)
+      ? blob
+      : new Blob([blob], { type: finalMime });
+    revokeImageViewerUrl();
+    imageViewerObjectUrl = URL.createObjectURL(typedBlob);
+    img.src = imageViewerObjectUrl;
+  }catch(e){
+    closeImageViewer();
+    addMsg("Ошибка загрузки фото: " + (e?.message || e), "err");
+  }
+}
+async function openSiblingImageInViewer(step){
+  const nextIndex = imageViewerIndex + step;
+  if(nextIndex < 0 || nextIndex >= imageViewerItemIds.length) return;
+  const nextId = imageViewerItemIds[nextIndex];
+  if(nextId) await openImageViewer(imageViewerRowId, nextId);
 }
 
 /** ===========================
@@ -1041,6 +1217,16 @@ async function downloadItemBlobFromR2(itemId, fallbackType = "application/octet-
 /** ===========================
  *  BIG FILE "obhod" (presign -> direct upload -> complete)
  *  =========================== */
+async function deleteItemBlobFromR2(itemId){
+  const resp = await apiFetch(itemBlobPath(itemId), { method:"DELETE" });
+  if(resp.status === 404) return true;
+  if(!resp.ok){
+    const t = await resp.text().catch(()=> "");
+    throw new Error(t || `HTTP ${resp.status}`);
+  }
+  return true;
+}
+
 async function directUploadLargeFileToR2({ itemId, puchokId, file }){
   if(!file) throw new Error("NO_FILE");
 
@@ -1447,37 +1633,20 @@ function render(){
     return;
   }
 
-  if(viewMode === "puchok"){
-    const p = getPuchokLocal(currentPuchokId);
-    if(!p){
-      viewMode = "list";
-      currentPuchokId = null;
-      render();
-      return;
-    }
-    setHeaderForPuchok(p);
-    forceShowPuchokAddButton();
-    renderPuchokInside(p);
+  const p = getPuchokLocal(currentPuchokId);
+  if(!p){
+    viewMode = "list";
+    currentPuchokId = null;
+    currentRowId = null;
+    expandedRowIds.clear();
+    render();
     return;
   }
 
-  if(viewMode === "row"){
-    const p = getPuchokLocal(currentPuchokId);
-    const cached = db.rows[currentRowId] || null;
-    const row = cached?.row || null;
-
-    if(!p || !row){
-      // fallback: go back to puchok
-      viewMode = "puchok";
-      currentRowId = null;
-      render();
-      return;
-    }
-
-    setHeaderForRow(p, row);
-    renderRowInside(p, cached);
-    return;
-  }
+  viewMode = "puchok";
+  setHeaderForPuchok(p);
+  forceShowPuchokAddButton();
+  renderPuchokInside(p);
 }
 window.render = render;
 
@@ -1547,57 +1716,108 @@ function renderPuchokInside(p){
   }else{
     const sorted = [...entries].sort((a,b)=> (a.orderIndex||0) - (b.orderIndex||0));
     for(const e of sorted){
-      const row = document.createElement("div");
-      row.className = "itemRow";
+      if((e.kind || "").toLowerCase() === "subpuchok"){
+        const row = document.createElement("div");
+        row.className = "itemRow";
+
+        const left = document.createElement("div");
+        left.className = "itemLeft";
+
+        const thumb = document.createElement("div");
+        thumb.className = "thumb";
+        thumb.innerHTML = icoSVG("file");
+
+        const textWrap = document.createElement("div");
+        textWrap.className = "itemText";
+
+        const title = document.createElement("div");
+        title.className = "itemTitle";
+        title.textContent = e.subTitle || "Подпучок";
+
+        const desc = document.createElement("div");
+        desc.className = "itemDesc";
+        desc.textContent = "Открыть подпучок";
+
+        const right = document.createElement("div");
+        right.className = "tagText";
+        right.textContent = "Папка";
+
+        textWrap.appendChild(title);
+        textWrap.appendChild(desc);
+        left.appendChild(thumb);
+        left.appendChild(textWrap);
+        row.appendChild(left);
+        row.appendChild(right);
+        row.addEventListener("click", ()=> openPuchok(e.refId));
+        wrap.appendChild(row);
+        continue;
+      }
+
+      const block = document.createElement("div");
+      block.className = "rowInlineBlock";
+      block.dataset.rowInlineId = e.refId;
+      block.style.display = "flex";
+      block.style.flexDirection = "column";
+      block.style.gap = "12px";
+
+      const header = document.createElement("div");
+      header.className = "itemRow";
+      header.style.cursor = "pointer";
 
       const left = document.createElement("div");
       left.className = "itemLeft";
 
       const thumb = document.createElement("div");
       thumb.className = "thumb";
+      const rt = rowTypeLabel(e.rowType || "row");
+      thumb.innerHTML = icoSVG(rt.ico);
 
       const textWrap = document.createElement("div");
       textWrap.className = "itemText";
 
       const title = document.createElement("div");
       title.className = "itemTitle";
+      title.textContent = e.rowTitle || rt.text;
+
+      const cached = db.rows[e.refId];
+      const expanded = isRowExpanded(e.refId);
+      const cnt = cached ? (cached.items || []).length : null;
 
       const desc = document.createElement("div");
       desc.className = "itemDesc";
+      if(cnt != null){
+        desc.textContent = `Элементов: ${cnt}${expanded ? " • раскрыт" : ""}`;
+      }else{
+        desc.textContent = expanded ? "Загружаю ряд…" : "Нажми, чтобы раскрыть";
+      }
 
       const right = document.createElement("div");
-
-      if((e.kind || "").toLowerCase() === "subpuchok"){
-        thumb.innerHTML = icoSVG("file");
-        title.textContent = e.subTitle || "Подпучок";
-        desc.textContent = "Открыть подпучок";
-        right.className = "tagText";
-        right.textContent = "Папка";
-
-        row.addEventListener("click", ()=> openPuchok(e.refId));
-      }else{
-        // row entry
-        const rt = rowTypeLabel(e.rowType || "row");
-        thumb.innerHTML = icoSVG(rt.ico);
-        title.textContent = e.rowTitle || rt.text;
-        const cached = db.rows[e.refId];
-        const cnt = cached ? (cached.items || []).length : null;
-        desc.textContent = cnt != null ? `Элементов: ${cnt}` : "Открыть ряд";
-        right.className = rt.cls;
-        right.textContent = rt.text.replace("-ряд","");
-
-        row.addEventListener("click", ()=> openRow(e.refId));
-      }
+      right.className = rt.cls;
+      right.textContent = expanded ? "Свернуть" : rt.text.replace("-ряд","");
 
       textWrap.appendChild(title);
       textWrap.appendChild(desc);
-
       left.appendChild(thumb);
       left.appendChild(textWrap);
+      header.appendChild(left);
+      header.appendChild(right);
 
-      row.appendChild(left);
-      row.appendChild(right);
-      wrap.appendChild(row);
+      header.addEventListener("click", ()=> openRow(e.refId));
+
+      block.appendChild(header);
+
+      if(expanded){
+        if(cached){
+          block.appendChild(buildInlineRowContent(p, cached));
+        }else{
+          const loading = document.createElement("div");
+          loading.className = "empty";
+          loading.textContent = "Загружаю ряд…";
+          block.appendChild(loading);
+        }
+      }
+
+      wrap.appendChild(block);
     }
   }
 
@@ -1695,70 +1915,16 @@ function mountImageTilePreview(previewHost, it){
 }
 
 
-function renderRowInside(p, cached){
-  const wrap = document.createElement("div");
-  wrap.className = "list";
-
+function buildInlineRowContent(p, cached){
   const row = cached.row;
   const items = cached.items || [];
 
-  const top = document.createElement("div");
-  top.className = "itemRow";
-  top.style.cursor = "pointer";
-  top.addEventListener("click", () => {
-    closeAddMenu();
-    viewMode = "puchok";
-    currentRowId = null;
-    render();
-    forceShowPuchokAddButton();
-  });
-
-  const left = document.createElement("div");
-  left.className = "itemLeft";
-
-  const thumb = document.createElement("div");
-  thumb.className = "thumb";
-  thumb.innerHTML = icoSVG(rowTypeLabel(row.type).ico);
-
-  const textWrap = document.createElement("div");
-  textWrap.className = "itemText";
-
-  const title = document.createElement("div");
-  title.className = "itemTitle";
-  title.textContent = row.title || rowTypeLabel(row.type).text;
-
-  const desc = document.createElement("div");
-  desc.className = "itemDesc";
-  desc.textContent = `Элементов: ${items.length}`;
-
-  textWrap.appendChild(title);
-  textWrap.appendChild(desc);
-  left.appendChild(thumb);
-  left.appendChild(textWrap);
-  top.appendChild(left);
-
-  const delBtn = document.createElement("button");
-  delBtn.className = "btnGhost";
-  delBtn.textContent = "Удалить ряд";
-  delBtn.addEventListener("click", async (e)=>{
-    e.stopPropagation();
-    if(!confirm("Удалить весь ряд?")) return;
-    isBusy = true;
-    try{
-      await apiJson(`/rows/${encodeURIComponent(row.id)}`, { method:"DELETE" });
-      delete db.rows[row.id];
-      await loadPuchokWithEntries(currentPuchokId);
-      viewMode = "puchok";
-      currentRowId = null;
-      render();
-    }catch(err){
-      addMsg("Ошибка удаления ряда: " + (err?.message || err), "err");
-    }finally{
-      isBusy = false;
-    }
-  });
-  top.appendChild(delBtn);
-  wrap.appendChild(top);
+  const holder = document.createElement("div");
+  holder.className = "rowInlineExpanded";
+  holder.style.display = "flex";
+  holder.style.flexDirection = "column";
+  holder.style.gap = "12px";
+  holder.style.padding = "0 0 6px 0";
 
   const rail = document.createElement("div");
   rail.className = "rowCarousel";
@@ -1781,6 +1947,7 @@ function renderRowInside(p, cached){
     card.style.flexDirection = "column";
     card.style.gap = "10px";
     card.style.cursor = "pointer";
+    card.style.position = "relative";
     card.dataset.rowTileRowId = row.id;
     card.dataset.rowTileItemId = it.id;
     applyActiveTileStyles(card, activeCarouselRowId === row.id && activeCarouselItemId === it.id);
@@ -1824,6 +1991,82 @@ function renderRowInside(p, cached){
     if(isPhotoTile){
       const previewHost = card.querySelector(".rowTilePreviewHost");
       mountImageTilePreview(previewHost, it);
+
+      const bubbles = document.createElement("div");
+      bubbles.style.position = "absolute";
+      bubbles.style.top = "10px";
+      bubbles.style.right = "10px";
+      bubbles.style.display = "flex";
+      bubbles.style.gap = "8px";
+      bubbles.style.zIndex = "5";
+
+      const makeBubbleBtn = (label, titleText)=>{
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.textContent = label;
+        btn.title = titleText;
+        btn.style.appearance = "none";
+        btn.style.border = "0";
+        btn.style.width = "34px";
+        btn.style.height = "34px";
+        btn.style.borderRadius = "999px";
+        btn.style.background = "rgba(255,255,255,.68)";
+        btn.style.backdropFilter = "blur(8px)";
+        btn.style.boxShadow = "0 8px 24px rgba(0,0,0,.18)";
+        btn.style.cursor = "pointer";
+        btn.style.display = "inline-flex";
+        btn.style.alignItems = "center";
+        btn.style.justifyContent = "center";
+        btn.style.fontSize = "16px";
+        return btn;
+      };
+
+      const downloadBtn = makeBubbleBtn("↓", "Скачать фото");
+      downloadBtn.addEventListener("click", async (e)=>{
+        e.preventDefault();
+        e.stopPropagation();
+        try{
+          const blob = await downloadItemBlobFromR2(it.id, it.mime || "image/*", "image");
+          if(!blob) throw new Error("Blob фото не найден");
+          const finalMime = chooseBlobMimeType(blob?.type || "", it.mime || "image/*", "image");
+          const typedBlob = (blob && sanitizeMimeType(blob.type || "", "") === finalMime)
+            ? blob
+            : new Blob([blob], { type: finalMime });
+          const url = URL.createObjectURL(typedBlob);
+          const a = document.createElement("a");
+          a.href = url;
+          a.download = it.title || "photo";
+          a.click();
+          setTimeout(()=>{ try{ URL.revokeObjectURL(url); }catch{} }, 1500);
+        }catch(err){
+          addMsg("Ошибка скачивания фото: " + (err?.message || err), "err");
+        }
+      });
+
+      const deleteBtn = makeBubbleBtn("×", "Удалить фото");
+      deleteBtn.addEventListener("click", async (e)=>{
+        e.preventDefault();
+        e.stopPropagation();
+        if(!confirm("Удалить это фото?")) return;
+        isBusy = true;
+        try{
+          try{ await deleteItemBlobFromR2(it.id); }catch{}
+          await apiJson(`/items/${encodeURIComponent(it.id)}`, { method:"DELETE" });
+          if(imageViewerRowId === row.id && imageViewerItemIds.includes(it.id)){
+            closeImageViewer();
+          }
+          itemPreviewUrlCache.delete(it.id);
+          await refreshRowAndKeepUI(row.id);
+        }catch(err){
+          addMsg("Ошибка удаления фото: " + (err?.message || err), "err");
+        }finally{
+          isBusy = false;
+        }
+      });
+
+      bubbles.appendChild(downloadBtn);
+      bubbles.appendChild(deleteBtn);
+      card.appendChild(bubbles);
     }
 
     rail.appendChild(card);
@@ -1867,9 +2110,9 @@ function renderRowInside(p, cached){
   });
   rail.appendChild(addCard);
 
-  wrap.appendChild(rail);
-  mainPanel.appendChild(wrap);
-  updateActiveRowTileUI(row.id);
+  holder.appendChild(rail);
+  setTimeout(()=> updateActiveRowTileUI(row.id), 0);
+  return holder;
 }
 
 /** ===========================
@@ -1879,14 +2122,18 @@ async function openPuchok(id){
   if(isBusy) return;
   isBusy = true;
   try{
+    closeImageViewer();
     currentPuchokId = id;
     currentRowId = null;
+    expandedRowIds.clear();
     viewMode = "puchok";
     await loadPuchokWithEntries(id);
   }catch(e){
     addMsg("Ошибка загрузки пучка: " + (e?.message || e), "err");
     viewMode = "list";
     currentPuchokId = null;
+    currentRowId = null;
+    expandedRowIds.clear();
   }finally{
     isBusy = false;
     render();
@@ -1894,16 +2141,23 @@ async function openPuchok(id){
 }
 
 async function openRow(rowId){
-  if(isBusy) return;
+  if(isBusy || !rowId) return;
+  closeAddMenu();
+
+  if(isRowExpanded(rowId)){
+    collapseRowInline(rowId);
+    viewMode = "puchok";
+    render();
+    return;
+  }
+
   isBusy = true;
   try{
-    currentRowId = rowId;
-    viewMode = "row";
     await loadRowWithItems(rowId);
+    expandRowInline(rowId);
+    viewMode = "puchok";
   }catch(e){
     addMsg("Ошибка загрузки ряда: " + (e?.message || e), "err");
-    viewMode = "puchok";
-    currentRowId = null;
   }finally{
     isBusy = false;
     render();
@@ -1913,20 +2167,15 @@ async function openRow(rowId){
 function goBack(){
   closeAddMenu();
   closeCameraCaptureModal();
-  if(viewMode === "row"){
-    viewMode = "puchok";
-    currentRowId = null;
-    render();
-    return;
-  }
+  closeImageViewer();
   if(viewMode === "puchok"){
     viewMode = "list";
     currentPuchokId = null;
     currentRowId = null;
+    expandedRowIds.clear();
     render();
     return;
   }
-  // list
 }
 
 /** ===========================
@@ -2093,8 +2342,8 @@ async function addTextItemToSpecificRow(rowId, initialText = ""){
   isBusy = true;
   try{
     const created = await createItemInRow(rowId, { type:"text", title, content });
-    currentRowId = rowId;
-    viewMode = "row";
+    expandRowInline(rowId);
+    viewMode = "puchok";
     await refreshRowAndKeepUI(rowId);
     const it = (db.rows[rowId]?.items || []).find(x => x.id === created.id) || mapItemRow(created);
     await openItemFromRow(rowId, it.id);
@@ -2115,8 +2364,8 @@ async function addCodeItemToSpecificRow(rowId, initialCode = ""){
   isBusy = true;
   try{
     const created = await createItemInRow(rowId, { type:"code", title, content });
-    currentRowId = rowId;
-    viewMode = "row";
+    expandRowInline(rowId);
+    viewMode = "puchok";
     await refreshRowAndKeepUI(rowId);
     const it = (db.rows[rowId]?.items || []).find(x => x.id === created.id) || mapItemRow(created);
     await openItemFromRow(rowId, it.id);
@@ -2151,8 +2400,8 @@ async function addLinkItemsToSpecificRow(rowId, rawInput){
       await createItemInRow(rowId, { type:"link", title, url: u });
     }
 
-    currentRowId = rowId;
-    viewMode = "row";
+    expandRowInline(rowId);
+    viewMode = "puchok";
     await refreshRowAndKeepUI(rowId);
   }catch(e){
     addMsg("Ошибка добавления ссылок: " + (e?.message || e), "err");
@@ -2184,8 +2433,8 @@ async function createAudioItemInSpecificRow(rowId){
       pLocal.audioRowId = rowId;
     }
 
-    currentRowId = rowId;
-    viewMode = "row";
+    expandRowInline(rowId);
+    viewMode = "puchok";
     await refreshRowAndKeepUI(rowId);
     return (db.rows[rowId]?.items || []).find(x => x.id === it.id) || it;
   }finally{
@@ -2303,9 +2552,8 @@ async function refreshRowAndKeepUI(rowId){
   if(currentPuchokId){
     try{ await loadPuchokWithEntries(currentPuchokId); }catch{}
   }
-  if(viewMode === "row" || currentRowId === rowId){
-    currentRowId = rowId;
-  }
+  expandRowInline(rowId);
+  viewMode = "puchok";
   render();
   return db.rows[rowId] || null;
 }
@@ -2735,8 +2983,8 @@ async function takePhotoFromCameraModal(){
   isBusy = true;
   try{
     const created = await addFileItemToSpecificRow(p, rowId, file);
-    currentRowId = rowId;
-    viewMode = "row";
+    expandRowInline(rowId);
+    viewMode = "puchok";
     await refreshRowAndKeepUI(rowId);
     closeCameraCaptureModal();
     if(created?.itemId){
@@ -2838,6 +3086,13 @@ async function openItemFromRow(rowId, itemId){
   currentModalRowId = rowId;
   setActiveCarouselItem(rowId, itemId);
 
+  if(it.type === "image"){
+    await openImageViewer(rowId, itemId);
+    return;
+  }
+
+  closeImageViewer();
+
   modalTitle.textContent = it.title || "Элемент";
   modalHint.textContent = "";
   modalViewer.innerHTML = "";
@@ -2913,40 +3168,8 @@ async function openItemFromRow(rowId, itemId){
     return;
   }
 
-  if(it.type === "image"){
-    modalWrap.style.display = "none";
-    modalTextarea.style.display = "none";
-    modalViewer.style.display = "none";
-    modalViewer.innerHTML = "";
-
-    let blob = null;
-    try{
-      blob = await downloadItemBlobFromR2(it.id, it.mime || "image/*", it.type);
-    }catch(e){
-      addMsg("Ошибка загрузки фото: " + (e?.message || e), "err");
-      return;
-    }
-
-    if(!blob){
-      addMsg("Blob фото не найден в R2 (404).", "err");
-      return;
-    }
-
-    const finalMime = chooseBlobMimeType(blob?.type || "", it.mime || "image/*", it.type);
-    const typedBlob = (blob && sanitizeMimeType(blob.type || "", "") === finalMime)
-      ? blob
-      : new Blob([blob], { type: finalMime });
-    const url = URL.createObjectURL(typedBlob);
-    window.open(url, "_blank");
-    return;
-  }
-
   if(it.type === "file"){
-    modalTextarea.style.display = "none";
-    modalViewer.style.display = "block";
-    modalWrap.style.display = "flex";
     modalHint.textContent = `Файл: метаданные в облаке (D1), blob в облаке (R2).`;
-
     modalViewer.innerHTML = `<div class="empty">Загружаю файл из облака…</div>`;
 
     let blob = null;
@@ -2999,8 +3222,6 @@ async function openItemFromRow(rowId, itemId){
   }
 
   if(it.type === "audio"){
-    // audio.js expects currentPuchokId + itemId
-    // We keep legacy audio item list in puchok.items
     if(typeof renderAudioViewer === "function"){
       renderModalNav(rowId, itemId);
       await renderAudioViewer(it, currentPuchokId);
@@ -3357,8 +3578,8 @@ filePicker.addEventListener("change", async () => {
         lastItemId = created.itemId;
       }
 
-      currentRowId = targetRowId;
-      viewMode = "row";
+      expandRowInline(targetRowId);
+      viewMode = "puchok";
       await refreshRowAndKeepUI(targetRowId);
 
       if(lastItemId){
@@ -3406,8 +3627,8 @@ photoPicker.addEventListener("change", async () => {
       lastItemId = created.itemId;
     }
 
-    currentRowId = rowId;
-    viewMode = "row";
+    expandRowInline(rowId);
+    viewMode = "puchok";
     await refreshRowAndKeepUI(rowId);
 
     if(lastItemId){
@@ -3443,6 +3664,23 @@ document.addEventListener("keydown", async (e)=>{
     e.preventDefault();
     closeCameraCaptureModal();
     return;
+  }
+  if(imageViewerWrap && imageViewerWrap.style.display === "flex"){
+    if(e.key === "ArrowLeft"){
+      e.preventDefault();
+      await openSiblingImageInViewer(-1);
+      return;
+    }
+    if(e.key === "ArrowRight"){
+      e.preventDefault();
+      await openSiblingImageInViewer(1);
+      return;
+    }
+    if(e.key === "Escape"){
+      e.preventDefault();
+      closeImageViewer();
+      return;
+    }
   }
   if(modalWrap.style.display !== "flex") return;
   if(e.key === "ArrowLeft"){
