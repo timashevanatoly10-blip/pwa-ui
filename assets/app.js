@@ -307,24 +307,7 @@ function ensureAddMenuExtras(){
     menuAddSubpuchok.hidden = false;
   }
 
-if(menuAddSubpuchok){
-  menuAddSubpuchok.addEventListener("click", async (e)=>{
-    e.preventDefault();
-    e.stopPropagation();
-    closeAddMenu();
-    if(viewMode !== "puchok"){
-      alert("Подпучок можно создать только внутри пучка.");
-      return;
-    }
-    try{
-      await createSubpuchokInCurrent();
-    }catch(err){
-      console.error(err);
-      alert("Не удалось создать подпучок.");
-    }
-  });
-}
-
+  bindMenuAddSubpuchokButton(menuAddSubpuchok);
 }
 
 function applyHiddenPickerStyles(el){
@@ -2542,6 +2525,7 @@ function ensureCurrentPuchok(){
 async function createSubpuchokInCurrent(){
   const p = ensureCurrentPuchok();
   if(!p) return;
+  if(isBusy) return;
 
   const name = prompt("Название подпучка:", "Новый подпучок");
   if(name === null) return;
@@ -4004,40 +3988,31 @@ addMenu.addEventListener("click", (e)=> e.stopPropagation());
  *  EXTRA: Long-press / hidden action to create SUBPUCHOK (stage 1 helper)
  *  - в UI пока нет кнопки, поэтому делаем: длительное нажатие на "+" в пучке => подпучок
  *  =========================== */
-(function bindLongPressForSubpuchok(){
-  if(!addMenuBtn) return;
-  let t = null;
-
-  const start = ()=>{
-    if(viewMode !== "puchok") return;
-    if(t) clearTimeout(t);
-    t = setTimeout(()=>{
-      // create subpuchok fast
-      closeAddMenu();
-      createSubpuchokInCurrent();
-    }, 650);
-  };
-  const stop = ()=>{
-    if(t) clearTimeout(t);
-    t = null;
-  };
-
-  addMenuBtn.addEventListener("touchstart", start, { passive:true });
-  addMenuBtn.addEventListener("touchend", stop, { passive:true });
-  addMenuBtn.addEventListener("touchcancel", stop, { passive:true });
-
-  addMenuBtn.addEventListener("mousedown", start);
-  addMenuBtn.addEventListener("mouseup", stop);
-  addMenuBtn.addEventListener("mouseleave", stop);
-})();
+(function bindLongPressForSubpuchok(){})();
 
 
 
-function bindMenuAddSubpuchokButton(btn){ if(!btn||btn.dataset.bound==='1') return; btn.dataset.bound='1'; btn.addEventListener('click',async()=>{ closeAddMenu(); if(viewMode!=='puchok') return; await createSubpuchokInCurrent(); }); }
+function bindMenuAddSubpuchokButton(btn){
+  if(!btn || btn.dataset.subpuchokBound === "1") return;
 
-async function deleteSubpuchok(subId){
-  if(!confirm("Удалить подпучок?")) return;
-  await fetch(`/puchki/${subId}`,{method:"DELETE"});
-  await loadPuchokWithEntries(currentPuchokId);
-  render();
+  btn.dataset.subpuchokBound = "1";
+
+  btn.addEventListener("click", async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    closeAddMenu();
+
+    if(viewMode !== "puchok"){
+      alert("Подпучок можно создать только внутри пучка.");
+      return;
+    }
+
+    try{
+      await createSubpuchokInCurrent();
+    }catch(err){
+      console.error(err);
+      alert("Не удалось создать подпучок.");
+    }
+  });
 }
