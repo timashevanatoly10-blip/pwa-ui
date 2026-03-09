@@ -209,8 +209,12 @@ async function exportPhotoRowZip(rowId, rowTitle){
       return part.replace(/[^a-z0-9]+/g, "") || "jpg";
     })();
 
-    const baseName = sanitizeDownloadName(it.title || `photo_${i + 1}`, `photo_${i + 1}`);
-    zip.file((String(index).padStart(3,"0")+"_"+(`${baseName}.${extFromMime}`||"photo")).replace(/[\/\:\*\?"<>\|]/g,""), blob);
+    const baseName = sanitizeDownloadName(it.title || "photo", "photo");
+    const uniqueName = (
+      String(i + 1).padStart(3, "0") + "_" + `${baseName}.${extFromMime}`
+    ).replace(/[\/:\*\?"<>\|]/g, "");
+
+    zip.file(uniqueName, blob);
   }
 
   const zipBlob = await zip.generateAsync({ type:"blob" });
@@ -255,9 +259,81 @@ async function exportPhotoRowHtml(rowId, rowTitle){
     alert("В этом photo-row нет фото.");
     return;
   }
-  const html = buildPhotoRowHtml(rowTitle, photos);
-  const blob = new Blob([html], { type:"text/html;charset=utf-8" });
-  triggerBlobDownload(blob, `${sanitizeDownloadName(rowTitle || "row", "row")}.html`);
+
+  function blobToDataURL(blob){
+    return new Promise((resolve, reject)=>{
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = () => reject(reader.error || new Error("FILE_READER_ERROR"));
+      reader.readAsDataURL(blob);
+    });
+  }
+
+  const safeRowTitle = sanitizeDownloadName(rowTitle || "row", "row");
+  const parts = [];
+
+  for(let i = 0; i < photos.length; i++){
+    const it = photos[i];
+    const blob = await downloadItemBlobFromR2(it.id, it.mime || "image/*", "image");
+    if(!blob) continue;
+
+    const dataURL = await blobToDataURL(blob);
+    const caption = escapeHTML(it.title || `Фото ${i + 1}`);
+
+    parts.push(`<div class="photo">
+  <img src="${dataURL}" alt="${caption}">
+  <div class="caption">${caption}</div>
+</div>`);
+  }
+
+  if(parts.length === 0){
+    alert("В этом photo-row нет фото.");
+    return;
+  }
+
+  const htmlString = `<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width">
+<title>${escapeHTML(rowTitle || "Photo Row")}</title>
+<style>
+body{
+  font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+  background:#111;
+  color:#eee;
+  margin:0 auto;
+  max-width:900px;
+  padding:24px 16px 40px;
+}
+h1{
+  margin:0 0 24px 0;
+  font-size:28px;
+}
+.photo{
+  margin:0 0 24px 0;
+}
+img{
+  display:block;
+  width:100%;
+  border-radius:10px;
+  margin-bottom:16px;
+}
+.caption{
+  font-size:14px;
+  opacity:.9;
+}
+</style>
+</head>
+<body>
+<h1>${escapeHTML(rowTitle || "Photo Row")}</h1>
+${parts.join("
+")}
+</body>
+</html>`;
+
+  const blob = new Blob([htmlString], { type:"text/html;charset=utf-8" });
+  triggerBlobDownload(blob, `${safeRowTitle}.html`);
 }
 
 /** ===========================
@@ -2038,8 +2114,28 @@ function renderPuchokInside(p){
         desc.textContent = "Открыть подпучок";
 
         const right = document.createElement("div");
-        right.className = "tagText";
-        right.textContent = "Папка";
+        right.style.display = "flex";
+        right.style.alignItems = "center";
+        right.style.gap = "8px";
+
+        const tag = document.createElement("div");
+        tag.className = "tagText";
+        tag.textContent = "Папка";
+
+        const delBtn = document.createElement("button");
+        delBtn.className = "btnGhost";
+        delBtn.type = "button";
+        delBtn.textContent = "🗑";
+        delBtn.title = "Удалить подпучок";
+
+        delBtn.addEventListener("click", async (ev)=>{
+          ev.preventDefault();
+          ev.stopPropagation();
+          await deleteSubpuchok(e.refId);
+        });
+
+        right.appendChild(tag);
+        right.appendChild(delBtn);
 
         textWrap.appendChild(title);
         textWrap.appendChild(desc);
@@ -4015,4 +4111,17 @@ function bindMenuAddSubpuchokButton(btn){
       alert("Не удалось создать подпучок.");
     }
   });
+}
+
+
+async function deleteSubpuchok(subId){
+  if(!subId) return;
+  if(!confirm("Удалить подпучок?")) return;
+
+  await apiJson(`/puchki/${encodeURIComponent(subId)}`, {
+    method: "DELETE"
+  });
+
+  await loadPuchokWithEntries(currentPuchokId);
+  render();
 }
