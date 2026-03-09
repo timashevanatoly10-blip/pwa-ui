@@ -210,11 +210,7 @@ async function exportPhotoRowZip(rowId, rowTitle){
     })();
 
     const baseName = sanitizeDownloadName(it.title || `photo_${i + 1}`, `photo_${i + 1}`);
-    zip.file(
-      (String(i + 1).padStart(3, "0") + "_" + `${baseName}.${extFromMime}`)
-        .replace(/[\/:\*\?"<>\|]/g, ""),
-      blob
-    );
+    zip.file((String(index).padStart(3,"0")+"_"+(`${baseName}.${extFromMime}`||"photo")).replace(/[\/\:\*\?"<>\|]/g,""), blob);
   }
 
   const zipBlob = await zip.generateAsync({ type:"blob" });
@@ -259,80 +255,9 @@ async function exportPhotoRowHtml(rowId, rowTitle){
     alert("В этом photo-row нет фото.");
     return;
   }
-
-  const blobToDataURL = (blob) => new Promise((resolve, reject)=>{
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result || ""));
-    reader.onerror = () => reject(reader.error || new Error("FILE_READER_ERROR"));
-    reader.readAsDataURL(blob);
-  });
-
-  const safeRowTitle = sanitizeDownloadName(rowTitle || "row", "row");
-  const parts = [];
-
-  for(let i = 0; i < photos.length; i++){
-    const it = photos[i];
-    const blob = await downloadItemBlobFromR2(it.id, it.mime || "image/*", "image");
-    if(!blob) continue;
-
-    const dataURL = await blobToDataURL(blob);
-    const caption = escapeHTML(it.title || `Фото ${i + 1}`);
-    parts.push(`
-      <div class="photo">
-        <img src="${dataURL}" alt="${caption}">
-        <div class="caption">${caption}</div>
-      </div>
-    `);
-  }
-
-  if(parts.length === 0){
-    alert("В этом photo-row нет фото.");
-    return;
-  }
-
-  const htmlString = `<!DOCTYPE html>
-<html lang="ru">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>${escapeHTML(rowTitle || "Photo Row")}</title>
-<style>
-body{
-  font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
-  background:#111;
-  color:#eee;
-  margin:0 auto;
-  max-width:900px;
-  padding:24px 16px 40px;
-}
-h1{
-  margin:0 0 24px 0;
-  font-size:28px;
-}
-.photo{
-  margin:0 0 24px 0;
-}
-img{
-  display:block;
-  width:100%;
-  border-radius:10px;
-  margin-bottom:16px;
-}
-.caption{
-  font-size:14px;
-  opacity:.9;
-}
-</style>
-</head>
-<body>
-<h1>${escapeHTML(rowTitle || "Photo Row")}</h1>
-${parts.join("
-")}
-</body>
-</html>`;
-
-  const blob = new Blob([htmlString], { type:"text/html;charset=utf-8" });
-  triggerBlobDownload(blob, `${safeRowTitle}.html`);
+  const html = buildPhotoRowHtml(rowTitle, photos);
+  const blob = new Blob([html], { type:"text/html;charset=utf-8" });
+  triggerBlobDownload(blob, `${sanitizeDownloadName(rowTitle || "row", "row")}.html`);
 }
 
 /** ===========================
@@ -382,7 +307,25 @@ function ensureAddMenuExtras(){
     menuAddSubpuchok.hidden = false;
   }
 
-  bindMenuAddSubpuchokButton(menuAddSubpuchok);
+if(menuAddSubpuchok){
+  menuAddSubpuchok.addEventListener("click", async (e)=>{
+    e.preventDefault();
+    e.stopPropagation();
+    closeAddMenu();
+    if(viewMode !== "puchok"){
+      alert("Подпучок можно создать только внутри пучка.");
+      return;
+    }
+    try{
+      await createSubpuchokInCurrent();
+    }catch(err){
+      console.error(err);
+      alert("Не удалось создать подпучок.");
+    }
+  });
+}
+
+}
 
 function applyHiddenPickerStyles(el){
   if(!el) return;
@@ -2112,27 +2055,8 @@ function renderPuchokInside(p){
         desc.textContent = "Открыть подпучок";
 
         const right = document.createElement("div");
-        right.style.display = "flex";
-        right.style.alignItems = "center";
-        right.style.gap = "8px";
-
-        const tag = document.createElement("div");
-        tag.className = "tagText";
-        tag.textContent = "Папка";
-
-        const deleteBtn = document.createElement("button");
-        deleteBtn.className = "btnGhost";
-        deleteBtn.type = "button";
-        deleteBtn.textContent = "×";
-        deleteBtn.title = "Удалить подпучок";
-        deleteBtn.addEventListener("click", async (ev)=>{
-          ev.preventDefault();
-          ev.stopPropagation();
-          await deleteSubpuchok(e.refId);
-        });
-
-        right.appendChild(tag);
-        right.appendChild(deleteBtn);
+        right.className = "tagText";
+        right.textContent = "Папка";
 
         textWrap.appendChild(title);
         textWrap.appendChild(desc);
@@ -2482,6 +2406,7 @@ async function openPuchok(id){
     expandedRowIds.clear();
   }finally{
     isBusy = false;
+    render();
   }
 }
 
@@ -2629,7 +2554,6 @@ async function createSubpuchokInCurrent(){
       json:{ title }
     });
     await loadPuchokWithEntries(p.id);
-    render();
   }catch(e){
     addMsg("Ошибка создания подпучка: " + (e?.message || e), "err");
   }finally{
@@ -4109,22 +4033,11 @@ addMenu.addEventListener("click", (e)=> e.stopPropagation());
 
 
 
-function bindMenuAddSubpuchokButton(btn){
-  if(!btn || btn.dataset.subpuchokBound === "1") return;
-  btn.dataset.subpuchokBound = "1";
-  btn.addEventListener("click", async (e)=> {
-    e.preventDefault();
-    e.stopPropagation();
-    closeAddMenu();
-    if(viewMode !== "puchok"){
-      alert("Подпучок можно создать только внутри пучка.");
-      return;
-    }
-    try{
-      await createSubpuchokInCurrent();
-    }catch(err){
-      console.error(err);
-      alert("Не удалось создать подпучок.");
-    }
-  });
+function bindMenuAddSubpuchokButton(btn){ if(!btn||btn.dataset.bound==='1') return; btn.dataset.bound='1'; btn.addEventListener('click',async()=>{ closeAddMenu(); if(viewMode!=='puchok') return; await createSubpuchokInCurrent(); }); }
+
+async function deleteSubpuchok(subId){
+  if(!confirm("Удалить подпучок?")) return;
+  await fetch(`/puchki/${subId}`,{method:"DELETE"});
+  await loadPuchokWithEntries(currentPuchokId);
+  render();
 }
