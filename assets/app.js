@@ -87,6 +87,7 @@ const headerActionsHost = addMenuBtn ? addMenuBtn.parentElement : null;
 const addMenu = document.getElementById("addMenu");
 const menuAddText = document.getElementById("menuAddText");
 let menuAddPhoto = document.getElementById("menuAddPhoto");
+let menuAddVideo = document.getElementById("menuAddVideo");
 const menuAddFile = document.getElementById("menuAddFile");
 const menuAddAudio = document.getElementById("menuAddAudio");
 const menuAddCode = document.getElementById("menuAddCode");
@@ -105,6 +106,7 @@ const chatHint = document.getElementById("chatHint");
 const filePicker = document.getElementById("filePicker");
 const audioPicker = document.getElementById("audioPicker");
 let photoPicker = document.getElementById("photoPicker");
+let videoPicker = document.getElementById("videoPicker");
 
 const modalWrap = document.getElementById("modalWrap");
 const modalTitle = document.getElementById("modalTitle");
@@ -350,8 +352,52 @@ function bindMenuAddPhotoButton(btn){
   });
 }
 
+function bindMenuAddVideoButton(btn){
+  if(!btn || btn.dataset.videoBound === "1") return;
+  btn.dataset.videoBound = "1";
+  btn.addEventListener("click", async (e)=>{
+    e.preventDefault();
+    e.stopPropagation();
+    closeAddMenu();
+    if(viewMode === "list"){
+      alert("Сначала открой пучок.");
+      return;
+    }
+    if(viewMode !== "puchok") return;
+    const p = ensureCurrentPuchok();
+    if(!p) return;
+    try{
+      const rowId = await createNewRowForType(p, "video");
+      activeVideoCaptureRowId = rowId;
+      activeVideoCapturePuchokId = p.id;
+      currentRowId = rowId;
+      const picker = ensureVideoPicker();
+      openVideoPicker(picker);
+    }catch(err){
+      addMsg("Ошибка подготовки видео: " + (err?.message || err), "err");
+    }
+  });
+}
+
 function ensureAddMenuExtras(){
   if(!addMenu) return;
+
+  let videoBtn = document.getElementById("menuAddVideo");
+  if(!videoBtn){
+    videoBtn = document.createElement("button");
+    videoBtn.id = "menuAddVideo";
+    videoBtn.type = "button";
+    videoBtn.textContent = "Видео";
+    if(menuAddFile && menuAddFile.parentElement === addMenu) addMenu.insertBefore(videoBtn, menuAddFile);
+    else addMenu.appendChild(videoBtn);
+  }
+  menuAddVideo = videoBtn;
+  videoBtn.hidden = false;
+  videoBtn.disabled = false;
+  videoBtn.style.display = "";
+  videoBtn.style.visibility = "visible";
+  videoBtn.style.opacity = "1";
+  bindMenuAddVideoButton(videoBtn);
 
   let photoBtn = document.getElementById("menuAddPhoto");
   if(!photoBtn){
@@ -436,6 +482,43 @@ function openPhotoPicker(picker){
 }
 
 
+function configureVideoPickerForCurrentDevice(picker){
+  if(!picker) return picker;
+  const useCamera = shouldUseCameraCapture();
+  picker.accept = "video/*";
+  picker.multiple = true;
+  if(useCamera) picker.setAttribute("capture", "environment");
+  else picker.removeAttribute("capture");
+  applyHiddenPickerStyles(picker);
+  return picker;
+}
+
+function ensureVideoPicker(){
+  if(videoPicker){
+    configureVideoPickerForCurrentDevice(videoPicker);
+    return videoPicker;
+  }
+  videoPicker = document.createElement("input");
+  videoPicker.type = "file";
+  videoPicker.id = "videoPicker";
+  configureVideoPickerForCurrentDevice(videoPicker);
+  document.body.appendChild(videoPicker);
+  return videoPicker;
+}
+
+function openVideoPicker(picker){
+  const target = configureVideoPickerForCurrentDevice(picker || ensureVideoPicker());
+  target.value = "";
+  if(typeof target.showPicker === "function"){
+    try{
+      target.showPicker();
+      return;
+    }catch{}
+  }
+  target.click();
+}
+
+
 function forceShowPuchokAddButton(){
   if(!addMenuBtn) return;
   addMenuBtn.hidden = false;
@@ -494,6 +577,8 @@ let modalNavBar = null;
 let modalOverlayNav = null;
 let activePhotoCaptureRowId = null;
 let activePhotoCapturePuchokId = null;
+let activeVideoCaptureRowId = null;
+let activeVideoCapturePuchokId = null;
 let activeFileCaptureRowId = null;
 let activeFileCapturePuchokId = null;
 let activeCarouselRowId = null;
@@ -505,6 +590,11 @@ let imageViewerItemIds = [];
 let imageViewerIndex = -1;
 let imageViewerObjectUrl = "";
 let imageViewerLoadToken = 0;
+let videoViewerWrap = null;
+let videoViewerRowId = null;
+let videoViewerItemIds = [];
+let videoViewerIndex = -1;
+let videoViewerObjectUrl = "";
 let cameraCaptureModal = null;
 let cameraCaptureStream = null;
 let cameraCaptureTargetRowId = null;
@@ -666,6 +756,7 @@ function icoSVG(kind){
 
 function typeLabel(it){
   if(it.type==="image") return { text:"Фото", cls:"tagText tagImg" };
+  if(it.type==="video") return { text:"Видео", cls:"tagText tagFile" };
   if(it.type==="file")  return { text:"Файл", cls:"tagText tagFile" };
   if(it.type==="audio") return { text:"Голос", cls:"tagText tagAudio" };
   if(it.type==="code")  return { text:"Код", cls:"tagText tagCode" };
@@ -692,6 +783,9 @@ function getSortedRowItems(rowId){
 }
 function getSortedImageItems(rowId){
   return getSortedRowItems(rowId).filter(x => x && x.type === "image");
+}
+function getSortedVideoItems(rowId){
+  return getSortedRowItems(rowId).filter(x => x && x.type === "video");
 }
 function isRowExpanded(rowId){
   return !!rowId && expandedRowIds.has(rowId);
@@ -1054,6 +1148,191 @@ async function openSiblingImageInViewer(step){
   if(nextIndex < 0 || nextIndex >= imageViewerItemIds.length) return;
   const nextId = imageViewerItemIds[nextIndex];
   if(nextId) await openImageViewer(imageViewerRowId, nextId);
+}
+
+
+function revokeVideoViewerUrl(){
+  if(videoViewerObjectUrl){
+    try{ URL.revokeObjectURL(videoViewerObjectUrl); }catch{}
+    videoViewerObjectUrl = "";
+  }
+}
+function ensureVideoViewer(){
+  if(videoViewerWrap && videoViewerWrap.parentElement === document.body) return videoViewerWrap;
+
+  videoViewerWrap = document.createElement("div");
+  videoViewerWrap.id = "videoViewerWrap";
+  videoViewerWrap.style.position = "fixed";
+  videoViewerWrap.style.inset = "0";
+  videoViewerWrap.style.zIndex = "131000";
+  videoViewerWrap.style.display = "none";
+  videoViewerWrap.style.alignItems = "center";
+  videoViewerWrap.style.justifyContent = "center";
+  videoViewerWrap.style.background = "rgba(10,12,16,.92)";
+  videoViewerWrap.innerHTML = `
+    <button type="button" id="videoViewerClose"
+      style="position:absolute;top:14px;right:14px;z-index:3;appearance:none;border:0;
+             width:44px;height:44px;border-radius:999px;background:rgba(255,255,255,.14);
+             color:#fff;font-size:28px;line-height:1;cursor:pointer;">×</button>
+    <button type="button" id="videoViewerPrev"
+      style="position:absolute;left:12px;top:50%;transform:translateY(-50%);z-index:3;appearance:none;border:0;
+             min-width:52px;height:52px;border-radius:999px;background:rgba(17,19,23,.82);
+             color:#fff;font-size:28px;line-height:1;cursor:pointer;display:none;">←</button>
+    <div id="videoViewerCounter"
+      style="position:absolute;left:50%;top:16px;transform:translateX(-50%);z-index:3;display:none;
+             min-width:64px;padding:8px 12px;border-radius:999px;background:rgba(17,19,23,.72);
+             color:#fff;font-size:12px;text-align:center;"></div>
+    <button type="button" id="videoViewerNext"
+      style="position:absolute;right:12px;top:50%;transform:translateY(-50%);z-index:3;appearance:none;border:0;
+             min-width:52px;height:52px;border-radius:999px;background:rgba(17,19,23,.82);
+             color:#fff;font-size:28px;line-height:1;cursor:pointer;display:none;">→</button>
+    <div id="videoViewerStage"
+      style="position:relative;width:100%;height:100%;display:flex;align-items:center;justify-content:center;padding:56px 16px 24px;">
+      <video id="videoViewerVideo" controls autoplay playsinline
+        style="display:none;max-width:100%;max-height:100%;border-radius:18px;box-shadow:0 24px 80px rgba(0,0,0,.35);background:#000;"></video>
+      <div id="videoViewerStatus"
+        style="max-width:min(86vw,560px);padding:18px 22px;border-radius:18px;background:rgba(255,255,255,.08);
+               color:#fff;font-size:15px;line-height:1.45;text-align:center;backdrop-filter:blur(10px);">
+        Загружаю видео…
+      </div>
+    </div>
+  `;
+  document.body.appendChild(videoViewerWrap);
+
+  const closeBtn = videoViewerWrap.querySelector("#videoViewerClose");
+  const prevBtn = videoViewerWrap.querySelector("#videoViewerPrev");
+  const nextBtn = videoViewerWrap.querySelector("#videoViewerNext");
+
+  if(closeBtn) closeBtn.addEventListener("click", (e)=>{
+    e.preventDefault();
+    e.stopPropagation();
+    closeVideoViewer();
+  });
+  if(prevBtn) prevBtn.addEventListener("click", async (e)=>{
+    e.preventDefault();
+    e.stopPropagation();
+    await openSiblingVideoInViewer(-1);
+  });
+  if(nextBtn) nextBtn.addEventListener("click", async (e)=>{
+    e.preventDefault();
+    e.stopPropagation();
+    await openSiblingVideoInViewer(1);
+  });
+  videoViewerWrap.addEventListener("click", (e)=>{
+    if(e.target === videoViewerWrap || e.target.id === "videoViewerStage"){
+      closeVideoViewer();
+    }
+  });
+
+  return videoViewerWrap;
+}
+function closeVideoViewer(){
+  revokeVideoViewerUrl();
+  if(videoViewerWrap){
+    videoViewerWrap.style.display = "none";
+    const video = videoViewerWrap.querySelector("#videoViewerVideo");
+    const status = videoViewerWrap.querySelector("#videoViewerStatus");
+    if(video){
+      try{ video.pause(); }catch{}
+      video.style.display = "none";
+      video.removeAttribute("src");
+      try{ video.load(); }catch{}
+    }
+    if(status){
+      status.textContent = "Загружаю видео…";
+      status.style.display = "block";
+      status.style.background = "rgba(255,255,255,.08)";
+    }
+  }
+  videoViewerRowId = null;
+  videoViewerItemIds = [];
+  videoViewerIndex = -1;
+}
+function updateVideoViewerNav(){
+  if(!videoViewerWrap) return;
+  const prevBtn = videoViewerWrap.querySelector("#videoViewerPrev");
+  const nextBtn = videoViewerWrap.querySelector("#videoViewerNext");
+  const counter = videoViewerWrap.querySelector("#videoViewerCounter");
+  const hasPrev = videoViewerIndex > 0;
+  const hasNext = videoViewerIndex >= 0 && videoViewerIndex < videoViewerItemIds.length - 1;
+  if(prevBtn) prevBtn.style.display = hasPrev ? "block" : "none";
+  if(nextBtn) nextBtn.style.display = hasNext ? "block" : "none";
+  if(counter){
+    if(videoViewerIndex >= 0 && videoViewerItemIds.length > 0){
+      counter.textContent = `${videoViewerIndex + 1} / ${videoViewerItemIds.length}`;
+      counter.style.display = "block";
+    }else{
+      counter.style.display = "none";
+      counter.textContent = "";
+    }
+  }
+}
+function setVideoViewerStatus(message, isError = false){
+  const wrap = ensureVideoViewer();
+  const video = wrap.querySelector("#videoViewerVideo");
+  const status = wrap.querySelector("#videoViewerStatus");
+  if(status){
+    status.textContent = message || "";
+    status.style.display = message ? "block" : "none";
+    status.style.background = isError ? "rgba(163,32,53,.28)" : "rgba(255,255,255,.08)";
+  }
+  if(video && message){
+    try{ video.pause(); }catch{}
+    video.style.display = "none";
+    video.removeAttribute("src");
+  }
+}
+async function openVideoViewer(rowId, itemId){
+  const items = getSortedVideoItems(rowId);
+  const idx = items.findIndex(x => x.id === itemId);
+  if(idx < 0) return;
+
+  const wrap = ensureVideoViewer();
+  const video = wrap.querySelector("#videoViewerVideo");
+  videoViewerRowId = rowId;
+  videoViewerItemIds = items.map(x => x.id);
+  videoViewerIndex = idx;
+  updateVideoViewerNav();
+  wrap.style.display = "flex";
+  setActiveCarouselItem(rowId, itemId);
+
+  const it = items[idx];
+  if(!video || !it) return;
+
+  revokeVideoViewerUrl();
+  try{
+    try{ video.pause(); }catch{}
+    video.style.display = "none";
+    video.removeAttribute("src");
+    setVideoViewerStatus("Загружаю видео…", false);
+
+    const blob = await downloadItemBlobFromR2(it.id, it.mime || "video/*", "video", { showProgress:false });
+    if(!blob) throw new Error("Blob видео не найден");
+
+    const finalMime = chooseBlobMimeType(blob?.type || "", it.mime || "video/*", "video");
+    const typedBlob = (blob && sanitizeMimeType(blob.type || "", "") === finalMime)
+      ? blob
+      : new Blob([blob], { type: finalMime });
+
+    revokeVideoViewerUrl();
+    videoViewerObjectUrl = URL.createObjectURL(typedBlob);
+    video.src = videoViewerObjectUrl;
+    video.style.display = "block";
+    setVideoViewerStatus("", false);
+    try{ await video.play(); }catch{}
+  }catch(e){
+    revokeVideoViewerUrl();
+    try{ video.pause(); }catch{}
+    video.style.display = "none";
+    video.removeAttribute("src");
+    setVideoViewerStatus("Ошибка загрузки видео: " + (e?.message || e), true);
+  }
+}
+async function openSiblingVideoInViewer(step){
+  const nextIndex = videoViewerIndex + step;
+  if(nextIndex < 0 || nextIndex >= videoViewerItemIds.length) return;
+  const nextId = videoViewerItemIds[nextIndex];
+  if(nextId) await openVideoViewer(videoViewerRowId, nextId);
 }
 
 /** ===========================
@@ -1647,6 +1926,9 @@ function mapItemRow(row){
 
   if(it.type === "file" && it.mime && it.mime.startsWith("image/")){
     it.type = "image";
+  }
+  if(it.type === "file" && it.mime && it.mime.startsWith("video/")){
+    it.type = "video";
   }
 
   return it;
@@ -2296,6 +2578,8 @@ function buildInlineRowContent(p, cached){
       previewHTML = `<div class="itemDesc" style="word-break:break-all">${escapeHTML(it.url || "—")}</div>`;
     }else if(it.type === "image"){
       previewHTML = `<div class="itemDesc">${fmtBytes(it.size)} • фото</div>`;
+    }else if(it.type === "video"){
+      previewHTML = `<div class="itemDesc">Видео • ${fmtBytes(it.size)}</div>`;
     }else if(it.type === "file"){
       previewHTML = `<div class="itemDesc">${escapeHTML(it.mime || "file")} • ${fmtBytes(it.size)}</div>`;
     }else if(it.type === "audio"){
@@ -2306,6 +2590,7 @@ function buildInlineRowContent(p, cached){
     }
 
     const isPhotoTile = it.type === "image";
+    const isVideoTile = it.type === "video";
     if(isPhotoTile){
       card.innerHTML = `
         <div class="itemText" style="min-width:0;padding-right:84px;">
@@ -2317,7 +2602,7 @@ function buildInlineRowContent(p, cached){
       card.innerHTML = `
         <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
           <div style="display:flex;align-items:center;gap:10px;min-width:0;">
-            <div class="thumb">${icoSVG(it.type==="image" ? "photo" : (it.type || "file"))}</div>
+            <div class="thumb">${icoSVG(it.type==="image" ? "photo" : (it.type==="video" ? "video" : (it.type || "file")))}</div>
             <div class="itemText" style="min-width:0;">
               <div class="itemTitle">${escapeHTML(it.title || "Элемент")}</div>
               <div class="itemDesc">${fmtDate(it.updatedAt || it.createdAt || nowISO())}</div>
@@ -2329,9 +2614,11 @@ function buildInlineRowContent(p, cached){
       `;
     }
 
-    if(isPhotoTile){
-      const previewHost = card.querySelector(".rowTilePreviewHost");
-      mountImageTilePreview(previewHost, it);
+    if(isPhotoTile || isVideoTile){
+      if(isPhotoTile){
+        const previewHost = card.querySelector(".rowTilePreviewHost");
+        mountImageTilePreview(previewHost, it);
+      }
 
       const bubbles = document.createElement("div");
       bubbles.style.position = "absolute";
@@ -2365,39 +2652,42 @@ function buildInlineRowContent(p, cached){
         return btn;
       };
 
-      const downloadBtn = makeBubbleBtn("↓", "Скачать фото");
+      const downloadBtn = makeBubbleBtn("↓", isVideoTile ? "Скачать видео" : "Скачать фото");
       downloadBtn.addEventListener("click", async (e)=>{
         e.preventDefault();
         e.stopPropagation();
         try{
-          const blob = await downloadItemBlobFromR2(it.id, it.mime || "image/*", "image");
-          if(!blob) throw new Error("Blob фото не найден");
-          const finalMime = chooseBlobMimeType(blob?.type || "", it.mime || "image/*", "image");
+          const blob = await downloadItemBlobFromR2(it.id, it.mime || (isVideoTile ? "video/*" : "image/*"), isVideoTile ? "video" : "image");
+          if(!blob) throw new Error(isVideoTile ? "Blob видео не найден" : "Blob фото не найден");
+          const finalMime = chooseBlobMimeType(blob?.type || "", it.mime || (isVideoTile ? "video/*" : "image/*"), isVideoTile ? "video" : "image");
           const typedBlob = (blob && sanitizeMimeType(blob.type || "", "") === finalMime)
             ? blob
             : new Blob([blob], { type: finalMime });
           const url = URL.createObjectURL(typedBlob);
           const a = document.createElement("a");
           a.href = url;
-          a.download = it.title || "photo";
+          a.download = it.title || (isVideoTile ? "video" : "photo");
           a.click();
           setTimeout(()=>{ try{ URL.revokeObjectURL(url); }catch{} }, 1500);
         }catch(err){
-          addMsg("Ошибка скачивания фото: " + (err?.message || err), "err");
+          addMsg((isVideoTile ? "Ошибка скачивания видео: " : "Ошибка скачивания фото: ") + (err?.message || err), "err");
         }
       });
 
-      const deleteBtn = makeBubbleBtn("×", "Удалить фото");
+      const deleteBtn = makeBubbleBtn("×", isVideoTile ? "Удалить видео" : "Удалить фото");
       deleteBtn.addEventListener("click", async (e)=>{
         e.preventDefault();
         e.stopPropagation();
-        if(!confirm("Удалить это фото?")) return;
+        if(!confirm(isVideoTile ? "Удалить это видео?" : "Удалить это фото?")) return;
         isBusy = true;
         try{
           try{ await deleteItemBlobFromR2(it.id); }catch{}
           await apiJson(`/items/${encodeURIComponent(it.id)}`, { method:"DELETE" });
-          if(imageViewerRowId === row.id && imageViewerItemIds.includes(it.id)){
+          if(!isVideoTile && imageViewerRowId === row.id && imageViewerItemIds.includes(it.id)){
             closeImageViewer();
+          }
+          if(isVideoTile && videoViewerRowId === row.id && videoViewerItemIds.includes(it.id)){
+            closeVideoViewer();
           }
           try{
             const cachedPreviewUrl = itemPreviewUrlCache.get(it.id);
@@ -2406,7 +2696,7 @@ function buildInlineRowContent(p, cached){
           itemPreviewUrlCache.delete(it.id);
           await refreshRowAndKeepUI(row.id);
         }catch(err){
-          addMsg("Ошибка удаления фото: " + (err?.message || err), "err");
+          addMsg((isVideoTile ? "Ошибка удаления видео: " : "Ошибка удаления фото: ") + (err?.message || err), "err");
         }finally{
           isBusy = false;
         }
@@ -2471,6 +2761,7 @@ async function openPuchok(id){
   isBusy = true;
   try{
     closeImageViewer();
+    closeVideoViewer();
     currentPuchokId = id;
     currentRowId = null;
     expandedRowIds.clear();
@@ -2516,6 +2807,7 @@ function goBack(){
   closeAddMenu();
   closeCameraCaptureModal();
   closeImageViewer();
+  closeVideoViewer();
   if(viewMode === "puchok"){
     viewMode = "list";
     currentPuchokId = null;
@@ -2670,7 +2962,7 @@ function getCurrentRowType(){
 }
 
 function isRowAddTileSupported(rowType){
-  return ["photo","text","code","file","link","audio"].includes((rowType || "").toLowerCase());
+  return ["photo","video","text","code","file","link","audio"].includes((rowType || "").toLowerCase());
 }
 
 function openFilePickerForRow(rowId){
@@ -2804,6 +3096,14 @@ async function addItemViaRowTile(rowId){
     activePhotoCaptureRowId = rowId;
     activePhotoCapturePuchokId = currentPuchokId;
     await addPhotoFromCamera();
+    return;
+  }
+
+  if(rowType === "video"){
+    activeVideoCaptureRowId = rowId;
+    activeVideoCapturePuchokId = currentPuchokId;
+    const picker = ensureVideoPicker();
+    openVideoPicker(picker);
     return;
   }
 
@@ -3064,6 +3364,10 @@ async function addFileItemToSpecificRow(p, rowId, file){
   if(isImg){
     activePhotoCaptureRowId = rowId;
     activePhotoCapturePuchokId = p.id;
+  }
+  if((file.type || "").startsWith("video/")){
+    activeVideoCaptureRowId = rowId;
+    activeVideoCapturePuchokId = p.id;
   }
 
   return { rowId, itemId: it.id };
@@ -3445,8 +3749,13 @@ async function openItemFromRow(rowId, itemId){
     await openImageViewer(rowId, itemId);
     return;
   }
+  if(it.type === "video"){
+    await openVideoViewer(rowId, itemId);
+    return;
+  }
 
   closeImageViewer();
+  closeVideoViewer();
 
   modalTitle.textContent = it.title || "Элемент";
   modalHint.textContent = "";
@@ -3957,6 +4266,7 @@ filePicker.addEventListener("change", async () => {
 });
 
 ensurePhotoPicker();
+ensureVideoPicker();
 photoPicker.addEventListener("change", async () => {
   const picker = configurePhotoPickerForCurrentDevice(ensurePhotoPicker());
   const files = Array.from(picker.files || []).filter(Boolean);
@@ -3992,6 +4302,53 @@ photoPicker.addEventListener("change", async () => {
     }
   }catch(e){
     addMsg("Ошибка добавления фото: " + (e?.message || e), "err");
+  }finally{
+    isBusy = false;
+    picker.value = "";
+  }
+});
+
+videoPicker.addEventListener("change", async () => {
+  const picker = configureVideoPickerForCurrentDevice(ensureVideoPicker());
+  const files = Array.from(picker.files || []).filter(Boolean);
+  if(files.length === 0){
+    isBusy = false;
+    picker.value = "";
+    return;
+  }
+
+  const p = ensureCurrentPuchok();
+  if(!p){
+    isBusy = false;
+    picker.value = "";
+    return;
+  }
+
+  const rowId = activeVideoCaptureRowId;
+  const puchokId = activeVideoCapturePuchokId;
+  if(!rowId || puchokId !== currentPuchokId){
+    isBusy = false;
+    picker.value = "";
+    return;
+  }
+
+  isBusy = true;
+  try{
+    let lastItemId = null;
+    for(const f of files){
+      const created = await addFileItemToSpecificRow(p, rowId, f);
+      lastItemId = created.itemId;
+    }
+
+    expandRowInline(rowId);
+    viewMode = "puchok";
+    await refreshRowAndKeepUI(rowId);
+
+    if(lastItemId){
+      await openItemFromRow(rowId, lastItemId);
+    }
+  }catch(e){
+    addMsg("Ошибка добавления видео: " + (e?.message || e), "err");
   }finally{
     isBusy = false;
     picker.value = "";
@@ -4035,6 +4392,23 @@ document.addEventListener("keydown", async (e)=>{
     if(e.key === "Escape"){
       e.preventDefault();
       closeImageViewer();
+      return;
+    }
+  }
+  if(videoViewerWrap && videoViewerWrap.style.display === "flex"){
+    if(e.key === "ArrowLeft"){
+      e.preventDefault();
+      await openSiblingVideoInViewer(-1);
+      return;
+    }
+    if(e.key === "ArrowRight"){
+      e.preventDefault();
+      await openSiblingVideoInViewer(1);
+      return;
+    }
+    if(e.key === "Escape"){
+      e.preventDefault();
+      closeVideoViewer();
       return;
     }
   }
