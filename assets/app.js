@@ -327,8 +327,7 @@ img{
 </head>
 <body>
 <h1>${escapeHTML(rowTitle || "Photo Row")}</h1>
-${parts.join("
-")}
+${parts.join("\n")}
 </body>
 </html>`;
 
