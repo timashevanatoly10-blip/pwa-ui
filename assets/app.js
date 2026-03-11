@@ -223,6 +223,47 @@ async function exportPhotoRowZip(rowId, rowTitle){
   triggerBlobDownload(zipBlob, `${sanitizeDownloadName(rowTitle || "row", "row")}.zip`);
 }
 
+async function exportVideoRowZip(rowId, rowTitle){
+  if(typeof JSZip === "undefined"){
+    alert("JSZip не найден.");
+    return;
+  }
+
+  const items = await fetchRowItemsForExport(rowId);
+  const videos = items.filter(it => it && it.type === "video");
+  if(videos.length === 0){
+    alert("В этом video-row нет видео.");
+    return;
+  }
+
+  const zip = new JSZip();
+  for(let i = 0; i < videos.length; i++){
+    const it = videos[i];
+    const blob = await downloadItemBlobFromR2(it.id, it.mime || "video/*", "video");
+    if(!blob) continue;
+
+    const extFromMime = (() => {
+      const mime = sanitizeMimeType(it.mime || blob.type || "", "");
+      if(!mime || !mime.includes("/")) return "webm";
+      const part = mime.split("/")[1].toLowerCase();
+      if(part === "quicktime") return "mov";
+      if(part === "x-matroska") return "mkv";
+      return part.replace(/[^a-z0-9]+/g, "") || "webm";
+    })();
+
+    const baseName = sanitizeDownloadName(it.title || "video", "video");
+    const uniqueName = (
+      String(i + 1).padStart(3, "0") + "_" + `${baseName}.${extFromMime}`
+    ).replace(/[\/:\*\?"<>\|]/g, "");
+
+    zip.file(uniqueName, blob);
+  }
+
+  const zipBlob = await zip.generateAsync({ type:"blob" });
+  triggerBlobDownload(zipBlob, `${sanitizeDownloadName(rowTitle || "video_row", "video_row")}.zip`);
+}
+
+
 function buildPhotoRowHtml(rowTitle, items){
   const photos = (items || []).filter(it => it && it.type === "image");
   const imagesHtml = photos.map((it)=> {
@@ -371,8 +412,16 @@ function bindMenuAddVideoButton(btn){
       activeVideoCaptureRowId = rowId;
       activeVideoCapturePuchokId = p.id;
       currentRowId = rowId;
-      const picker = ensureVideoPicker();
-      openVideoPicker(picker);
+      if(isMobile()){
+        const picker = ensureVideoPicker();
+        openVideoPicker(picker);
+      }else{
+        const opened = await openVideoCaptureModalForRow(rowId);
+        if(!opened){
+          const picker = ensureVideoPicker();
+          openVideoPicker(picker);
+        }
+      }
     }catch(err){
       addMsg("Ошибка подготовки видео: " + (err?.message || err), "err");
     }
@@ -595,6 +644,12 @@ let videoViewerRowId = null;
 let videoViewerItemIds = [];
 let videoViewerIndex = -1;
 let videoViewerObjectUrl = "";
+let videoCaptureModal = null;
+let videoCaptureStream = null;
+let videoCaptureRecorder = null;
+let videoCaptureChunks = [];
+let videoCaptureTargetRowId = null;
+let videoCaptureTargetPuchokId = null;
 let cameraCaptureModal = null;
 let cameraCaptureStream = null;
 let cameraCaptureTargetRowId = null;
@@ -642,6 +697,9 @@ function shouldUseCameraCapture(){
 }
 function isDesktopLikeDevice(){
   return !shouldUseCameraCapture();
+}
+function isMobile(){
+  return shouldUseCameraCapture();
 }
 
 /** ===========================
@@ -2359,6 +2417,46 @@ function renderPhotoRow(p, e){
   return block;
 }
 
+function renderVideoRow(p, e){
+  const block = renderStandardRowEntry(p, e);
+  const header = block.firstElementChild;
+  if(!header) return block;
+
+  const right = header.lastElementChild;
+  if(right){
+    right.style.display = "flex";
+    right.style.alignItems = "center";
+    right.style.gap = "8px";
+
+    const rowExportBtns = document.createElement("div");
+    rowExportBtns.className = "rowExportBtns";
+    rowExportBtns.style.display = "flex";
+    rowExportBtns.style.alignItems = "center";
+    rowExportBtns.style.gap = "6px";
+
+    const rowZipBtn = document.createElement("button");
+    rowZipBtn.className = "rowZipBtn btnGhost";
+    rowZipBtn.type = "button";
+    rowZipBtn.textContent = "📦 ZIP";
+    rowZipBtn.title = "Скачать ZIP";
+
+    rowZipBtn.addEventListener("click", async (ev)=>{
+      ev.preventDefault();
+      ev.stopPropagation();
+      try{
+        await exportVideoRowZip(e.refId, e.rowTitle || "video-row");
+      }catch(err){
+        addMsg("Ошибка экспорта ZIP: " + (err?.message || err), "err");
+      }
+    });
+
+    rowExportBtns.appendChild(rowZipBtn);
+    right.appendChild(rowExportBtns);
+  }
+
+  return block;
+}
+
 function renderPuchokInside(p){
   const wrap = document.createElement("div");
   wrap.className = "list";
@@ -2430,7 +2528,7 @@ function renderPuchokInside(p){
       }
 
       const rowType = (e.rowType || "").toLowerCase();
-      const block = rowType === "photo" ? renderPhotoRow(p, e) : renderStandardRowEntry(p, e);
+      const block = rowType === "photo" ? renderPhotoRow(p, e) : rowType === "video" ? renderVideoRow(p, e) : renderStandardRowEntry(p, e);
       wrap.appendChild(block);
     }
   }
@@ -2806,6 +2904,7 @@ async function openRow(rowId){
 function goBack(){
   closeAddMenu();
   closeCameraCaptureModal();
+  closeVideoCaptureModal();
   closeImageViewer();
   closeVideoViewer();
   if(viewMode === "puchok"){
@@ -3102,8 +3201,16 @@ async function addItemViaRowTile(rowId){
   if(rowType === "video"){
     activeVideoCaptureRowId = rowId;
     activeVideoCapturePuchokId = currentPuchokId;
-    const picker = ensureVideoPicker();
-    openVideoPicker(picker);
+    if(isMobile()){
+      const picker = ensureVideoPicker();
+      openVideoPicker(picker);
+    }else{
+      const opened = await openVideoCaptureModalForRow(rowId);
+      if(!opened){
+        const picker = ensureVideoPicker();
+        openVideoPicker(picker);
+      }
+    }
     return;
   }
 
@@ -3657,6 +3764,210 @@ async function takePhotoFromCameraModal(){
     if(shotBtn) shotBtn.disabled = false;
   }
 }
+
+function stopVideoCaptureStream(){
+  if(videoCaptureRecorder){
+    try{ if(videoCaptureRecorder.state !== "inactive") videoCaptureRecorder.stop(); }catch{}
+  }
+  videoCaptureRecorder = null;
+  if(videoCaptureStream){
+    try{ for(const track of videoCaptureStream.getTracks()){ try{ track.stop(); }catch{} } }catch{}
+  }
+  videoCaptureStream = null;
+  videoCaptureChunks = [];
+}
+
+function ensureVideoCaptureModal(){
+  if(videoCaptureModal && videoCaptureModal.parentElement === document.body) return videoCaptureModal;
+
+  videoCaptureModal = document.createElement("div");
+  videoCaptureModal.id = "videoCaptureModal";
+  videoCaptureModal.style.position = "fixed";
+  videoCaptureModal.style.inset = "0";
+  videoCaptureModal.style.zIndex = "120500";
+  videoCaptureModal.style.background = "rgba(17,19,23,.82)";
+  videoCaptureModal.style.display = "none";
+  videoCaptureModal.style.alignItems = "center";
+  videoCaptureModal.style.justifyContent = "center";
+  videoCaptureModal.innerHTML = `
+    <div style="width:min(92vw,760px);max-height:92vh;background:#fff;border-radius:20px;box-shadow:0 24px 80px rgba(0,0,0,.35);padding:16px;display:flex;flex-direction:column;gap:14px;position:relative;">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
+        <div style="font-weight:700;font-size:18px;">Записать видео</div>
+        <button type="button" id="videoCaptureCancelTop" style="appearance:none;border:0;background:rgba(17,19,23,.08);color:#111317;border-radius:12px;padding:8px 12px;font-size:14px;cursor:pointer;">Cancel</button>
+      </div>
+      <div style="position:relative;border-radius:18px;overflow:hidden;background:#0f1115;min-height:240px;">
+        <video id="videoCapturePreview" autoplay playsinline muted style="display:block;width:100%;height:min(68vh,520px);object-fit:cover;background:#0f1115;"></video>
+      </div>
+      <div id="videoCaptureHint" style="font-size:13px;opacity:.8;">Подожди, запускаю камеру…</div>
+      <div style="display:flex;justify-content:flex-end;gap:10px;">
+        <button type="button" id="videoCaptureStart" style="appearance:none;border:0;background:#111317;color:#fff;border-radius:12px;padding:10px 16px;font-size:14px;cursor:pointer;">Start Recording</button>
+        <button type="button" id="videoCaptureStop" style="appearance:none;border:0;background:#8b1e2d;color:#fff;border-radius:12px;padding:10px 16px;font-size:14px;cursor:pointer;" disabled>Stop Recording</button>
+        <button type="button" id="videoCaptureCancel" style="appearance:none;border:0;background:rgba(17,19,23,.08);color:#111317;border-radius:12px;padding:10px 14px;font-size:14px;cursor:pointer;">Cancel</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(videoCaptureModal);
+
+  const cancelTopBtn = videoCaptureModal.querySelector("#videoCaptureCancelTop");
+  const cancelBtn = videoCaptureModal.querySelector("#videoCaptureCancel");
+  const startBtn = videoCaptureModal.querySelector("#videoCaptureStart");
+  const stopBtn = videoCaptureModal.querySelector("#videoCaptureStop");
+  const cancelHandler = ()=> closeVideoCaptureModal();
+
+  if(cancelTopBtn) cancelTopBtn.addEventListener("click", cancelHandler);
+  if(cancelBtn) cancelBtn.addEventListener("click", cancelHandler);
+  if(startBtn) startBtn.addEventListener("click", ()=> startVideoRecordingInModal());
+  if(stopBtn) stopBtn.addEventListener("click", ()=> stopVideoRecordingInModal());
+
+  videoCaptureModal.addEventListener("click", (e)=>{
+    if(e.target === videoCaptureModal) closeVideoCaptureModal();
+  });
+
+  return videoCaptureModal;
+}
+
+function closeVideoCaptureModal(){
+  stopVideoCaptureStream();
+  if(videoCaptureModal){
+    videoCaptureModal.style.display = "none";
+    const preview = videoCaptureModal.querySelector("#videoCapturePreview");
+    const hint = videoCaptureModal.querySelector("#videoCaptureHint");
+    const startBtn = videoCaptureModal.querySelector("#videoCaptureStart");
+    const stopBtn = videoCaptureModal.querySelector("#videoCaptureStop");
+    if(preview){
+      try{ preview.pause(); }catch{}
+      try{ preview.srcObject = null; }catch{}
+      preview.removeAttribute("src");
+      try{ preview.load(); }catch{}
+    }
+    if(hint) hint.textContent = "Подожди, запускаю камеру…";
+    if(startBtn) startBtn.disabled = false;
+    if(stopBtn) stopBtn.disabled = true;
+  }
+}
+
+function makeCapturedVideoFile(blob){
+  const name = `video_${new Date().toISOString().replace(/[:.]/g, "-")}.webm`;
+  try{
+    return new File([blob], name, { type: blob.type || "video/webm", lastModified: Date.now() });
+  }catch{
+    blob.name = name;
+    blob.lastModified = Date.now();
+    return blob;
+  }
+}
+
+async function openVideoCaptureModalForRow(rowId){
+  const puchok = ensureCurrentPuchok();
+  if(!puchok || !rowId) return false;
+  if(!navigator.mediaDevices || typeof navigator.mediaDevices.getUserMedia !== "function" || !hasMediaRecorder()){
+    return false;
+  }
+
+  const modal = ensureVideoCaptureModal();
+  const preview = modal.querySelector("#videoCapturePreview");
+  const hint = modal.querySelector("#videoCaptureHint");
+  const startBtn = modal.querySelector("#videoCaptureStart");
+  const stopBtn = modal.querySelector("#videoCaptureStop");
+
+  videoCaptureTargetRowId = rowId;
+  videoCaptureTargetPuchokId = puchok.id;
+  modal.style.display = "flex";
+  if(hint) hint.textContent = "Подожди, запускаю камеру…";
+  if(startBtn) startBtn.disabled = true;
+  if(stopBtn) stopBtn.disabled = true;
+
+  stopVideoCaptureStream();
+
+  try{
+    const stream = await navigator.mediaDevices.getUserMedia({ video:true, audio:true });
+    videoCaptureStream = stream;
+    if(preview){
+      preview.srcObject = stream;
+      try{ await preview.play(); }catch{}
+    }
+    if(hint) hint.textContent = "Нажми «Start Recording».";
+    if(startBtn) startBtn.disabled = false;
+    return true;
+  }catch(e){
+    closeVideoCaptureModal();
+    return false;
+  }
+}
+
+function startVideoRecordingInModal(){
+  if(!videoCaptureStream || !videoCaptureModal) return;
+  const hint = videoCaptureModal.querySelector("#videoCaptureHint");
+  const startBtn = videoCaptureModal.querySelector("#videoCaptureStart");
+  const stopBtn = videoCaptureModal.querySelector("#videoCaptureStop");
+  try{
+    videoCaptureChunks = [];
+    videoCaptureRecorder = new MediaRecorder(videoCaptureStream);
+    videoCaptureRecorder.ondataavailable = (e)=>{ if(e.data && e.data.size > 0) videoCaptureChunks.push(e.data); };
+    videoCaptureRecorder.start();
+    if(hint) hint.textContent = "Идёт запись…";
+    if(startBtn) startBtn.disabled = true;
+    if(stopBtn) stopBtn.disabled = false;
+  }catch(e){
+    if(hint) hint.textContent = "Не удалось начать запись.";
+  }
+}
+
+async function stopVideoRecordingInModal(){
+  if(!videoCaptureRecorder || !videoCaptureModal) return;
+
+  const hint = videoCaptureModal.querySelector("#videoCaptureHint");
+  const startBtn = videoCaptureModal.querySelector("#videoCaptureStart");
+  const stopBtn = videoCaptureModal.querySelector("#videoCaptureStop");
+  const rowId = videoCaptureTargetRowId;
+  const puchokId = videoCaptureTargetPuchokId;
+  if(!rowId || !puchokId || currentPuchokId !== puchokId) return;
+
+  if(hint) hint.textContent = "Сохраняю видео…";
+  if(stopBtn) stopBtn.disabled = true;
+
+  await new Promise((resolve, reject)=>{
+    const rec = videoCaptureRecorder;
+    rec.onstop = ()=> resolve();
+    rec.onerror = (err)=> reject(err);
+    try{ rec.stop(); }catch(err){ reject(err); }
+  }).catch(()=>{ if(hint) hint.textContent = "Ошибка остановки записи."; });
+
+  const blob = new Blob(videoCaptureChunks, { type:"video/webm" });
+  videoCaptureRecorder = null;
+
+  if(!blob || !blob.size){
+    if(hint) hint.textContent = "Видео не записалось.";
+    if(startBtn) startBtn.disabled = false;
+    return;
+  }
+
+  const file = makeCapturedVideoFile(blob);
+  const puchok = ensureCurrentPuchok();
+  if(!puchok){
+    if(startBtn) startBtn.disabled = false;
+    return;
+  }
+
+  isBusy = true;
+  try{
+    const created = await addFileItemToSpecificRow(puchok, rowId, file);
+    expandRowInline(rowId);
+    viewMode = "puchok";
+    await refreshRowAndKeepUI(rowId);
+    closeVideoCaptureModal();
+    if(created?.itemId){
+      await openItemFromRow(rowId, created.itemId);
+    }
+  }catch(e){
+    if(hint) hint.textContent = "Ошибка сохранения видео.";
+    addMsg("Ошибка добавления видео: " + (e?.message || e), "err");
+  }finally{
+    isBusy = false;
+    if(startBtn) startBtn.disabled = false;
+  }
+}
+
 
 async function createAudioItemCloud(){
   const p = ensureCurrentPuchok();
@@ -4376,6 +4687,11 @@ document.addEventListener("keydown", async (e)=>{
   if(cameraCaptureModal && cameraCaptureModal.style.display === "flex" && e.key === "Escape"){
     e.preventDefault();
     closeCameraCaptureModal();
+    return;
+  }
+  if(videoCaptureModal && videoCaptureModal.style.display === "flex" && e.key === "Escape"){
+    e.preventDefault();
+    closeVideoCaptureModal();
     return;
   }
   if(imageViewerWrap && imageViewerWrap.style.display === "flex"){
