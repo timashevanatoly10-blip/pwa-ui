@@ -658,6 +658,8 @@ let isBusy = false;
 
 const itemPreviewUrlCache = new Map();
 const itemPreviewLoadPromises = new Map();
+const audioTileRecorderStates = new Map();
+let activeAudioPlayback = null;
 
 // In-memory store:
 // - db.puchki: root containers list + cached containers
@@ -2626,6 +2628,346 @@ function mountImageTilePreview(previewHost, it){
   });
 }
 
+function getAudioItemLocalByRow(rowId, itemId){
+  const pack = db.rows[rowId];
+  if(!pack) return null;
+  return (pack.items || []).find(x => x.id === itemId) || null;
+}
+function getAudioSegments(it){
+  const fromItem = Array.isArray(it?.segments) ? it.segments : [];
+  if(fromItem.length) return fromItem;
+  const fromMeta = Array.isArray(it?.meta?.segments) ? it.meta.segments : [];
+  return fromMeta;
+}
+function getAudioTotalDurationSec(it){
+  const fromMeta = Number(it?.durationSec || 0);
+  if(fromMeta > 0) return fromMeta;
+  return getAudioSegments(it).reduce((sum, seg)=> sum + Number(seg?.durationSec || 0), 0);
+}
+function formatAudioDuration(sec){
+  sec = Math.max(0, Number(sec || 0));
+  const m = Math.floor(sec / 60);
+  const s = Math.floor(sec % 60);
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
+function updateAudioTileDom(rowId, itemId){
+  const card = document.querySelector(`[data-row-tile-row-id="${rowId}"][data-row-tile-item-id="${itemId}"]`);
+  const it = getAudioItemLocalByRow(rowId, itemId);
+  if(!card || !it) return;
+  const state = audioTileRecorderStates.get(itemId);
+  const timerEl = card.querySelector("[data-audio-total-time]");
+  const segsEl = card.querySelector("[data-audio-seg-count]");
+  const recordBtn = card.querySelector("[data-audio-record]");
+  const pauseBtn = card.querySelector("[data-audio-pause]");
+  const resumeBtn = card.querySelector("[data-audio-resume]");
+  const playBtn = card.querySelector("[data-audio-play]");
+  const saveBtn = card.querySelector("[data-audio-save]");
+  const segments = getAudioSegments(it);
+  const hasSegments = segments.length > 0;
+  const totalSec = getAudioTotalDurationSec(it) + (state && state.status === "recording" ? (Date.now() - state.segmentStartedAt) / 1000 : 0);
+
+  if(timerEl) timerEl.textContent = formatAudioDuration(totalSec);
+  if(segsEl) segsEl.textContent = `Сегментов: ${segments.length}`;
+  if(recordBtn){
+    recordBtn.disabled = !!state || hasSegments;
+    recordBtn.style.display = hasSegments ? "none" : "inline-flex";
+  }
+  if(pauseBtn) pauseBtn.disabled = !(state && state.status === "recording");
+  if(resumeBtn){
+    resumeBtn.disabled = !!state || !hasSegments;
+    resumeBtn.style.display = hasSegments ? "inline-flex" : "none";
+    resumeBtn.textContent = "▶ Resume";
+  }
+  if(playBtn) playBtn.disabled = !hasSegments || !!state;
+  if(saveBtn) saveBtn.disabled = !hasSegments || !!state;
+}
+function startAudioTileTimer(rowId, itemId){
+  const state = audioTileRecorderStates.get(itemId);
+  if(!state) return;
+  if(state.timerId) clearInterval(state.timerId);
+  state.timerId = setInterval(()=> updateAudioTileDom(rowId, itemId), 250);
+}
+function stopAudioTileTimer(itemId){
+  const state = audioTileRecorderStates.get(itemId);
+  if(state?.timerId){
+    clearInterval(state.timerId);
+    state.timerId = null;
+  }
+}
+function blobToDataURLLocal(blob){
+  return new Promise((resolve, reject)=>{
+    const reader = new FileReader();
+    reader.onload = ()=> resolve(String(reader.result || ""));
+    reader.onerror = ()=> reject(reader.error || new Error("FILE_READER_ERROR"));
+    reader.readAsDataURL(blob);
+  });
+}
+function dataURLToBlobLocal(dataURL){
+  const parts = String(dataURL || "").split(",");
+  const header = parts[0] || "";
+  const mimeMatch = header.match(/data:([^;]+);base64/i);
+  const mime = mimeMatch ? mimeMatch[1] : "application/octet-stream";
+  const base64 = parts[1] || "";
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for(let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return new Blob([bytes], { type: mime });
+}
+async function getAudioSegmentBlob(seg){
+  if(seg?.dataUrl) return dataURLToBlobLocal(seg.dataUrl);
+  if(seg?.r2?.dataUrl) return dataURLToBlobLocal(seg.r2.dataUrl);
+  return null;
+}
+async function decodeAudioBlobWithContext(blob, ctx){
+  const arr = await blob.arrayBuffer();
+  return await ctx.decodeAudioData(arr.slice(0));
+}
+async function buildMergedAudioBufferFromItem(it){
+  const segments = getAudioSegments(it);
+  if(!segments.length) return null;
+  const AudioCtx = window.AudioContext || window.webkitAudioContext;
+  if(!AudioCtx) throw new Error("Web Audio не поддерживается");
+  const decodeCtx = new AudioCtx();
+  try{
+    const decoded = [];
+    for(const seg of segments){
+      const blob = await getAudioSegmentBlob(seg);
+      if(!blob) continue;
+      decoded.push(await decodeAudioBlobWithContext(blob, decodeCtx));
+    }
+    if(!decoded.length) return null;
+
+    const sampleRate = decoded[0].sampleRate || 44100;
+    const channels = Math.max(...decoded.map(buf => buf.numberOfChannels || 1));
+    let totalLength = 0;
+    for(const buf of decoded) totalLength += buf.length;
+
+    const output = decodeCtx.createBuffer(channels, totalLength, sampleRate);
+    for(let ch = 0; ch < channels; ch++){
+      const channelData = output.getChannelData(ch);
+      let offset = 0;
+      for(const buf of decoded){
+        const src = buf.getChannelData(Math.min(ch, buf.numberOfChannels - 1));
+        channelData.set(src, offset);
+        offset += src.length;
+      }
+    }
+    return { ctx: decodeCtx, buffer: output };
+  }catch(err){
+    try{ await decodeCtx.close(); }catch{}
+    throw err;
+  }
+}
+function audioBufferToWavBlob(buffer){
+  const numChannels = buffer.numberOfChannels;
+  const sampleRate = buffer.sampleRate;
+  const numFrames = buffer.length;
+  const bytesPerSample = 2;
+  const blockAlign = numChannels * bytesPerSample;
+  const bufferLength = 44 + numFrames * blockAlign;
+  const arrayBuffer = new ArrayBuffer(bufferLength);
+  const view = new DataView(arrayBuffer);
+
+  function writeString(offset, str){
+    for(let i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i));
+  }
+
+  writeString(0, "RIFF");
+  view.setUint32(4, 36 + numFrames * blockAlign, true);
+  writeString(8, "WAVE");
+  writeString(12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, numChannels, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * blockAlign, true);
+  view.setUint16(32, blockAlign, true);
+  view.setUint16(34, 16, true);
+  writeString(36, "data");
+  view.setUint32(40, numFrames * blockAlign, true);
+
+  let offset = 44;
+  for(let i = 0; i < numFrames; i++){
+    for(let ch = 0; ch < numChannels; ch++){
+      let sample = buffer.getChannelData(ch)[i] || 0;
+      sample = Math.max(-1, Math.min(1, sample));
+      view.setInt16(offset, sample < 0 ? sample * 0x8000 : sample * 0x7fff, true);
+      offset += 2;
+    }
+  }
+  return new Blob([arrayBuffer], { type:"audio/wav" });
+}
+async function persistAudioItem(rowId, itemId){
+  const it = getAudioItemLocalByRow(rowId, itemId);
+  if(!it) return;
+  const segments = getAudioSegments(it);
+  it.segments = segments;
+  it.meta = it.meta && typeof it.meta === "object" ? it.meta : {};
+  it.meta.segments = segments;
+  it.durationSec = segments.reduce((sum, seg)=> sum + Number(seg?.durationSec || 0), 0);
+  it.meta.durationSec = it.durationSec;
+  it.updatedAt = nowISO();
+  await apiJson(`/items/${encodeURIComponent(itemId)}`, {
+    method:"PATCH",
+    json: itemToPatchPayload(it),
+  });
+}
+async function finalizeAudioTileSegment(rowId, itemId, blob, durationSec){
+  if(!blob || !blob.size) return;
+  const current = getAudioItemLocalByRow(rowId, itemId);
+  if(!current) return;
+
+  const dataUrl = await blobToDataURLLocal(blob);
+  current.segments = getAudioSegments(current);
+  current.segments.push({
+    id: uid(),
+    mime: blob.type || "audio/webm",
+    size: blob.size || 0,
+    durationSec: Math.max(0, Number(durationSec || 0)),
+    dataUrl,
+    r2: { embedded: true }
+  });
+  await persistAudioItem(rowId, itemId);
+}
+async function startAudioTileRecording(rowId, itemId){
+  const it = getAudioItemLocalByRow(rowId, itemId);
+  if(!it || audioTileRecorderStates.has(itemId)) return;
+  if(!navigator.mediaDevices || typeof navigator.mediaDevices.getUserMedia !== "function" || !hasMediaRecorder()){
+    alert("Запись аудио не поддерживается на этом устройстве.");
+    return;
+  }
+
+  const stream = await navigator.mediaDevices.getUserMedia({ audio:true });
+  const recorder = new MediaRecorder(stream);
+  const state = {
+    rowId,
+    itemId,
+    stream,
+    recorder,
+    chunks: [],
+    segmentStartedAt: Date.now(),
+    status: "recording",
+    timerId: null,
+  };
+  audioTileRecorderStates.set(itemId, state);
+  recorder.ondataavailable = (e)=>{
+    if(e.data && e.data.size > 0) state.chunks.push(e.data);
+  };
+  recorder.onstop = async ()=>{
+    try{
+      const blob = new Blob(state.chunks, { type: recorder.mimeType || "audio/webm" });
+      const durationSec = Math.max(0, (Date.now() - state.segmentStartedAt) / 1000);
+      await finalizeAudioTileSegment(rowId, itemId, blob, durationSec);
+    }catch(err){
+      addMsg("Ошибка записи аудио: " + (err?.message || err), "err");
+    }finally{
+      stopAudioTileTimer(itemId);
+      try{ state.stream.getTracks().forEach(track => track.stop()); }catch{}
+      audioTileRecorderStates.delete(itemId);
+      updateAudioTileDom(rowId, itemId);
+      try{ await refreshRowAndKeepUI(rowId); }catch{}
+    }
+  };
+  recorder.start();
+  startAudioTileTimer(rowId, itemId);
+  updateAudioTileDom(rowId, itemId);
+}
+async function pauseAudioTileRecording(rowId, itemId){
+  const state = audioTileRecorderStates.get(itemId);
+  if(!state || state.status !== "recording") return;
+  state.status = "paused";
+  stopAudioTileTimer(itemId);
+  try{ state.recorder.stop(); }catch{}
+}
+async function resumeAudioTileRecording(rowId, itemId){
+  await startAudioTileRecording(rowId, itemId);
+}
+async function stopActiveAudioPlayback(){
+  if(!activeAudioPlayback) return;
+  try{ activeAudioPlayback.source.stop(0); }catch{}
+  try{ await activeAudioPlayback.ctx.close(); }catch{}
+  activeAudioPlayback = null;
+}
+async function playAudioTile(rowId, itemId){
+  const it = getAudioItemLocalByRow(rowId, itemId);
+  if(!it || !getAudioSegments(it).length) return;
+  await stopActiveAudioPlayback();
+  try{
+    const merged = await buildMergedAudioBufferFromItem(it);
+    if(!merged || !merged.buffer) return;
+    const source = merged.ctx.createBufferSource();
+    source.buffer = merged.buffer;
+    source.connect(merged.ctx.destination);
+    source.onended = async ()=>{
+      try{ await merged.ctx.close(); }catch{}
+      if(activeAudioPlayback?.itemId === itemId) activeAudioPlayback = null;
+      updateAudioTileDom(rowId, itemId);
+    };
+    activeAudioPlayback = { itemId, ctx: merged.ctx, source };
+    source.start(0);
+    updateAudioTileDom(rowId, itemId);
+  }catch(err){
+    addMsg("Ошибка воспроизведения аудио: " + (err?.message || err), "err");
+  }
+}
+async function saveAudioTileWav(rowId, itemId){
+  const it = getAudioItemLocalByRow(rowId, itemId);
+  if(!it || !getAudioSegments(it).length) return;
+  try{
+    const merged = await buildMergedAudioBufferFromItem(it);
+    if(!merged || !merged.buffer) return;
+    const wavBlob = audioBufferToWavBlob(merged.buffer);
+    try{ await merged.ctx.close(); }catch{}
+    triggerBlobDownload(wavBlob, `${sanitizeDownloadName(it.title || "audio_recording", "audio_recording")}.wav`);
+  }catch(err){
+    addMsg("Ошибка экспорта WAV: " + (err?.message || err), "err");
+  }
+}
+function buildAudioTileCard(card, rowId, it){
+  card.style.cursor = "default";
+  card.innerHTML = `
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
+      <div style="display:flex;align-items:center;gap:10px;min-width:0;">
+        <div class="thumb">${icoSVG("audio")}</div>
+        <div class="itemText" style="min-width:0;">
+          <div class="itemTitle">${escapeHTML(it.title || "Audio Tile")}</div>
+          <div class="itemDesc" data-audio-seg-count>Сегментов: ${getAudioSegments(it).length}</div>
+        </div>
+      </div>
+      <div class="tagText tagAudio">Аудио</div>
+    </div>
+    <div class="rowTilePreviewHost" style="min-height:92px;display:flex;flex-direction:column;gap:12px;justify-content:center;">
+      <div style="font-size:28px;font-weight:700;line-height:1;" data-audio-total-time>${formatAudioDuration(getAudioTotalDurationSec(it))}</div>
+      <div style="display:flex;flex-wrap:wrap;gap:8px;">
+        <button type="button" class="btnGhost" data-audio-record>🎤 Record</button>
+        <button type="button" class="btnGhost" data-audio-pause>⏸ Pause</button>
+        <button type="button" class="btnGhost" data-audio-resume>▶ Resume</button>
+        <button type="button" class="btnGhost" data-audio-play>▶ Play</button>
+        <button type="button" class="btnGhost" data-audio-save>💾 Save WAV</button>
+      </div>
+    </div>
+  `;
+  const btnRecord = card.querySelector("[data-audio-record]");
+  const btnPause = card.querySelector("[data-audio-pause]");
+  const btnResume = card.querySelector("[data-audio-resume]");
+  const btnPlay = card.querySelector("[data-audio-play]");
+  const btnSave = card.querySelector("[data-audio-save]");
+
+  [btnRecord, btnPause, btnResume, btnPlay, btnSave].forEach((btn)=> {
+    if(!btn) return;
+    btn.addEventListener("click", async (e)=>{
+      e.preventDefault();
+      e.stopPropagation();
+      if(btn === btnRecord) await startAudioTileRecording(rowId, it.id);
+      if(btn === btnPause) await pauseAudioTileRecording(rowId, it.id);
+      if(btn === btnResume) await resumeAudioTileRecording(rowId, it.id);
+      if(btn === btnPlay) await playAudioTile(rowId, it.id);
+      if(btn === btnSave) await saveAudioTileWav(rowId, it.id);
+    });
+  });
+
+  updateAudioTileDom(rowId, it.id);
+}
 
 function buildInlineRowContent(p, cached){
   const row = cached.row;
@@ -2663,7 +3005,9 @@ function buildInlineRowContent(p, cached){
     card.dataset.rowTileRowId = row.id;
     card.dataset.rowTileItemId = it.id;
     applyActiveTileStyles(card, activeCarouselRowId === row.id && activeCarouselItemId === it.id);
-    card.addEventListener("click", () => openItemFromRow(row.id, it.id));
+    if(it.type !== "audio"){
+      card.addEventListener("click", () => openItemFromRow(row.id, it.id));
+    }
 
     const t = typeLabel(it);
 
@@ -2689,7 +3033,10 @@ function buildInlineRowContent(p, cached){
 
     const isPhotoTile = it.type === "image";
     const isVideoTile = it.type === "video";
-    if(isPhotoTile){
+    const isAudioTile = it.type === "audio";
+    if(isAudioTile){
+      buildAudioTileCard(card, row.id, it);
+    }else if(isPhotoTile){
       card.innerHTML = `
         <div class="itemText" style="min-width:0;padding-right:84px;">
           <div class="itemTitle">${escapeHTML(it.title || "Фото")}</div>
@@ -2828,7 +3175,7 @@ function buildInlineRowContent(p, cached){
     <div style="width:56px;height:56px;border-radius:16px;display:flex;align-items:center;justify-content:center;background:rgba(17,19,23,.08);font-size:34px;line-height:1;">+</div>
     <div class="itemText" style="align-items:center;text-align:center;">
       <div class="itemTitle">Добавить</div>
-      <div class="itemDesc">${escapeHTML(rowTypeLabel(row.type).text.replace("-ряд",""))}</div>
+      <div class="itemDesc">${escapeHTML(row.type === "audio" ? "Audio Tile" : rowTypeLabel(row.type).text.replace("-ряд",""))}</div>
     </div>
   `;
   const triggerAdd = async (e)=>{
@@ -3240,21 +3587,12 @@ async function addItemViaRowTile(rowId){
     try{
       const it = await createAudioItemInSpecificRow(rowId);
       if(!it){
-        alert("Не удалось создать голос-элемент в облаке.");
+        alert("Не удалось создать аудио-плитку.");
         return;
       }
-      modalWrap.style.display = "flex";
-      await openItemFromRow(rowId, it.id);
-
-      if(typeof startRecordingToAudioItem === "function"){
-        await startRecordingToAudioItem(currentPuchokId, it.id);
-      }else if(typeof createAudioItemAndRecord === "function"){
-        await createAudioItemAndRecord();
-      }else{
-        alert("audio.js не загрузился (нет startRecordingToAudioItem).");
-      }
+      await refreshRowAndKeepUI(rowId);
     }catch(e){
-      addMsg("Ошибка голоса: " + (e?.message || e), "err");
+      addMsg("Ошибка аудио-плитки: " + (e?.message || e), "err");
     }
     return;
   }
@@ -4064,6 +4402,9 @@ async function openItemFromRow(rowId, itemId){
     await openVideoViewer(rowId, itemId);
     return;
   }
+  if(it.type === "audio"){
+    return;
+  }
 
   closeImageViewer();
   closeVideoViewer();
@@ -4486,26 +4827,16 @@ menuAddFile.addEventListener("click", ()=>{
 menuAddAudio.addEventListener("click", async ()=>{
   closeAddMenu();
   if(viewMode === "list"){ alert("Сначала открой пучок."); return; }
-  if(viewMode === "row"){ return; }
+  if(viewMode !== "puchok"){ return; }
   try{
-    const it = await createAudioItemCloud();
-    if(!it){
-      alert("Не удалось создать голос-элемент в облаке.");
-      return;
-    }
-    render();
-    modalWrap.style.display = "flex";
-    await openItemFromRow(currentRowId, it.id);
-
-    if(typeof startRecordingToAudioItem === "function"){
-      await startRecordingToAudioItem(currentPuchokId, it.id);
-    }else if(typeof createAudioItemAndRecord === "function"){
-      await createAudioItemAndRecord();
-    }else{
-      alert("audio.js не загрузился (нет startRecordingToAudioItem).");
-    }
+    const p = ensureCurrentPuchok();
+    if(!p) return;
+    const rowId = await createNewRowForType(p, "audio");
+    currentRowId = rowId;
+    expandRowInline(rowId);
+    await refreshRowAndKeepUI(rowId);
   }catch(e){
-    addMsg("Ошибка голоса: " + (e?.message || e), "err");
+    addMsg("Ошибка создания audio row: " + (e?.message || e), "err");
   }
 });
 
