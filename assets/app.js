@@ -1402,12 +1402,16 @@ function setRangeFill(el){
   if(!el) return;
   const min = Number(el.min || 0);
   const max = Number(el.max || 100);
-  const val = clamp(Number(el.value || min), min, max);
+  const val = clamp(Number(el.value ?? min), min, max);
   const denom = Math.max(max - min, 0.000001);
-  const pct = clamp(((val - min) / denom) * 100, 0, 100);
+  const ratio = clamp((val - min) / denom, 0, 1);
+  const pct = ratio * 100;
   el.value = String(val);
   el.style.setProperty("--fill", pct + "%");
+  el.style.setProperty("--fill-ratio", String(ratio));
   el.style.background = `linear-gradient(to right, rgba(220,38,38,.92) 0%, rgba(220,38,38,.92) ${pct}%, rgba(17,19,23,.14) ${pct}%, rgba(17,19,23,.14) 100%)`;
+  el.style.backgroundSize = "100% 100%";
+  el.style.backgroundRepeat = "no-repeat";
 }
 window.setRangeFill = setRangeFill;
 
@@ -2685,7 +2689,7 @@ function updateAudioTileDom(rowId, itemId){
   const segments = getAudioSegments(it);
   const hasSegments = segments.length > 0;
   const recordingExtraSec = state && state.status === "recording" ? (Date.now() - state.segmentStartedAt) / 1000 : 0;
-  const totalSec = getAudioTotalDurationSec(it) + recordingExtraSec;
+  const totalSec = Math.max(0, getAudioTotalDurationSec(it) + recordingExtraSec);
 
   const isRecording = !!state && state.status === "recording";
   const isPlaybackCurrent = !!activeAudioPlayback && activeAudioPlayback.itemId === itemId && activeAudioPlayback.rowId === rowId;
@@ -2695,13 +2699,14 @@ function updateAudioTileDom(rowId, itemId){
   const segsEl = card.querySelector("[data-audio-seg-count]");
   const recordBtn = card.querySelector("[data-audio-record]");
   const stopRecordBtn = card.querySelector("[data-audio-stop-record]");
-  const playBtn = card.querySelector("[data-audio-play]");
-  const pausePlaybackBtn = card.querySelector("[data-audio-pause-playback]");
+  const playToggleBtn = card.querySelector("[data-audio-play-toggle]");
   const saveBtn = card.querySelector("[data-audio-save]");
   const deleteBtn = card.querySelector("[data-audio-delete]");
+  const renameBtn = card.querySelector("[data-audio-rename]");
   const slider = card.querySelector("[data-audio-slider]");
   const currentEl = card.querySelector("[data-audio-current-time]");
   const totalEl = card.querySelector("[data-audio-total-time]");
+  const recordingTotalEl = card.querySelector("[data-audio-recording-total]");
 
   let currentSec = 0;
   if(isPlaybackCurrent){
@@ -2711,55 +2716,53 @@ function updateAudioTileDom(rowId, itemId){
   }
 
   if(segsEl) segsEl.textContent = `Сегментов: ${segments.length}`;
+
   if(recordBtn){
-    recordBtn.textContent = hasSegments ? "⏺＋" : "⏺";
+    recordBtn.textContent = hasSegments ? "⏺+" : "⏺";
     recordBtn.title = hasSegments ? "Дозапись" : "Record";
-    recordBtn.disabled = isRecording || isPlaybackPlaying;
+    recordBtn.disabled = isRecording || isPlaybackPlaying || isPlaybackPaused;
   }
   if(stopRecordBtn){
     stopRecordBtn.textContent = "■";
     stopRecordBtn.title = "Stop recording";
     stopRecordBtn.disabled = !isRecording;
   }
-  if(playBtn){
-    playBtn.textContent = "▶";
-    playBtn.title = "Play";
-    playBtn.disabled = !hasSegments || isRecording || isPlaybackPlaying;
-  }
-  if(pausePlaybackBtn){
-    pausePlaybackBtn.textContent = "❚❚";
-    pausePlaybackBtn.title = "Pause playback";
-    pausePlaybackBtn.disabled = !isPlaybackPlaying;
+  if(playToggleBtn){
+    playToggleBtn.textContent = (isPlaybackPlaying || isPlaybackPaused) ? "❚❚" : "▶";
+    playToggleBtn.title = (isPlaybackPlaying || isPlaybackPaused) ? "Pause playback" : "Play";
+    playToggleBtn.disabled = isRecording || !hasSegments;
   }
   if(saveBtn){
     saveBtn.textContent = "⬇";
     saveBtn.title = "Скачать";
-    saveBtn.disabled = !hasSegments || isRecording || isPlaybackPlaying;
+    saveBtn.disabled = isRecording || isPlaybackPlaying || isPlaybackPaused || !hasSegments;
   }
   if(deleteBtn){
     deleteBtn.textContent = "🗑";
     deleteBtn.title = "Удалить";
-    deleteBtn.disabled = isRecording || isPlaybackPlaying;
+    deleteBtn.disabled = isRecording || isPlaybackPlaying || isPlaybackPaused;
+  }
+  if(renameBtn){
+    renameBtn.textContent = "✎";
+    renameBtn.title = "Переименовать";
+    renameBtn.disabled = isRecording || isPlaybackPlaying;
+  }
+
+  if(recordingTotalEl){
+    recordingTotalEl.textContent = formatAudioDuration(totalSec);
+    recordingTotalEl.style.color = isRecording ? "red" : "";
   }
 
   if(slider){
-    const safeTotal = Math.max(totalSec, 0.01);
-    const safeCurrent = clamp(currentSec, 0, safeTotal);
     slider.min = "0";
-    slider.max = String(safeTotal);
+    slider.max = String(Math.max(totalSec, 0.000001));
     slider.step = "0.01";
-    slider.value = String(safeCurrent);
-    slider.disabled = !hasSegments;
+    slider.value = String(clamp(currentSec, 0, Math.max(totalSec, 0)));
     setRangeFill(slider);
   }
+
   if(currentEl) currentEl.textContent = formatAudioDuration(currentSec);
   if(totalEl) totalEl.textContent = formatAudioDuration(totalSec);
-
-  card.dataset.audioState =
-    isRecording ? "recording" :
-    isPlaybackPlaying ? "playing" :
-    isPlaybackPaused ? "paused" :
-    hasSegments ? "ready" : "empty";
 }
 function startAudioTileTimer(rowId, itemId){
   const state = audioTileRecorderStates.get(itemId);
@@ -3136,24 +3139,49 @@ async function saveAudioTileWav(rowId, itemId){
     addMsg("Ошибка экспорта WAV: " + (err?.message || err), "err");
   }
 }
+async function renameAudioTile(rowId, itemId){
+  const it = getAudioItemLocalByRow(rowId, itemId);
+  if(!it) return;
+  const nextTitle = prompt("Новое название аудио-плитки:", it.title || "Audio Tile");
+  if(nextTitle === null) return;
+  const title = (nextTitle || "").trim() || "Audio Tile";
+  it.title = title;
+  it.updatedAt = nowISO();
+  await apiJson(`/items/${encodeURIComponent(itemId)}`, {
+    method:"PATCH",
+    json:{ title }
+  });
+  const p = getPuchokLocal(currentPuchokId);
+  if(p?.items){
+    const legacy = p.items.find(x => x.id === itemId);
+    if(legacy) legacy.title = title;
+  }
+  await refreshRowAndKeepUI(rowId);
+}
 function buildAudioTileCard(card, rowId, it){
   card.style.cursor = "default";
   const initialTotal = formatAudioDuration(getAudioTotalDurationSec(it));
   card.innerHTML = `
     <div style="display:flex;flex-direction:column;gap:10px;">
-      <div style="display:flex;flex-direction:column;gap:2px;min-width:0;">
-        <div class="itemTitle">${escapeHTML(it.title || "Audio Tile")}</div>
-        <div class="itemDesc" data-audio-seg-count>Сегментов: ${getAudioSegments(it).length}</div>
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;min-width:0;">
+        <div style="display:flex;flex-direction:column;gap:2px;min-width:0;flex:1;">
+          <div style="display:flex;align-items:center;gap:8px;min-width:0;">
+            <div class="itemTitle" style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHTML(it.title || "Audio Tile")}</div>
+            <button type="button" class="btnGhost" data-audio-rename style="padding:4px 8px;min-width:0;">✎</button>
+          </div>
+          <div class="itemDesc" data-audio-seg-count>Сегментов: ${getAudioSegments(it).length}</div>
+        </div>
+        <div class="itemDesc" data-audio-recording-total>${initialTotal}</div>
       </div>
 
-      <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;">
+      <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:flex-start;">
         <button type="button" class="btnGhost" data-audio-record>⏺</button>
         <button type="button" class="btnGhost" data-audio-stop-record>■</button>
       </div>
 
       <div style="display:flex;flex-direction:column;gap:6px;">
         <input type="range" min="0" max="1" step="0.01" value="0" data-audio-slider
-          style="appearance:none;width:100%;height:6px;border-radius:999px;outline:none;background:rgba(17,19,23,.14);" />
+          style="appearance:none;-webkit-appearance:none;width:100%;height:6px;border-radius:999px;outline:none;background:rgba(17,19,23,.14);margin:0;" />
         <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
           <div class="itemDesc" data-audio-current-time>0:00</div>
           <div class="itemDesc" data-audio-total-time>${initialTotal}</div>
@@ -3161,8 +3189,7 @@ function buildAudioTileCard(card, rowId, it){
       </div>
 
       <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;">
-        <button type="button" class="btnGhost" data-audio-play>▶</button>
-        <button type="button" class="btnGhost" data-audio-pause-playback>❚❚</button>
+        <button type="button" class="btnGhost" data-audio-play-toggle>▶</button>
         <button type="button" class="btnGhost" data-audio-save>⬇</button>
         <button type="button" class="btnGhost" data-audio-delete>🗑</button>
       </div>
@@ -3171,10 +3198,10 @@ function buildAudioTileCard(card, rowId, it){
 
   const btnRecord = card.querySelector("[data-audio-record]");
   const btnStopRecord = card.querySelector("[data-audio-stop-record]");
-  const btnPlay = card.querySelector("[data-audio-play]");
-  const btnPausePlayback = card.querySelector("[data-audio-pause-playback]");
+  const btnPlayToggle = card.querySelector("[data-audio-play-toggle]");
   const btnSave = card.querySelector("[data-audio-save]");
   const btnDelete = card.querySelector("[data-audio-delete]");
+  const btnRename = card.querySelector("[data-audio-rename]");
   const slider = card.querySelector("[data-audio-slider]");
 
   if(btnRecord){
@@ -3191,18 +3218,15 @@ function buildAudioTileCard(card, rowId, it){
       await stopAudioTileRecording(rowId, it.id);
     });
   }
-  if(btnPlay){
-    btnPlay.addEventListener("click", async (e)=>{
+  if(btnPlayToggle){
+    btnPlayToggle.addEventListener("click", async (e)=>{
       e.preventDefault();
       e.stopPropagation();
-      await playAudioTile(rowId, it.id);
-    });
-  }
-  if(btnPausePlayback){
-    btnPausePlayback.addEventListener("click", async (e)=>{
-      e.preventDefault();
-      e.stopPropagation();
-      await pauseAudioTilePlayback(rowId, it.id);
+      if(activeAudioPlayback && activeAudioPlayback.itemId === it.id && activeAudioPlayback.rowId === rowId && !activeAudioPlayback.isPaused){
+        await pauseAudioTilePlayback(rowId, it.id);
+      }else{
+        await playAudioTile(rowId, it.id);
+      }
     });
   }
   if(btnSave){
@@ -3217,6 +3241,13 @@ function buildAudioTileCard(card, rowId, it){
       e.preventDefault();
       e.stopPropagation();
       await deleteAudioTile(rowId, it.id);
+    });
+  }
+  if(btnRename){
+    btnRename.addEventListener("click", async (e)=>{
+      e.preventDefault();
+      e.stopPropagation();
+      await renameAudioTile(rowId, it.id);
     });
   }
   if(slider){
@@ -3240,9 +3271,11 @@ function buildAudioTileCard(card, rowId, it){
     slider.addEventListener("pointerdown", (e)=>{
       e.stopPropagation();
     });
+    slider.value = "0";
     setRangeFill(slider);
   }
 
+  card.dataset.audioSeek = "0";
   updateAudioTileDom(rowId, it.id);
 }
 
