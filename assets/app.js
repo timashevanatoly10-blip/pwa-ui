@@ -1401,11 +1401,13 @@ async function openSiblingVideoInViewer(step){
 function setRangeFill(el){
   if(!el) return;
   const min = Number(el.min || 0);
-  const max = Number(el.max || 0);
-  const val = Number(el.value || 0);
-  const denom = (max - min) || 1;
+  const max = Number(el.max || 100);
+  const val = clamp(Number(el.value || min), min, max);
+  const denom = Math.max(max - min, 0.000001);
   const pct = clamp(((val - min) / denom) * 100, 0, 100);
+  el.value = String(val);
   el.style.setProperty("--fill", pct + "%");
+  el.style.background = `linear-gradient(to right, rgba(220,38,38,.92) 0%, rgba(220,38,38,.92) ${pct}%, rgba(17,19,23,.14) ${pct}%, rgba(17,19,23,.14) 100%)`;
 }
 window.setRangeFill = setRangeFill;
 
@@ -2682,13 +2684,13 @@ function updateAudioTileDom(rowId, itemId){
   const state = audioTileRecorderStates.get(itemId);
   const segments = getAudioSegments(it);
   const hasSegments = segments.length > 0;
-  const totalSec = getAudioTotalDurationSec(it) + (state && state.status === "recording" ? (Date.now() - state.segmentStartedAt) / 1000 : 0);
+  const recordingExtraSec = state && state.status === "recording" ? (Date.now() - state.segmentStartedAt) / 1000 : 0;
+  const totalSec = getAudioTotalDurationSec(it) + recordingExtraSec;
 
   const isRecording = !!state && state.status === "recording";
   const isPlaybackCurrent = !!activeAudioPlayback && activeAudioPlayback.itemId === itemId && activeAudioPlayback.rowId === rowId;
   const isPlaybackPaused = isPlaybackCurrent && !!activeAudioPlayback.isPaused;
   const isPlaybackPlaying = isPlaybackCurrent && !activeAudioPlayback.isPaused && !!activeAudioPlayback.source;
-  const currentSec = isPlaybackCurrent ? getActiveAudioPlaybackPositionSec(rowId, itemId) : 0;
 
   const segsEl = card.querySelector("[data-audio-seg-count]");
   const recordBtn = card.querySelector("[data-audio-record]");
@@ -2696,27 +2698,59 @@ function updateAudioTileDom(rowId, itemId){
   const playBtn = card.querySelector("[data-audio-play]");
   const pausePlaybackBtn = card.querySelector("[data-audio-pause-playback]");
   const saveBtn = card.querySelector("[data-audio-save]");
+  const deleteBtn = card.querySelector("[data-audio-delete]");
   const slider = card.querySelector("[data-audio-slider]");
   const currentEl = card.querySelector("[data-audio-current-time]");
   const totalEl = card.querySelector("[data-audio-total-time]");
 
+  let currentSec = 0;
+  if(isPlaybackCurrent){
+    currentSec = getActiveAudioPlaybackPositionSec(rowId, itemId);
+  }else if(card.dataset.audioSeek && !isRecording){
+    currentSec = clamp(Number(card.dataset.audioSeek || 0), 0, Math.max(totalSec, 0));
+  }
+
   if(segsEl) segsEl.textContent = `Сегментов: ${segments.length}`;
   if(recordBtn){
-    recordBtn.textContent = hasSegments ? "⏺ Дозапись" : "🎤 Record";
+    recordBtn.textContent = hasSegments ? "⏺＋" : "⏺";
+    recordBtn.title = hasSegments ? "Дозапись" : "Record";
     recordBtn.disabled = isRecording || isPlaybackPlaying;
   }
-  if(stopRecordBtn) stopRecordBtn.disabled = !isRecording;
-  if(playBtn) playBtn.disabled = !hasSegments || isRecording || isPlaybackPlaying;
-  if(pausePlaybackBtn) pausePlaybackBtn.disabled = !isPlaybackPlaying;
-  if(saveBtn) saveBtn.disabled = !hasSegments || isRecording || isPlaybackPlaying;
+  if(stopRecordBtn){
+    stopRecordBtn.textContent = "■";
+    stopRecordBtn.title = "Stop recording";
+    stopRecordBtn.disabled = !isRecording;
+  }
+  if(playBtn){
+    playBtn.textContent = "▶";
+    playBtn.title = "Play";
+    playBtn.disabled = !hasSegments || isRecording || isPlaybackPlaying;
+  }
+  if(pausePlaybackBtn){
+    pausePlaybackBtn.textContent = "❚❚";
+    pausePlaybackBtn.title = "Pause playback";
+    pausePlaybackBtn.disabled = !isPlaybackPlaying;
+  }
+  if(saveBtn){
+    saveBtn.textContent = "⬇";
+    saveBtn.title = "Скачать";
+    saveBtn.disabled = !hasSegments || isRecording || isPlaybackPlaying;
+  }
+  if(deleteBtn){
+    deleteBtn.textContent = "🗑";
+    deleteBtn.title = "Удалить";
+    deleteBtn.disabled = isRecording || isPlaybackPlaying;
+  }
 
   if(slider){
-    const safeTotal = Math.max(totalSec, 0);
+    const safeTotal = Math.max(totalSec, 0.01);
+    const safeCurrent = clamp(currentSec, 0, safeTotal);
     slider.min = "0";
-    slider.max = String(Math.max(safeTotal, 0.01));
+    slider.max = String(safeTotal);
     slider.step = "0.01";
-    slider.value = String(clamp(currentSec, 0, Math.max(safeTotal, 0.01)));
+    slider.value = String(safeCurrent);
     slider.disabled = !hasSegments;
+    setRangeFill(slider);
   }
   if(currentEl) currentEl.textContent = formatAudioDuration(currentSec);
   if(totalEl) totalEl.textContent = formatAudioDuration(totalSec);
@@ -2724,8 +2758,8 @@ function updateAudioTileDom(rowId, itemId){
   card.dataset.audioState =
     isRecording ? "recording" :
     isPlaybackPlaying ? "playing" :
+    isPlaybackPaused ? "paused" :
     hasSegments ? "ready" : "empty";
-  if(isPlaybackPaused) card.dataset.audioState = "paused";
 }
 function startAudioTileTimer(rowId, itemId){
   const state = audioTileRecorderStates.get(itemId);
@@ -2926,6 +2960,33 @@ async function stopAudioTileRecording(rowId, itemId){
   stopAudioTileTimer(itemId);
   try{ state.recorder.stop(); }catch{}
 }
+async function waitForAudioTileRecordingStop(itemId, timeoutMs = 4000){
+  const started = Date.now();
+  while(audioTileRecorderStates.has(itemId) && (Date.now() - started) < timeoutMs){
+    await new Promise(resolve => setTimeout(resolve, 60));
+  }
+}
+async function deleteAudioTile(rowId, itemId){
+  const it = getAudioItemLocalByRow(rowId, itemId);
+  if(!it) return;
+  if(!confirm("Удалить эту аудио-плитку?")) return;
+
+  if(audioTileRecorderStates.has(itemId)){
+    await stopAudioTileRecording(rowId, itemId);
+    await waitForAudioTileRecordingStop(itemId);
+  }
+  if(activeAudioPlayback && activeAudioPlayback.itemId === itemId && activeAudioPlayback.rowId === rowId){
+    await stopActiveAudioPlayback();
+  }
+
+  await apiJson(`/items/${encodeURIComponent(itemId)}`, { method:"DELETE" });
+
+  const p = getPuchokLocal(currentPuchokId);
+  if(p?.items) p.items = p.items.filter(x => x.id !== itemId);
+  if(db.rows[rowId]?.items) db.rows[rowId].items = db.rows[rowId].items.filter(x => x.id !== itemId);
+
+  await refreshRowAndKeepUI(rowId);
+}
 async function stopActiveAudioPlayback(){
   if(!activeAudioPlayback) return;
   stopAudioPlaybackUiTimer();
@@ -3054,7 +3115,10 @@ async function seekAudioTilePlayback(rowId, itemId, valueSec){
   if(card){
     card.dataset.audioSeek = String(safeValue);
     const slider = card.querySelector("[data-audio-slider]");
-    if(slider) slider.value = String(safeValue);
+    if(slider){
+      slider.value = String(safeValue);
+      setRangeFill(slider);
+    }
     const currentEl = card.querySelector("[data-audio-current-time]");
     if(currentEl) currentEl.textContent = formatAudioDuration(safeValue);
   }
@@ -3082,23 +3146,25 @@ function buildAudioTileCard(card, rowId, it){
         <div class="itemDesc" data-audio-seg-count>Сегментов: ${getAudioSegments(it).length}</div>
       </div>
 
-      <div style="display:flex;flex-wrap:wrap;gap:8px;">
-        <button type="button" class="btnGhost" data-audio-record>🎤 Record</button>
-        <button type="button" class="btnGhost" data-audio-stop-record>⏹ Stop recording</button>
+      <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;">
+        <button type="button" class="btnGhost" data-audio-record>⏺</button>
+        <button type="button" class="btnGhost" data-audio-stop-record>■</button>
       </div>
 
       <div style="display:flex;flex-direction:column;gap:6px;">
-        <input type="range" min="0" max="1" step="0.01" value="0" data-audio-slider />
+        <input type="range" min="0" max="1" step="0.01" value="0" data-audio-slider
+          style="appearance:none;width:100%;height:6px;border-radius:999px;outline:none;background:rgba(17,19,23,.14);" />
         <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
           <div class="itemDesc" data-audio-current-time>0:00</div>
           <div class="itemDesc" data-audio-total-time>${initialTotal}</div>
         </div>
       </div>
 
-      <div style="display:flex;flex-wrap:wrap;gap:8px;">
-        <button type="button" class="btnGhost" data-audio-play>▶ Play</button>
-        <button type="button" class="btnGhost" data-audio-pause-playback>⏸ Pause</button>
-        <button type="button" class="btnGhost" data-audio-save>⬇ Скачать</button>
+      <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;">
+        <button type="button" class="btnGhost" data-audio-play>▶</button>
+        <button type="button" class="btnGhost" data-audio-pause-playback>❚❚</button>
+        <button type="button" class="btnGhost" data-audio-save>⬇</button>
+        <button type="button" class="btnGhost" data-audio-delete>🗑</button>
       </div>
     </div>
   `;
@@ -3108,6 +3174,7 @@ function buildAudioTileCard(card, rowId, it){
   const btnPlay = card.querySelector("[data-audio-play]");
   const btnPausePlayback = card.querySelector("[data-audio-pause-playback]");
   const btnSave = card.querySelector("[data-audio-save]");
+  const btnDelete = card.querySelector("[data-audio-delete]");
   const slider = card.querySelector("[data-audio-slider]");
 
   if(btnRecord){
@@ -3145,16 +3212,27 @@ function buildAudioTileCard(card, rowId, it){
       await saveAudioTileWav(rowId, it.id);
     });
   }
+  if(btnDelete){
+    btnDelete.addEventListener("click", async (e)=>{
+      e.preventDefault();
+      e.stopPropagation();
+      await deleteAudioTile(rowId, it.id);
+    });
+  }
   if(slider){
+    const syncSeek = async ()=>{
+      await seekAudioTilePlayback(rowId, it.id, Number(slider.value || 0));
+      setRangeFill(slider);
+    };
     slider.addEventListener("input", async (e)=>{
       e.preventDefault();
       e.stopPropagation();
-      await seekAudioTilePlayback(rowId, it.id, Number(slider.value || 0));
+      await syncSeek();
     });
     slider.addEventListener("change", async (e)=>{
       e.preventDefault();
       e.stopPropagation();
-      await seekAudioTilePlayback(rowId, it.id, Number(slider.value || 0));
+      await syncSeek();
     });
     slider.addEventListener("click", (e)=>{
       e.stopPropagation();
@@ -3162,6 +3240,7 @@ function buildAudioTileCard(card, rowId, it){
     slider.addEventListener("pointerdown", (e)=>{
       e.stopPropagation();
     });
+    setRangeFill(slider);
   }
 
   updateAudioTileDom(rowId, it.id);
