@@ -1402,16 +1402,12 @@ function setRangeFill(el){
   if(!el) return;
   const min = Number(el.min || 0);
   const max = Number(el.max || 100);
-  const val = clamp(Number(el.value ?? min), min, max);
-  const denom = Math.max(max - min, 0.000001);
-  const ratio = clamp((val - min) / denom, 0, 1);
+  const val = Math.max(min, Math.min(max, Number(el.value ?? min)));
+  const ratio = (val - min) / Math.max(max - min, 0.000001);
   const pct = ratio * 100;
   el.value = String(val);
   el.style.setProperty("--fill", pct + "%");
-  el.style.setProperty("--fill-ratio", String(ratio));
   el.style.background = `linear-gradient(to right, rgba(220,38,38,.92) 0%, rgba(220,38,38,.92) ${pct}%, rgba(17,19,23,.14) ${pct}%, rgba(17,19,23,.14) 100%)`;
-  el.style.backgroundSize = "100% 100%";
-  el.style.backgroundRepeat = "no-repeat";
 }
 window.setRangeFill = setRangeFill;
 
@@ -2720,7 +2716,7 @@ function updateAudioTileDom(rowId, itemId){
   if(recordBtn){
     recordBtn.textContent = hasSegments ? "⏺+" : "⏺";
     recordBtn.title = hasSegments ? "Дозапись" : "Record";
-    recordBtn.disabled = isRecording || isPlaybackPlaying || isPlaybackPaused;
+    recordBtn.disabled = isRecording || isPlaybackPlaying;
   }
   if(stopRecordBtn){
     stopRecordBtn.textContent = "■";
@@ -2728,8 +2724,8 @@ function updateAudioTileDom(rowId, itemId){
     stopRecordBtn.disabled = !isRecording;
   }
   if(playToggleBtn){
-    playToggleBtn.textContent = (isPlaybackPlaying || isPlaybackPaused) ? "❚❚" : "▶";
-    playToggleBtn.title = (isPlaybackPlaying || isPlaybackPaused) ? "Pause playback" : "Play";
+    playToggleBtn.textContent = isPlaybackPlaying ? "❚❚" : "▶";
+    playToggleBtn.title = isPlaybackPlaying ? "Pause playback" : "Play";
     playToggleBtn.disabled = isRecording || !hasSegments;
   }
   if(saveBtn){
@@ -2919,7 +2915,9 @@ async function startAudioTileRecording(rowId, itemId){
     alert("Запись аудио не поддерживается на этом устройстве.");
     return;
   }
-  await stopActiveAudioPlayback();
+  if(activeAudioPlayback && activeAudioPlayback.itemId === itemId && activeAudioPlayback.rowId === rowId){
+    await stopActiveAudioPlayback();
+  }
 
   const stream = await navigator.mediaDevices.getUserMedia({ audio:true });
   const recorder = new MediaRecorder(stream);
