@@ -3249,6 +3249,21 @@ function buildAudioTileCard(card, rowId, it){
     });
   }
   if(slider){
+    const audio = document.createElement("audio");
+    audio.preload = "metadata";
+    audio.addEventListener("loadedmetadata", () => {
+
+      slider.min = 0
+      slider.max = audio.duration || 0
+
+      slider.value = 0
+
+      audio.currentTime = 0
+
+      setRangeFill(slider)
+
+    });
+
     const syncSeek = async ()=>{
       await seekAudioTilePlayback(rowId, it.id, Number(slider.value || 0));
       setRangeFill(slider);
@@ -3269,6 +3284,7 @@ function buildAudioTileCard(card, rowId, it){
     slider.addEventListener("pointerdown", (e)=>{
       e.stopPropagation();
     });
+    slider.min = "0";
     slider.value = "0";
     setRangeFill(slider);
   }
