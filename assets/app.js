@@ -1404,10 +1404,26 @@ function setRangeFill(el){
   const max = Number(el.max || 100);
   const val = Math.max(min, Math.min(max, Number(el.value ?? min)));
   const ratio = (val - min) / Math.max(max - min, 0.000001);
-  const pct = ratio * 100;
+
+  const trackWidth = el.getBoundingClientRect().width || 0;
+  const thumbSize = 14;
+  const usable = Math.max(trackWidth - thumbSize, 0);
+  const thumbLeft = usable * ratio;
+  const fillWidth = thumbLeft + thumbSize / 2;
+
   el.value = String(val);
-  el.style.setProperty("--fill", pct + "%");
-  el.style.background = `linear-gradient(to right, rgba(220,38,38,.92) 0%, rgba(220,38,38,.92) ${pct}%, rgba(17,19,23,.14) ${pct}%, rgba(17,19,23,.14) 100%)`;
+  el.style.setProperty("--thumb-left", thumbLeft + "px");
+
+  const host =
+    el.closest("[data-row-tile-item-id]") ||
+    el.parentElement ||
+    null;
+
+  const fill = host ? host.querySelector("[data-audio-progress-fill]") : null;
+  if(fill) fill.style.width = fillWidth + "px";
+
+  const thumb = host ? host.querySelector("[data-audio-progress-thumb]") : null;
+  if(thumb) thumb.style.left = thumbLeft + "px";
 }
 window.setRangeFill = setRangeFill;
 
@@ -3156,7 +3172,56 @@ async function renameAudioTile(rowId, itemId){
   }
   await refreshRowAndKeepUI(rowId);
 }
+function ensureAudioRangeStyles(){
+  if(document.getElementById("audioRangeStyles")) return;
+  const style = document.createElement("style");
+  style.id = "audioRangeStyles";
+  style.textContent = `
+[data-audio-slider]{
+  -webkit-appearance:none;
+  appearance:none;
+  width:100%;
+  background:transparent !important;
+  height:18px;
+  outline:none;
+}
+[data-audio-slider]::-webkit-slider-runnable-track{
+  -webkit-appearance:none;
+  appearance:none;
+  height:4px;
+  background:transparent;
+  border:none;
+}
+[data-audio-slider]::-webkit-slider-thumb{
+  -webkit-appearance:none;
+  appearance:none;
+  width:14px;
+  height:14px;
+  border-radius:999px;
+  background:transparent;
+  border:none;
+  box-shadow:none;
+  margin-top:-5px;
+}
+[data-audio-slider]::-moz-range-track{
+  height:4px;
+  background:transparent;
+  border:none;
+}
+[data-audio-slider]::-moz-range-thumb{
+  width:14px;
+  height:14px;
+  border-radius:999px;
+  background:transparent;
+  border:none;
+  box-shadow:none;
+}
+`;
+  document.head.appendChild(style);
+}
+
 function buildAudioTileCard(card, rowId, it){
+  ensureAudioRangeStyles();
   card.style.cursor = "default";
   const initialTotal = formatAudioDuration(getAudioTotalDurationSec(it));
   card.innerHTML = `
@@ -3178,8 +3243,28 @@ function buildAudioTileCard(card, rowId, it){
       </div>
 
       <div style="display:flex;flex-direction:column;gap:6px;">
-        <input type="range" min="0" max="1" step="0.01" value="0" data-audio-slider
-          style="appearance:none;-webkit-appearance:none;width:100%;height:6px;border-radius:999px;outline:none;background:rgba(17,19,23,.14);margin:0;" />
+        <div data-audio-progress-wrap style="position:relative;height:18px;display:flex;align-items:center;">
+          <div data-audio-progress-bg
+               style="position:absolute;left:0;right:0;top:50%;transform:translateY(-50%);
+                      height:4px;border-radius:999px;background:rgba(17,19,23,.14);overflow:hidden;">
+            <div data-audio-progress-fill
+                 style="height:100%;width:0%;border-radius:999px;background:rgba(84,132,255,.95);"></div>
+          </div>
+          <div data-audio-progress-thumb
+               style="position:absolute;top:50%;left:0;width:14px;height:14px;border-radius:999px;
+                      background:#fff;border:2px solid rgba(84,132,255,.95);
+                      box-shadow:0 1px 4px rgba(0,0,0,.18);
+                      transform:translate(0,-50%);
+                      pointer-events:none;
+                      z-index:3;"></div>
+          <input type="range"
+                 min="0"
+                 max="1"
+                 step="0.01"
+                 value="0"
+                 data-audio-slider
+                 style="position:relative;z-index:2;width:100%;margin:0;background:transparent;" />
+        </div>
         <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
           <div class="itemDesc" data-audio-current-time>0:00</div>
           <div class="itemDesc" data-audio-total-time>${initialTotal}</div>
@@ -3249,21 +3334,6 @@ function buildAudioTileCard(card, rowId, it){
     });
   }
   if(slider){
-    const audio = document.createElement("audio");
-    audio.preload = "metadata";
-    audio.addEventListener("loadedmetadata", () => {
-
-      slider.min = 0
-      slider.max = audio.duration || 0
-
-      slider.value = 0
-
-      audio.currentTime = 0
-
-      setRangeFill(slider)
-
-    });
-
     const syncSeek = async ()=>{
       await seekAudioTilePlayback(rowId, it.id, Number(slider.value || 0));
       setRangeFill(slider);
