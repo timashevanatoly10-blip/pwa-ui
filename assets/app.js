@@ -2747,7 +2747,7 @@ function updateAudioTileDom(rowId, itemId){
   if(saveBtn){
     saveBtn.textContent = "⬇";
     saveBtn.title = "Скачать";
-    saveBtn.disabled = isRecording || isPlaybackPlaying || isPlaybackPaused || !hasSegments;
+    saveBtn.disabled = isRecording || isPlaybackPlaying || !hasSegments;
   }
   if(deleteBtn){
     deleteBtn.textContent = "🗑";
