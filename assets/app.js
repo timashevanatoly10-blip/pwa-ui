@@ -660,6 +660,7 @@ const itemPreviewUrlCache = new Map();
 const itemPreviewLoadPromises = new Map();
 const audioTileRecorderStates = new Map();
 let activeAudioPlayback = null;
+let activeAudioRowPlayback = null;
 
 // In-memory store:
 // - db.puchki: root containers list + cached containers
@@ -2329,9 +2330,82 @@ async function renameAudioRow(rowId){
   await refreshRowAndKeepUI(rowId);
 }
 
+function stopAudioRowPlaybackUiTimer(){
+  if(activeAudioRowPlayback?.timerId){
+    clearInterval(activeAudioRowPlayback.timerId);
+    activeAudioRowPlayback.timerId = null;
+  }
+}
+
+function startAudioRowPlaybackUiTimer(rowId){
+  if(!activeAudioRowPlayback || activeAudioRowPlayback.rowId !== rowId) return;
+  stopAudioRowPlaybackUiTimer();
+  activeAudioRowPlayback.timerId = setInterval(()=>{
+    updateAudioRowHeaderDom(rowId);
+  }, 140);
+}
+
+function getAudioRowPlayableItems(rowId){
+  const pack = db.rows[rowId] || null;
+  return (pack?.items || []).filter(i => i && i.type === "audio" && getAudioSegments(i).length > 0);
+}
+
+function getAudioRowTotalDurationSec(rowId){
+  return getAudioRowPlayableItems(rowId).reduce((sum, item)=> sum + getAudioTotalDurationSec(item), 0);
+}
+
+function getAudioRowCurrentPositionSec(rowId){
+  if(!activeAudioRowPlayback || activeAudioRowPlayback.rowId !== rowId) return 0;
+  const state = activeAudioRowPlayback;
+  const currentItemId = state.itemIds[state.index] || null;
+  if(!currentItemId) return Number(state.accumulatedSecBeforeIndex || 0);
+  const tilePos = getActiveAudioPlaybackPositionSec(rowId, currentItemId);
+  return Number(state.accumulatedSecBeforeIndex || 0) + Number(tilePos || 0);
+}
+
+function updateAudioRowHeaderDom(rowId){
+  const host = document.querySelector(`[data-audio-row-id="${rowId}"]`);
+  if(!host) return;
+
+  const toggleBtn = host.querySelector("[data-audio-row-toggle]");
+  const timeEl = host.querySelector("[data-audio-row-time]");
+  const totalSec = getAudioRowTotalDurationSec(rowId);
+  const currentSec = getAudioRowCurrentPositionSec(rowId);
+
+  const isActiveRow = !!activeAudioRowPlayback && activeAudioRowPlayback.rowId === rowId;
+  const isPlaying = isActiveRow && activeAudioRowPlayback.isPaused === false;
+
+  if(toggleBtn){
+    toggleBtn.textContent = isPlaying ? "❚❚" : "▶";
+    toggleBtn.title = isPlaying ? "Pause row" : "Play row";
+  }
+  if(timeEl){
+    const shownCurrent = isActiveRow ? currentSec : 0;
+    timeEl.textContent = `${formatAudioDuration(shownCurrent)} / ${formatAudioDuration(totalSec)}`;
+  }
+}
+
+async function stopActiveAudioRowPlayback({ keepTilePlayback = false } = {}){
+  if(!activeAudioRowPlayback) return;
+  const prevRowId = activeAudioRowPlayback.rowId;
+  stopAudioRowPlaybackUiTimer();
+  activeAudioRowPlayback = null;
+  if(!keepTilePlayback && activeAudioPlayback && activeAudioPlayback.rowId === prevRowId){
+    await stopActiveAudioPlayback();
+  }
+  updateAudioRowHeaderDom(prevRowId);
+}
+
 async function deleteAudioRow(rowId){
   if(!rowId) return;
   if(!confirm("Delete this audio row?")) return;
+
+  if(activeAudioRowPlayback && activeAudioRowPlayback.rowId === rowId){
+    await stopActiveAudioRowPlayback();
+  }
+  if(activeAudioPlayback && activeAudioPlayback.rowId === rowId){
+    await stopActiveAudioPlayback();
+  }
 
   await apiJson(`/rows/${encodeURIComponent(rowId)}`, {
     method: "DELETE"
@@ -2346,30 +2420,132 @@ async function deleteAudioRow(rowId){
   render();
 }
 
-async function playAudioTileAndWait(rowId, itemId){
-  await playAudioTile(rowId, itemId);
-  await new Promise((resolve)=>{
-    const startedAt = Date.now();
+async function playNextAudioRowItem(){
+  const state = activeAudioRowPlayback;
+  if(!state || state.isPaused) return;
+
+  const rowId = state.rowId;
+  if(state.index >= state.itemIds.length){
+    await stopActiveAudioRowPlayback();
+    updateAudioRowHeaderDom(rowId);
+    return;
+  }
+
+  const currentItemId = state.itemIds[state.index];
+  const playable = getAudioRowPlayableItems(rowId);
+  state.accumulatedSecBeforeIndex = playable
+    .filter(item => state.itemIds.indexOf(item.id) < state.index)
+    .reduce((sum, item)=> sum + getAudioTotalDurationSec(item), 0);
+
+  await stopActiveAudioPlayback();
+  await playAudioTile(rowId, currentItemId);
+  if(!activeAudioRowPlayback || activeAudioRowPlayback.rowId !== rowId || activeAudioRowPlayback.isPaused) return;
+
+  startAudioRowPlaybackUiTimer(rowId);
+  updateAudioRowHeaderDom(rowId);
+
+  const result = await new Promise((resolve)=>{
     const timer = setInterval(()=>{
-      const stillSame =
-        !!activeAudioPlayback &&
-        activeAudioPlayback.rowId === rowId &&
-        activeAudioPlayback.itemId === itemId;
-      if(!stillSame || Date.now() - startedAt > 60 * 60 * 1000){
+      const currentState = activeAudioRowPlayback;
+      if(!currentState || currentState.rowId !== rowId){
         clearInterval(timer);
-        resolve();
+        resolve("stopped");
+        return;
+      }
+      if(currentState.isPaused){
+        clearInterval(timer);
+        resolve("paused");
+        return;
+      }
+      const currentPlayback = activeAudioPlayback;
+      if(!currentPlayback){
+        clearInterval(timer);
+        resolve("ended");
+        return;
+      }
+      if(currentPlayback.rowId !== rowId || currentPlayback.itemId !== currentItemId){
+        clearInterval(timer);
+        resolve("switched");
       }
     }, 120);
   });
+
+  if(result === "ended"){
+    if(!activeAudioRowPlayback || activeAudioRowPlayback.rowId !== rowId || activeAudioRowPlayback.isPaused) return;
+    activeAudioRowPlayback.index += 1;
+    await playNextAudioRowItem();
+    return;
+  }
+
+  if(result === "switched"){
+    await stopActiveAudioRowPlayback({ keepTilePlayback:true });
+    return;
+  }
+
+  updateAudioRowHeaderDom(rowId);
 }
 
 async function playAudioRow(rowId){
-  const pack = db.rows[rowId] || null;
-  if(!pack) return;
-  const audios = (pack.items || []).filter(i => i && i.type === "audio");
-  for (const item of audios){
-    await playAudioTileAndWait(rowId, item.id);
+  if(!db.rows[rowId]){
+    await loadRowWithItems(rowId);
   }
+
+  const items = getAudioRowPlayableItems(rowId);
+  if(items.length === 0){
+    updateAudioRowHeaderDom(rowId);
+    return;
+  }
+
+  if(activeAudioRowPlayback && activeAudioRowPlayback.rowId !== rowId){
+    await stopActiveAudioRowPlayback();
+  }
+  if(activeAudioPlayback){
+    await stopActiveAudioPlayback();
+  }
+
+  activeAudioRowPlayback = {
+    rowId,
+    itemIds: items.map(x => x.id),
+    index: 0,
+    isPaused: false,
+    startedAt: Date.now(),
+    accumulatedSecBeforeIndex: 0,
+    timerId: null
+  };
+
+  startAudioRowPlaybackUiTimer(rowId);
+  updateAudioRowHeaderDom(rowId);
+  await playNextAudioRowItem();
+}
+
+async function pauseAudioRow(rowId){
+  if(!activeAudioRowPlayback || activeAudioRowPlayback.rowId !== rowId) return;
+
+  const currentItemId = activeAudioRowPlayback.itemIds[activeAudioRowPlayback.index] || null;
+  if(currentItemId && activeAudioPlayback && activeAudioPlayback.rowId === rowId && activeAudioPlayback.itemId === currentItemId){
+    await pauseAudioTilePlayback(rowId, currentItemId);
+  }
+
+  activeAudioRowPlayback.isPaused = true;
+  stopAudioRowPlaybackUiTimer();
+  updateAudioRowHeaderDom(rowId);
+}
+
+async function toggleAudioRowPlayback(rowId){
+  if(activeAudioRowPlayback && activeAudioRowPlayback.rowId === rowId){
+    if(activeAudioRowPlayback.isPaused === false){
+      await pauseAudioRow(rowId);
+      return;
+    }
+
+    activeAudioRowPlayback.isPaused = false;
+    startAudioRowPlaybackUiTimer(rowId);
+    updateAudioRowHeaderDom(rowId);
+    await playNextAudioRowItem();
+    return;
+  }
+
+  await playAudioRow(rowId);
 }
 
 function renderStandardRowEntry(p, e){
@@ -2539,6 +2715,8 @@ function renderVideoRow(p, e){
 
 function renderAudioRow(p, e){
   const block = renderStandardRowEntry(p, e);
+  block.dataset.audioRowId = e.refId;
+
   const header = block.firstElementChild;
   if(!header) return block;
 
@@ -2553,29 +2731,37 @@ function renderAudioRow(p, e){
     actions.style.alignItems = "center";
     actions.style.gap = "6px";
 
+    const timeEl = document.createElement("div");
+    timeEl.className = "itemDesc";
+    timeEl.dataset.audioRowTime = "1";
+    timeEl.textContent = `0:00 / ${formatAudioDuration(getAudioRowTotalDurationSec(e.refId))}`;
+
     const playBtn = document.createElement("button");
     playBtn.className = "btnGhost";
     playBtn.type = "button";
-    playBtn.textContent = "Play Row";
-    playBtn.title = "Play Row";
+    playBtn.textContent = "▶";
+    playBtn.title = "Play row";
+    playBtn.dataset.audioRowToggle = "1";
 
     const renameBtn = document.createElement("button");
     renameBtn.className = "btnGhost";
     renameBtn.type = "button";
-    renameBtn.textContent = "Rename";
+    renameBtn.textContent = "✎";
     renameBtn.title = "Rename";
+    renameBtn.dataset.audioRowRename = "1";
 
     const deleteBtn = document.createElement("button");
     deleteBtn.className = "btnGhost";
     deleteBtn.type = "button";
-    deleteBtn.textContent = "Delete";
+    deleteBtn.textContent = "🗑";
     deleteBtn.title = "Delete";
+    deleteBtn.dataset.audioRowDelete = "1";
 
     playBtn.addEventListener("click", async (ev)=>{
       ev.preventDefault();
       ev.stopPropagation();
       try{
-        await playAudioRow(e.refId);
+        await toggleAudioRowPlayback(e.refId);
       }catch(err){
         addMsg("Ошибка Play Row: " + (err?.message || err), "err");
       }
@@ -2601,12 +2787,14 @@ function renderAudioRow(p, e){
       }
     });
 
+    actions.appendChild(timeEl);
     actions.appendChild(playBtn);
     actions.appendChild(renameBtn);
     actions.appendChild(deleteBtn);
     right.appendChild(actions);
   }
 
+  setTimeout(()=> updateAudioRowHeaderDom(e.refId), 0);
   return block;
 }
 
@@ -3102,6 +3290,7 @@ async function startAudioTileRecording(rowId, itemId){
   recorder.start();
   startAudioTileTimer(rowId, itemId);
   updateAudioTileDom(rowId, itemId);
+  updateAudioRowHeaderDom(rowId);
 }
 async function stopAudioTileRecording(rowId, itemId){
   const state = audioTileRecorderStates.get(itemId);
@@ -3149,7 +3338,10 @@ async function stopActiveAudioPlayback(){
   }
   const prev = activeAudioPlayback;
   activeAudioPlayback = null;
-  if(prev?.rowId && prev?.itemId) updateAudioTileDom(prev.rowId, prev.itemId);
+  if(prev?.rowId && prev?.itemId){
+    updateAudioTileDom(prev.rowId, prev.itemId);
+    updateAudioRowHeaderDom(prev.rowId);
+  }
 }
 async function startAudioPlaybackFromOffset(rowId, itemId, merged, offsetSec){
   if(!merged?.buffer) return;
@@ -3184,15 +3376,21 @@ async function startAudioPlaybackFromOffset(rowId, itemId, merged, offsetSec){
     try{ await ctx.close(); }catch{}
     activeAudioPlayback = null;
     updateAudioTileDom(rowId, itemId);
+    updateAudioRowHeaderDom(rowId);
   };
 
   source.start(0, safeOffset);
   startAudioPlaybackUiTimer(rowId, itemId);
   updateAudioTileDom(rowId, itemId);
+  updateAudioRowHeaderDom(rowId);
 }
 async function playAudioTile(rowId, itemId){
   const it = getAudioItemLocalByRow(rowId, itemId);
   if(!it || !getAudioSegments(it).length) return;
+
+  if(activeAudioRowPlayback && (activeAudioRowPlayback.rowId !== rowId || activeAudioRowPlayback.itemIds[activeAudioRowPlayback.index] !== itemId)){
+    await stopActiveAudioRowPlayback({ keepTilePlayback:true });
+  }
 
   if(activeAudioPlayback && activeAudioPlayback.itemId === itemId && activeAudioPlayback.rowId === rowId){
     if(activeAudioPlayback.isPaused && activeAudioPlayback.buffer){
@@ -5672,4 +5870,3 @@ async function deleteSubpuchok(subId){
   await loadPuchokWithEntries(currentPuchokId);
   render();
 }
-
