@@ -2312,6 +2312,66 @@ function renderPuchokList(){
 }
 
 
+async function renameAudioRow(rowId){
+  if(!rowId) return;
+  const pack = db.rows[rowId] || null;
+  const currentTitle = pack?.row?.title || "";
+  const name = prompt("Rename audio row", currentTitle);
+  if(name === null) return;
+  const title = (name || "").trim();
+
+  await apiJson(`/rows/${encodeURIComponent(rowId)}`, {
+    method: "PATCH",
+    json: { title }
+  });
+
+  if(pack?.row) pack.row.title = title;
+  await refreshRowAndKeepUI(rowId);
+}
+
+async function deleteAudioRow(rowId){
+  if(!rowId) return;
+  if(!confirm("Delete this audio row?")) return;
+
+  await apiJson(`/rows/${encodeURIComponent(rowId)}`, {
+    method: "DELETE"
+  });
+
+  delete db.rows[rowId];
+  expandedRowIds.delete(rowId);
+  if(currentRowId === rowId) currentRowId = null;
+  if(currentPuchokId){
+    await loadPuchokWithEntries(currentPuchokId);
+  }
+  render();
+}
+
+async function playAudioTileAndWait(rowId, itemId){
+  await playAudioTile(rowId, itemId);
+  await new Promise((resolve)=>{
+    const startedAt = Date.now();
+    const timer = setInterval(()=>{
+      const stillSame =
+        !!activeAudioPlayback &&
+        activeAudioPlayback.rowId === rowId &&
+        activeAudioPlayback.itemId === itemId;
+      if(!stillSame || Date.now() - startedAt > 60 * 60 * 1000){
+        clearInterval(timer);
+        resolve();
+      }
+    }, 120);
+  });
+}
+
+async function playAudioRow(rowId){
+  const pack = db.rows[rowId] || null;
+  if(!pack) return;
+  const audios = (pack.items || []).filter(i => i && i.type === "audio");
+  for (const item of audios){
+    await playAudioTileAndWait(rowId, item.id);
+  }
+}
+
 function renderStandardRowEntry(p, e){
   const block = document.createElement("div");
   block.className = "rowInlineBlock";
@@ -2477,6 +2537,79 @@ function renderVideoRow(p, e){
   return block;
 }
 
+function renderAudioRow(p, e){
+  const block = renderStandardRowEntry(p, e);
+  const header = block.firstElementChild;
+  if(!header) return block;
+
+  const right = header.lastElementChild;
+  if(right){
+    right.style.display = "flex";
+    right.style.alignItems = "center";
+    right.style.gap = "8px";
+
+    const actions = document.createElement("div");
+    actions.style.display = "flex";
+    actions.style.alignItems = "center";
+    actions.style.gap = "6px";
+
+    const playBtn = document.createElement("button");
+    playBtn.className = "btnGhost";
+    playBtn.type = "button";
+    playBtn.textContent = "Play Row";
+    playBtn.title = "Play Row";
+
+    const renameBtn = document.createElement("button");
+    renameBtn.className = "btnGhost";
+    renameBtn.type = "button";
+    renameBtn.textContent = "Rename";
+    renameBtn.title = "Rename";
+
+    const deleteBtn = document.createElement("button");
+    deleteBtn.className = "btnGhost";
+    deleteBtn.type = "button";
+    deleteBtn.textContent = "Delete";
+    deleteBtn.title = "Delete";
+
+    playBtn.addEventListener("click", async (ev)=>{
+      ev.preventDefault();
+      ev.stopPropagation();
+      try{
+        await playAudioRow(e.refId);
+      }catch(err){
+        addMsg("Ошибка Play Row: " + (err?.message || err), "err");
+      }
+    });
+
+    renameBtn.addEventListener("click", async (ev)=>{
+      ev.preventDefault();
+      ev.stopPropagation();
+      try{
+        await renameAudioRow(e.refId);
+      }catch(err){
+        addMsg("Ошибка Rename row: " + (err?.message || err), "err");
+      }
+    });
+
+    deleteBtn.addEventListener("click", async (ev)=>{
+      ev.preventDefault();
+      ev.stopPropagation();
+      try{
+        await deleteAudioRow(e.refId);
+      }catch(err){
+        addMsg("Ошибка Delete row: " + (err?.message || err), "err");
+      }
+    });
+
+    actions.appendChild(playBtn);
+    actions.appendChild(renameBtn);
+    actions.appendChild(deleteBtn);
+    right.appendChild(actions);
+  }
+
+  return block;
+}
+
 function renderPuchokInside(p){
   const wrap = document.createElement("div");
   wrap.className = "list";
@@ -2548,7 +2681,7 @@ function renderPuchokInside(p){
       }
 
       const rowType = (e.rowType || "").toLowerCase();
-      const block = rowType === "photo" ? renderPhotoRow(p, e) : rowType === "video" ? renderVideoRow(p, e) : renderStandardRowEntry(p, e);
+      const block = rowType === "photo" ? renderPhotoRow(p, e) : rowType === "video" ? renderVideoRow(p, e) : rowType === "audio" ? renderAudioRow(p, e) : renderStandardRowEntry(p, e);
       wrap.appendChild(block);
     }
   }
@@ -5539,3 +5672,4 @@ async function deleteSubpuchok(subId){
   await loadPuchokWithEntries(currentPuchokId);
   render();
 }
+
