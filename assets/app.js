@@ -2373,22 +2373,10 @@ function getAudioRowCurrentPositionSec(rowId){
   return Number(state.accumulatedSecBeforeIndex || 0) + Number(localSec || 0);
 }
 
-function updateAudioRowProgressDom(rowId){
-  const host = document.querySelector(`[data-audio-row-id="${rowId}"]`);
-  if(!host) return;
-
-  const slider = host.querySelector("[data-audio-row-slider]");
+function updateAudioRowProgressVisualFromSlider(host, slider, currentSec, totalSec){
+  if(!host || !slider) return;
   const fill = host.querySelector("[data-audio-row-progress-fill]");
   const thumb = host.querySelector("[data-audio-row-progress-thumb]");
-  if(!slider) return;
-
-  const totalSec = getAudioRowTotalDurationSec(rowId);
-  const currentSec = getAudioRowCurrentPositionSec(rowId);
-
-  slider.min = "0";
-  slider.max = String(Math.max(totalSec, 0.000001));
-  slider.step = "0.01";
-  slider.value = String(clamp(currentSec, 0, totalSec));
 
   const trackWidth = slider.getBoundingClientRect().width || 0;
   const thumbSize = 14;
@@ -2399,6 +2387,22 @@ function updateAudioRowProgressDom(rowId){
 
   if(fill) fill.style.width = fillWidth + "px";
   if(thumb) thumb.style.left = thumbLeft + "px";
+}
+
+function updateAudioRowProgressDom(rowId){
+  const host = document.querySelector(`[data-audio-row-id="${rowId}"]`);
+  const slider = host ? host.querySelector("[data-audio-row-slider]") : null;
+  if(!host || !slider) return;
+
+  const totalSec = getAudioRowTotalDurationSec(rowId);
+  const currentSec = getAudioRowCurrentPositionSec(rowId);
+
+  slider.min = "0";
+  slider.max = String(Math.max(totalSec, 0.000001));
+  slider.step = "0.01";
+  slider.value = String(clamp(currentSec, 0, totalSec));
+
+  updateAudioRowProgressVisualFromSlider(host, slider, currentSec, totalSec);
 }
 
 function updateAudioRowHeaderDom(rowId){
@@ -2478,28 +2482,40 @@ async function waitForAudioRowItemToFinish(rowId, currentItemId, token){
       if(currentPlayback.rowId !== rowId || currentPlayback.itemId !== currentItemId){
         clearInterval(timer);
         resolve("switched");
+        return;
       }
     }, 120);
   });
 
   if(result === "invalidated"){
-    return;
+    return "invalidated";
   }
 
-  if(result === "ended"){
-    if(!activeAudioRowPlayback || activeAudioRowPlayback.rowId !== rowId || activeAudioRowPlayback.isPaused) return;
-    activeAudioRowPlayback.index += 1;
-    activeAudioRowPlayback.pausedOffsetSec = 0;
-    await playNextAudioRowItem(token);
-    return;
+  if(result === "paused"){
+    return "paused";
+  }
+
+  if(result === "stopped"){
+    return "stopped";
   }
 
   if(result === "switched"){
-    await stopActiveAudioRowPlayback({ keepTilePlayback:true });
-    return;
+    return "switched";
+  }
+
+  if(result === "ended"){
+    if(token !== audioRowPlaybackToken) return "invalidated";
+    if(!activeAudioRowPlayback) return "stopped";
+    if(activeAudioRowPlayback.rowId !== rowId) return "stopped";
+
+    activeAudioRowPlayback.index += 1;
+    activeAudioRowPlayback.pausedOffsetSec = 0;
+    await playNextAudioRowItem(token);
+    return "ended";
   }
 
   updateAudioRowHeaderDom(rowId);
+  return result;
 }
 
 async function playAudioTileFromOffsetForRow(rowId, itemId, offsetSec){
@@ -2602,7 +2618,8 @@ async function playAudioRow(rowId){
     startedAt: Date.now(),
     accumulatedSecBeforeIndex: 0,
     pausedOffsetSec: 0,
-    timerId: null
+    timerId: null,
+    playbackToken: token
   };
 
   startAudioRowPlaybackUiTimer(rowId);
@@ -2634,7 +2651,8 @@ async function seekAudioRowPlayback(rowId, targetSec){
   if(items.length === 0) return;
 
   const totalSec = getAudioRowTotalDurationSec(rowId);
-  const target = clamp(Number(targetSec || 0), 0, totalSec);
+  if(!Number.isFinite(Number(targetSec))) return;
+  const safeTargetSec = clamp(Number(targetSec || 0), 0, totalSec);
 
   let accumulatedBefore = 0;
   let itemIndex = 0;
@@ -2643,9 +2661,9 @@ async function seekAudioRowPlayback(rowId, targetSec){
   for(let i = 0; i < items.length; i++){
     const dur = getAudioTotalDurationSec(items[i]);
     const end = accumulatedBefore + dur;
-    if(target <= end || i === items.length - 1){
+    if(safeTargetSec <= end || i === items.length - 1){
       itemIndex = i;
-      localOffset = clamp(target - accumulatedBefore, 0, dur);
+      localOffset = clamp(safeTargetSec - accumulatedBefore, 0, dur);
       break;
     }
     accumulatedBefore = end;
@@ -2669,11 +2687,17 @@ async function seekAudioRowPlayback(rowId, targetSec){
     startedAt: Date.now(),
     accumulatedSecBeforeIndex: accumulatedBefore,
     pausedOffsetSec: 0,
-    timerId: null
+    timerId: null,
+    playbackToken: token
   };
 
   startAudioRowPlaybackUiTimer(rowId);
   await playAudioTileFromOffsetForRow(rowId, items[itemIndex].id, localOffset);
+
+  if(!activeAudioRowPlayback) return;
+  if(activeAudioRowPlayback.rowId !== rowId) return;
+  if(token !== audioRowPlaybackToken) return;
+
   updateAudioRowHeaderDom(rowId);
   updateAudioRowProgressDom(rowId);
   await waitForAudioRowItemToFinish(rowId, items[itemIndex].id, token);
@@ -2968,25 +2992,6 @@ function renderAudioRow(p, e){
     if(slider){
       let isRowSeeking = false;
 
-      const paintRowSeekPreview = ()=>{
-        const totalSec = getAudioRowTotalDurationSec(e.refId);
-        const currentSec = clamp(Number(slider.value || 0), 0, totalSec);
-        slider.min = "0";
-        slider.max = String(Math.max(totalSec, 0.000001));
-        slider.value = String(currentSec);
-
-        const fill = block.querySelector("[data-audio-row-progress-fill]");
-        const thumb = block.querySelector("[data-audio-row-progress-thumb]");
-        const trackWidth = slider.getBoundingClientRect().width || 0;
-        const thumbSize = 14;
-        const usable = Math.max(trackWidth - thumbSize, 0);
-        const ratio = clamp(currentSec / Math.max(totalSec, 0.000001), 0, 1);
-        const thumbLeft = usable * ratio;
-        const fillWidth = thumbLeft + thumbSize / 2;
-        if(fill) fill.style.width = fillWidth + "px";
-        if(thumb) thumb.style.left = thumbLeft + "px";
-      };
-
       slider.addEventListener("pointerdown", (ev)=>{
         ev.stopPropagation();
         isRowSeeking = true;
@@ -2995,21 +3000,35 @@ function renderAudioRow(p, e){
       slider.addEventListener("input", (ev)=>{
         ev.preventDefault();
         ev.stopPropagation();
-        paintRowSeekPreview();
+
+        const totalSec = getAudioRowTotalDurationSec(e.refId);
+        const currentSec = clamp(Number(slider.value || 0), 0, totalSec);
+
+        slider.min = "0";
+        slider.max = String(Math.max(totalSec, 0.000001));
+        slider.value = String(currentSec);
+
+        updateAudioRowProgressVisualFromSlider(block, slider, currentSec, totalSec);
       });
 
       slider.addEventListener("change", async (ev)=>{
         ev.preventDefault();
         ev.stopPropagation();
-        isRowSeeking = false;
+
+        if(isRowSeeking){
+          return;
+        }
+
         await seekAudioRowPlayback(e.refId, Number(slider.value || 0));
       });
 
       slider.addEventListener("pointerup", async (ev)=>{
         ev.preventDefault();
         ev.stopPropagation();
+
         if(!isRowSeeking) return;
         isRowSeeking = false;
+
         await seekAudioRowPlayback(e.refId, Number(slider.value || 0));
       });
 
@@ -3045,7 +3064,6 @@ function renderAudioRow(p, e){
     right.appendChild(actions);
   }
 
-  setTimeout(()=> updateAudioRowHeaderDom(e.refId), 0);
   requestAnimationFrame(()=>{
     updateAudioRowHeaderDom(e.refId);
     requestAnimationFrame(()=>{
@@ -3815,6 +3833,10 @@ function ensureAudioRangeStyles(){
   outline:none;
   height:18px;
   border:none;
+  position:relative;
+  z-index:2;
+  opacity:1;
+  filter:none;
 }
 [data-audio-row-slider]::-webkit-slider-runnable-track{
   -webkit-appearance:none;
@@ -3823,6 +3845,7 @@ function ensureAudioRangeStyles(){
   border:none;
   box-shadow:none;
   height:4px;
+  pointer-events:auto;
 }
 [data-audio-row-slider]::-webkit-slider-thumb{
   -webkit-appearance:none;
@@ -3835,12 +3858,14 @@ function ensureAudioRangeStyles(){
   color:transparent;
   opacity:0;
   margin-top:-5px;
+  pointer-events:auto;
 }
 [data-audio-row-slider]::-moz-range-track{
   background:transparent !important;
   border:none;
   box-shadow:none;
   height:4px;
+  pointer-events:auto;
 }
 [data-audio-row-slider]::-moz-range-thumb{
   width:14px;
