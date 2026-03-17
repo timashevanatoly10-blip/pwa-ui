@@ -2650,6 +2650,17 @@ async function seekAudioRowPlayback(rowId, targetSec){
   const items = getAudioRowPlayableItems(rowId);
   if(items.length === 0) return;
 
+  const prevRowState =
+    activeAudioRowPlayback && activeAudioRowPlayback.rowId === rowId
+      ? {
+          isPaused: !!activeAudioRowPlayback.isPaused,
+          index: Number(activeAudioRowPlayback.index || 0),
+        }
+      : null;
+
+  const wasPaused = !!prevRowState && prevRowState.isPaused === true;
+  const wasPlaying = !!prevRowState && prevRowState.isPaused === false;
+
   const totalSec = getAudioRowTotalDurationSec(rowId);
   if(!Number.isFinite(Number(targetSec))) return;
   const safeTargetSec = clamp(Number(targetSec || 0), 0, totalSec);
@@ -2669,9 +2680,68 @@ async function seekAudioRowPlayback(rowId, targetSec){
     accumulatedBefore = end;
   }
 
-  if(activeAudioRowPlayback && activeAudioRowPlayback.rowId !== rowId){
-    await stopActiveAudioRowPlayback();
+  if(wasPaused === true){
+    if(activeAudioPlayback){
+      await stopActiveAudioPlayback();
+    }
+
+    audioRowPlaybackToken += 1;
+    const token = audioRowPlaybackToken;
+
+    activeAudioRowPlayback = {
+      rowId,
+      itemIds: items.map(x => x.id),
+      index: itemIndex,
+      isPaused: true,
+      startedAt: Date.now(),
+      accumulatedSecBeforeIndex: accumulatedBefore,
+      pausedOffsetSec: localOffset,
+      timerId: null,
+      playbackToken: token
+    };
+
+    updateAudioRowHeaderDom(rowId);
+    updateAudioRowProgressDom(rowId);
+    return;
   }
+
+  if(wasPlaying === true){
+    if(activeAudioPlayback){
+      await stopActiveAudioPlayback();
+    }
+
+    if(activeAudioRowPlayback && activeAudioRowPlayback.rowId !== rowId){
+      await stopActiveAudioRowPlayback();
+    }
+
+    audioRowPlaybackToken += 1;
+    const token = audioRowPlaybackToken;
+
+    activeAudioRowPlayback = {
+      rowId,
+      itemIds: items.map(x => x.id),
+      index: itemIndex,
+      isPaused: false,
+      startedAt: Date.now(),
+      accumulatedSecBeforeIndex: accumulatedBefore,
+      pausedOffsetSec: 0,
+      timerId: null,
+      playbackToken: token
+    };
+
+    startAudioRowPlaybackUiTimer(rowId);
+    await playAudioTileFromOffsetForRow(rowId, items[itemIndex].id, localOffset);
+
+    if(!activeAudioRowPlayback) return;
+    if(activeAudioRowPlayback.rowId !== rowId) return;
+    if(token !== audioRowPlaybackToken) return;
+
+    updateAudioRowHeaderDom(rowId);
+    updateAudioRowProgressDom(rowId);
+    await waitForAudioRowItemToFinish(rowId, items[itemIndex].id, token);
+    return;
+  }
+
   if(activeAudioPlayback){
     await stopActiveAudioPlayback();
   }
@@ -2683,24 +2753,17 @@ async function seekAudioRowPlayback(rowId, targetSec){
     rowId,
     itemIds: items.map(x => x.id),
     index: itemIndex,
-    isPaused: false,
+    isPaused: true,
     startedAt: Date.now(),
     accumulatedSecBeforeIndex: accumulatedBefore,
-    pausedOffsetSec: 0,
+    pausedOffsetSec: localOffset,
     timerId: null,
     playbackToken: token
   };
 
-  startAudioRowPlaybackUiTimer(rowId);
-  await playAudioTileFromOffsetForRow(rowId, items[itemIndex].id, localOffset);
-
-  if(!activeAudioRowPlayback) return;
-  if(activeAudioRowPlayback.rowId !== rowId) return;
-  if(token !== audioRowPlaybackToken) return;
-
   updateAudioRowHeaderDom(rowId);
   updateAudioRowProgressDom(rowId);
-  await waitForAudioRowItemToFinish(rowId, items[itemIndex].id, token);
+  return;
 }
 
 async function toggleAudioRowPlayback(rowId){
@@ -2712,16 +2775,18 @@ async function toggleAudioRowPlayback(rowId){
 
     const currentItemId = activeAudioRowPlayback.itemIds[activeAudioRowPlayback.index] || null;
     const pausedOffsetSec = Number(activeAudioRowPlayback.pausedOffsetSec || 0);
+    const token = audioRowPlaybackToken;
     activeAudioRowPlayback.isPaused = false;
     startAudioRowPlaybackUiTimer(rowId);
     updateAudioRowHeaderDom(rowId);
 
     if(currentItemId){
       await playAudioTileFromOffsetForRow(rowId, currentItemId, pausedOffsetSec);
-      if(activeAudioRowPlayback && activeAudioRowPlayback.rowId === rowId){
-        activeAudioRowPlayback.pausedOffsetSec = 0;
-      }
-      await waitForAudioRowItemToFinish(rowId, currentItemId, audioRowPlaybackToken);
+      if(!activeAudioRowPlayback) return;
+      if(activeAudioRowPlayback.rowId !== rowId) return;
+      if(token !== audioRowPlaybackToken) return;
+      activeAudioRowPlayback.pausedOffsetSec = 0;
+      await waitForAudioRowItemToFinish(rowId, currentItemId, token);
     }
     return;
   }
@@ -2953,7 +3018,7 @@ function renderAudioRow(p, e){
              step="0.01"
              value="0"
              data-audio-row-slider
-             style="position:relative;z-index:2;width:100%;margin:0;background:transparent;" />
+             style="position:relative;z-index:2;width:100%;margin:0;background:transparent;border:none;outline:none;box-shadow:none;-webkit-appearance:none;appearance:none;" />
     `;
 
     const slider = progressWrap.querySelector("[data-audio-row-slider]");
@@ -2991,10 +3056,12 @@ function renderAudioRow(p, e){
 
     if(slider){
       let isRowSeeking = false;
+      let rowSeekHandled = false;
 
       slider.addEventListener("pointerdown", (ev)=>{
         ev.stopPropagation();
         isRowSeeking = true;
+        rowSeekHandled = false;
       });
 
       slider.addEventListener("input", (ev)=>{
@@ -3019,7 +3086,15 @@ function renderAudioRow(p, e){
           return;
         }
 
+        if(rowSeekHandled){
+          return;
+        }
+
+        rowSeekHandled = true;
         await seekAudioRowPlayback(e.refId, Number(slider.value || 0));
+        requestAnimationFrame(()=>{
+          rowSeekHandled = false;
+        });
       });
 
       slider.addEventListener("pointerup", async (ev)=>{
@@ -3029,7 +3104,19 @@ function renderAudioRow(p, e){
         if(!isRowSeeking) return;
         isRowSeeking = false;
 
+        if(rowSeekHandled) return;
+
+        rowSeekHandled = true;
         await seekAudioRowPlayback(e.refId, Number(slider.value || 0));
+
+        requestAnimationFrame(()=>{
+          rowSeekHandled = false;
+        });
+      });
+
+      slider.addEventListener("pointercancel", ()=>{
+        isRowSeeking = false;
+        rowSeekHandled = false;
       });
 
       slider.addEventListener("click", (ev)=> ev.stopPropagation());
@@ -3824,48 +3911,47 @@ function ensureAudioRangeStyles(){
   box-shadow:none;
 }
 [data-audio-row-slider]{
-  -webkit-appearance:none;
-  appearance:none;
+  -webkit-appearance:none !important;
+  appearance:none !important;
   width:100%;
   background:transparent !important;
   background-image:none !important;
+  border:none !important;
   box-shadow:none !important;
-  outline:none;
+  outline:none !important;
   height:18px;
-  border:none;
+  opacity:1;
   position:relative;
   z-index:2;
-  opacity:1;
-  filter:none;
 }
 [data-audio-row-slider]::-webkit-slider-runnable-track{
-  -webkit-appearance:none;
-  appearance:none;
+  -webkit-appearance:none !important;
+  appearance:none !important;
   background:transparent !important;
-  border:none;
-  box-shadow:none;
+  background-image:none !important;
+  border:none !important;
+  box-shadow:none !important;
   height:4px;
   pointer-events:auto;
 }
 [data-audio-row-slider]::-webkit-slider-thumb{
-  -webkit-appearance:none;
-  appearance:none;
+  -webkit-appearance:none !important;
+  appearance:none !important;
   width:14px;
   height:14px;
   background:transparent !important;
   border:none !important;
   box-shadow:none !important;
-  color:transparent;
-  opacity:0;
+  opacity:0 !important;
+  color:transparent !important;
   margin-top:-5px;
-  pointer-events:auto;
 }
 [data-audio-row-slider]::-moz-range-track{
   background:transparent !important;
-  border:none;
-  box-shadow:none;
+  background-image:none !important;
+  border:none !important;
+  box-shadow:none !important;
   height:4px;
-  pointer-events:auto;
 }
 [data-audio-row-slider]::-moz-range-thumb{
   width:14px;
@@ -3873,7 +3959,7 @@ function ensureAudioRangeStyles(){
   background:transparent !important;
   border:none !important;
   box-shadow:none !important;
-  opacity:0;
+  opacity:0 !important;
 }
 `;
   document.head.appendChild(style);
