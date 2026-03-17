@@ -2707,13 +2707,7 @@ async function seekAudioRowPlayback(rowId, targetSec){
   }
 
   if(wasPlaying === true){
-    if(activeAudioPlayback){
-      await stopActiveAudioPlayback();
-    }
-
-    if(activeAudioRowPlayback && activeAudioRowPlayback.rowId !== rowId){
-      await stopActiveAudioRowPlayback();
-    }
+    await stopActiveAudioPlayback();
 
     audioRowPlaybackToken += 1;
     const token = audioRowPlaybackToken;
@@ -2730,17 +2724,12 @@ async function seekAudioRowPlayback(rowId, targetSec){
       playbackToken: token
     };
 
-    if(activeAudioRowPlayback.playbackToken !== token) return;
-    if(token !== audioRowPlaybackToken) return;
-
     await playAudioTileFromOffsetForRow(rowId, items[itemIndex].id, localOffset);
 
     if(!activeAudioRowPlayback) return;
     if(activeAudioRowPlayback.rowId !== rowId) return;
-    if(activeAudioRowPlayback.playbackToken !== token) return;
     if(token !== audioRowPlaybackToken) return;
 
-    startAudioRowPlaybackUiTimer(rowId);
     updateAudioRowHeaderDom(rowId);
     updateAudioRowProgressDom(rowId);
     await waitForAudioRowItemToFinish(rowId, items[itemIndex].id, token);
@@ -2998,9 +2987,9 @@ function renderAudioRow(p, e){
     progressWrap.dataset.audioRowProgressWrap = "1";
     progressWrap.style.display = "flex";
     progressWrap.style.alignItems = "center";
-    progressWrap.style.minWidth = "140px";
-    progressWrap.style.maxWidth = "220px";
-    progressWrap.style.flex = "1";
+    progressWrap.style.width = "100%";
+    progressWrap.style.minWidth = "0";
+    progressWrap.style.flex = "1 1 auto";
     progressWrap.style.position = "relative";
     progressWrap.style.height = "18px";
     progressWrap.innerHTML = `
@@ -3030,7 +3019,7 @@ function renderAudioRow(p, e){
   width:100%;
   height:100%;
   margin:0;
-  opacity:0.001;
+  opacity:0;
   background:transparent;
   border:none;
   outline:none;
@@ -3102,16 +3091,7 @@ function renderAudioRow(p, e){
       slider.addEventListener("change", async (ev)=>{
         ev.preventDefault();
         ev.stopPropagation();
-
-        if(isRowSeeking) return;
-        if(rowSeekHandled) return;
-
-        rowSeekHandled = true;
-        await seekAudioRowPlayback(e.refId, Number(slider.value || 0));
-
-        setTimeout(()=>{
-          rowSeekHandled = false;
-        }, 0);
+        return;
       });
 
       slider.addEventListener("pointerup", async (ev)=>{
