@@ -2507,6 +2507,7 @@ async function waitForAudioRowItemToFinish(rowId, currentItemId, token){
     if(token !== audioRowPlaybackToken) return "invalidated";
     if(!activeAudioRowPlayback) return "stopped";
     if(activeAudioRowPlayback.rowId !== rowId) return "stopped";
+    if(activeAudioRowPlayback.playbackToken !== token) return "invalidated";
 
     activeAudioRowPlayback.index += 1;
     activeAudioRowPlayback.pausedOffsetSec = 0;
@@ -2729,13 +2730,17 @@ async function seekAudioRowPlayback(rowId, targetSec){
       playbackToken: token
     };
 
-    startAudioRowPlaybackUiTimer(rowId);
+    if(activeAudioRowPlayback.playbackToken !== token) return;
+    if(token !== audioRowPlaybackToken) return;
+
     await playAudioTileFromOffsetForRow(rowId, items[itemIndex].id, localOffset);
 
     if(!activeAudioRowPlayback) return;
     if(activeAudioRowPlayback.rowId !== rowId) return;
+    if(activeAudioRowPlayback.playbackToken !== token) return;
     if(token !== audioRowPlaybackToken) return;
 
+    startAudioRowPlaybackUiTimer(rowId);
     updateAudioRowHeaderDom(rowId);
     updateAudioRowProgressDom(rowId);
     await waitForAudioRowItemToFinish(rowId, items[itemIndex].id, token);
@@ -3018,7 +3023,21 @@ function renderAudioRow(p, e){
              step="0.01"
              value="0"
              data-audio-row-slider
-             style="position:relative;z-index:2;width:100%;margin:0;background:transparent;border:none;outline:none;box-shadow:none;-webkit-appearance:none;appearance:none;" />
+             style="
+  position:absolute;
+  inset:0;
+  z-index:4;
+  width:100%;
+  height:100%;
+  margin:0;
+  opacity:0.001;
+  background:transparent;
+  border:none;
+  outline:none;
+  box-shadow:none;
+  -webkit-appearance:none;
+  appearance:none;
+" />
     `;
 
     const slider = progressWrap.querySelector("[data-audio-row-slider]");
@@ -3057,11 +3076,13 @@ function renderAudioRow(p, e){
     if(slider){
       let isRowSeeking = false;
       let rowSeekHandled = false;
+      let rowSeekDragSession = 0;
 
       slider.addEventListener("pointerdown", (ev)=>{
         ev.stopPropagation();
         isRowSeeking = true;
         rowSeekHandled = false;
+        rowSeekDragSession += 1;
       });
 
       slider.addEventListener("input", (ev)=>{
@@ -3082,19 +3103,15 @@ function renderAudioRow(p, e){
         ev.preventDefault();
         ev.stopPropagation();
 
-        if(isRowSeeking){
-          return;
-        }
-
-        if(rowSeekHandled){
-          return;
-        }
+        if(isRowSeeking) return;
+        if(rowSeekHandled) return;
 
         rowSeekHandled = true;
         await seekAudioRowPlayback(e.refId, Number(slider.value || 0));
-        requestAnimationFrame(()=>{
+
+        setTimeout(()=>{
           rowSeekHandled = false;
-        });
+        }, 0);
       });
 
       slider.addEventListener("pointerup", async (ev)=>{
@@ -3102,16 +3119,21 @@ function renderAudioRow(p, e){
         ev.stopPropagation();
 
         if(!isRowSeeking) return;
+
         isRowSeeking = false;
 
         if(rowSeekHandled) return;
 
         rowSeekHandled = true;
+        const dragSessionAtPointerUp = rowSeekDragSession;
+
         await seekAudioRowPlayback(e.refId, Number(slider.value || 0));
 
-        requestAnimationFrame(()=>{
-          rowSeekHandled = false;
-        });
+        setTimeout(()=>{
+          if(rowSeekDragSession === dragSessionAtPointerUp){
+            rowSeekHandled = false;
+          }
+        }, 0);
       });
 
       slider.addEventListener("pointercancel", ()=>{
@@ -3913,16 +3935,11 @@ function ensureAudioRangeStyles(){
 [data-audio-row-slider]{
   -webkit-appearance:none !important;
   appearance:none !important;
-  width:100%;
   background:transparent !important;
   background-image:none !important;
   border:none !important;
-  box-shadow:none !important;
   outline:none !important;
-  height:18px;
-  opacity:1;
-  position:relative;
-  z-index:2;
+  box-shadow:none !important;
 }
 [data-audio-row-slider]::-webkit-slider-runnable-track{
   -webkit-appearance:none !important;
@@ -3931,31 +3948,25 @@ function ensureAudioRangeStyles(){
   background-image:none !important;
   border:none !important;
   box-shadow:none !important;
-  height:4px;
-  pointer-events:auto;
 }
 [data-audio-row-slider]::-webkit-slider-thumb{
   -webkit-appearance:none !important;
   appearance:none !important;
-  width:14px;
-  height:14px;
+  width:1px !important;
+  height:1px !important;
   background:transparent !important;
   border:none !important;
   box-shadow:none !important;
   opacity:0 !important;
-  color:transparent !important;
-  margin-top:-5px;
 }
 [data-audio-row-slider]::-moz-range-track{
   background:transparent !important;
-  background-image:none !important;
   border:none !important;
   box-shadow:none !important;
-  height:4px;
 }
 [data-audio-row-slider]::-moz-range-thumb{
-  width:14px;
-  height:14px;
+  width:1px !important;
+  height:1px !important;
   background:transparent !important;
   border:none !important;
   box-shadow:none !important;
