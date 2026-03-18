@@ -2373,18 +2373,36 @@ function getAudioRowCurrentPositionSec(rowId){
   return Number(state.accumulatedSecBeforeIndex || 0) + Number(localSec || 0);
 }
 
+function updateAudioRowProgressVisualFromSlider(host, slider, currentSec, totalSec){
+  if(!host || !slider) return;
+  const fill = host.querySelector("[data-audio-row-progress-fill]");
+  const thumb = host.querySelector("[data-audio-row-progress-thumb]");
+
+  const trackWidth = slider.getBoundingClientRect().width || 0;
+  const thumbSize = 14;
+  const usable = Math.max(trackWidth - thumbSize, 0);
+  const ratio = clamp(currentSec / Math.max(totalSec, 0.000001), 0, 1);
+  const thumbLeft = usable * ratio;
+  const fillWidth = thumbLeft + thumbSize / 2;
+
+  if(fill) fill.style.width = fillWidth + "px";
+  if(thumb) thumb.style.left = thumbLeft + "px";
+}
+
 function updateAudioRowProgressDom(rowId){
   const host = document.querySelector(`[data-audio-row-id="${rowId}"]`);
   const slider = host ? host.querySelector("[data-audio-row-slider]") : null;
   if(!host || !slider) return;
 
-  const currentSec = getAudioRowCurrentPositionSec(rowId);
   const totalSec = getAudioRowTotalDurationSec(rowId);
+  const currentSec = getAudioRowCurrentPositionSec(rowId);
 
   slider.min = "0";
   slider.max = String(Math.max(totalSec, 0.000001));
   slider.step = "0.01";
   slider.value = String(clamp(currentSec, 0, totalSec));
+
+  updateAudioRowProgressVisualFromSlider(host, slider, currentSec, totalSec);
 }
 
 function updateAudioRowHeaderDom(rowId){
@@ -2469,19 +2487,36 @@ async function waitForAudioRowItemToFinish(rowId, currentItemId, token){
     }, 120);
   });
 
-  if(result !== "ended"){
-    return result;
+  if(result === "invalidated"){
+    return "invalidated";
   }
 
-  if(token !== audioRowPlaybackToken) return "invalidated";
-  if(!activeAudioRowPlayback) return "stopped";
-  if(activeAudioRowPlayback.rowId !== rowId) return "stopped";
-  if(activeAudioRowPlayback.playbackToken !== token) return "invalidated";
+  if(result === "paused"){
+    return "paused";
+  }
 
-  activeAudioRowPlayback.index += 1;
-  activeAudioRowPlayback.pausedOffsetSec = 0;
-  await playNextAudioRowItem(token);
-  return "ended";
+  if(result === "stopped"){
+    return "stopped";
+  }
+
+  if(result === "switched"){
+    return "switched";
+  }
+
+  if(result === "ended"){
+    if(token !== audioRowPlaybackToken) return "invalidated";
+    if(!activeAudioRowPlayback) return "stopped";
+    if(activeAudioRowPlayback.rowId !== rowId) return "stopped";
+    if(activeAudioRowPlayback.playbackToken !== token) return "invalidated";
+
+    activeAudioRowPlayback.index += 1;
+    activeAudioRowPlayback.pausedOffsetSec = 0;
+    await playNextAudioRowItem(token);
+    return "ended";
+  }
+
+  updateAudioRowHeaderDom(rowId);
+  return result;
 }
 
 async function playAudioTileFromOffsetForRow(rowId, itemId, offsetSec){
@@ -2950,18 +2985,53 @@ function renderAudioRow(p, e){
     timeEl.dataset.audioRowTime = "1";
     timeEl.textContent = `0:00 / ${formatAudioDuration(getAudioRowTotalDurationSec(e.refId))}`;
 
-    const slider = document.createElement("input");
-    slider.type = "range";
-    slider.min = "0";
-    slider.max = "1";
-    slider.step = "0.01";
-    slider.value = "0";
-    slider.dataset.audioRowSlider = "1";
-    slider.style.minWidth = "140px";
-    slider.style.maxWidth = "220px";
-    slider.style.flex = "1";
-    slider.style.width = "100%";
-    slider.style.margin = "0";
+    const progressWrap = document.createElement("div");
+    progressWrap.dataset.audioRowProgressWrap = "1";
+    progressWrap.style.display = "flex";
+    progressWrap.style.alignItems = "center";
+    progressWrap.style.minWidth = "140px";
+    progressWrap.style.maxWidth = "220px";
+    progressWrap.style.flex = "1";
+    progressWrap.style.position = "relative";
+    progressWrap.style.height = "18px";
+    progressWrap.innerHTML = `
+      <div data-audio-row-progress-bg
+           style="position:absolute;left:0;right:0;top:50%;transform:translateY(-50%);
+                  height:4px;border-radius:999px;background:rgba(17,19,23,.14);overflow:hidden;">
+        <div data-audio-row-progress-fill
+             style="height:100%;width:0%;border-radius:999px;background:rgba(84,132,255,.95);"></div>
+      </div>
+      <div data-audio-row-progress-thumb
+           style="position:absolute;top:50%;left:0;width:14px;height:14px;border-radius:999px;
+                  background:#fff;border:2px solid rgba(84,132,255,.95);
+                  box-shadow:0 1px 4px rgba(0,0,0,.18);
+                  transform:translate(0,-50%);
+                  pointer-events:none;
+                  z-index:3;"></div>
+      <input type="range"
+             min="0"
+             max="1"
+             step="0.01"
+             value="0"
+             data-audio-row-slider
+             style="
+  position:absolute;
+  inset:0;
+  z-index:4;
+  width:100%;
+  height:100%;
+  margin:0;
+  opacity:0.001;
+  background:transparent;
+  border:none;
+  outline:none;
+  box-shadow:none;
+  -webkit-appearance:none;
+  appearance:none;
+" />
+    `;
+
+    const slider = progressWrap.querySelector("[data-audio-row-slider]");
 
     const playBtn = document.createElement("button");
     playBtn.className = "btnGhost";
@@ -2995,16 +3065,65 @@ function renderAudioRow(p, e){
     });
 
     if(slider){
+      let isRowSeeking = false;
+      let rowSeekHandled = false;
+      let rowSeekDragSession = 0;
+
+      slider.addEventListener("pointerdown", (ev)=>{
+        ev.stopPropagation();
+        isRowSeeking = true;
+        rowSeekHandled = false;
+        rowSeekDragSession += 1;
+      });
+
       slider.addEventListener("input", (ev)=>{
         ev.preventDefault();
         ev.stopPropagation();
+
+        const totalSec = getAudioRowTotalDurationSec(e.refId);
+        const currentSec = clamp(Number(slider.value || 0), 0, totalSec);
+
+        slider.min = "0";
+        slider.max = String(Math.max(totalSec, 0.000001));
+        slider.value = String(currentSec);
+
+        updateAudioRowProgressVisualFromSlider(block, slider, currentSec, totalSec);
       });
 
       slider.addEventListener("change", async (ev)=>{
         ev.preventDefault();
         ev.stopPropagation();
-        await seekAudioRowPlayback(e.refId, Number(slider.value || 0));
+        return;
       });
+
+      slider.addEventListener("pointerup", async (ev)=>{
+        ev.preventDefault();
+        ev.stopPropagation();
+
+        if(!isRowSeeking) return;
+
+        isRowSeeking = false;
+
+        if(rowSeekHandled) return;
+
+        rowSeekHandled = true;
+        const dragSessionAtPointerUp = rowSeekDragSession;
+
+        await seekAudioRowPlayback(e.refId, Number(slider.value || 0));
+
+        setTimeout(()=>{
+          if(rowSeekDragSession === dragSessionAtPointerUp){
+            rowSeekHandled = false;
+          }
+        }, 0);
+      });
+
+      slider.addEventListener("pointercancel", ()=>{
+        isRowSeeking = false;
+        rowSeekHandled = false;
+      });
+
+      slider.addEventListener("click", (ev)=> ev.stopPropagation());
     }
 
     renameBtn.addEventListener("click", async (ev)=>{
@@ -3029,7 +3148,7 @@ function renderAudioRow(p, e){
 
     actions.appendChild(counterEl);
     actions.appendChild(timeEl);
-    actions.appendChild(slider);
+    actions.appendChild(progressWrap);
     actions.appendChild(playBtn);
     actions.appendChild(renameBtn);
     actions.appendChild(deleteBtn);
@@ -3796,45 +3915,44 @@ function ensureAudioRangeStyles(){
   box-shadow:none;
 }
 [data-audio-row-slider]{
-  -webkit-appearance:none;
-  appearance:none;
-  width:100%;
+  -webkit-appearance:none !important;
+  appearance:none !important;
   background:transparent !important;
-  height:18px;
-  outline:none;
+  background-image:none !important;
+  border:none !important;
+  outline:none !important;
+  box-shadow:none !important;
 }
 [data-audio-row-slider]::-webkit-slider-runnable-track{
-  -webkit-appearance:none;
-  appearance:none;
-  height:4px;
-  background:rgba(17,19,23,.14);
-  border:none;
-  border-radius:999px;
+  -webkit-appearance:none !important;
+  appearance:none !important;
+  background:transparent !important;
+  background-image:none !important;
+  border:none !important;
+  box-shadow:none !important;
 }
 [data-audio-row-slider]::-webkit-slider-thumb{
-  -webkit-appearance:none;
-  appearance:none;
-  width:14px;
-  height:14px;
-  border-radius:999px;
-  background:#fff;
-  border:2px solid rgba(84,132,255,.95);
-  box-shadow:0 1px 4px rgba(0,0,0,.18);
-  margin-top:-5px;
+  -webkit-appearance:none !important;
+  appearance:none !important;
+  width:1px !important;
+  height:1px !important;
+  background:transparent !important;
+  border:none !important;
+  box-shadow:none !important;
+  opacity:0 !important;
 }
 [data-audio-row-slider]::-moz-range-track{
-  height:4px;
-  background:rgba(17,19,23,.14);
-  border:none;
-  border-radius:999px;
+  background:transparent !important;
+  border:none !important;
+  box-shadow:none !important;
 }
 [data-audio-row-slider]::-moz-range-thumb{
-  width:14px;
-  height:14px;
-  border-radius:999px;
-  background:#fff;
-  border:2px solid rgba(84,132,255,.95);
-  box-shadow:0 1px 4px rgba(0,0,0,.18);
+  width:1px !important;
+  height:1px !important;
+  background:transparent !important;
+  border:none !important;
+  box-shadow:none !important;
+  opacity:0 !important;
 }
 `;
   document.head.appendChild(style);
