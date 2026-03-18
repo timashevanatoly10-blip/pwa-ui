@@ -2386,20 +2386,6 @@ function updateAudioRowProgressDom(rowId){
   slider.step = "0.01";
   slider.value = String(clamp(currentSec, 0, totalSec));
 }
-  const host = document.querySelector(`[data-audio-row-id="${rowId}"]`);
-  const slider = host ? host.querySelector("[data-audio-row-slider]") : null;
-  if(!host || !slider) return;
-
-  const totalSec = getAudioRowTotalDurationSec(rowId);
-  const currentSec = getAudioRowCurrentPositionSec(rowId);
-
-  slider.min = "0";
-  slider.max = String(Math.max(totalSec, 0.000001));
-  slider.step = "0.01";
-  slider.value = String(clamp(currentSec, 0, totalSec));
-
-  updateAudioRowProgressVisualFromSlider(host, slider, currentSec, totalSec);
-}
 
 function updateAudioRowHeaderDom(rowId){
   const host = document.querySelector(`[data-audio-row-id="${rowId}"]`);
@@ -2483,36 +2469,19 @@ async function waitForAudioRowItemToFinish(rowId, currentItemId, token){
     }, 120);
   });
 
-  if(result === "invalidated"){
-    return "invalidated";
+  if(result !== "ended"){
+    return result;
   }
 
-  if(result === "paused"){
-    return "paused";
-  }
+  if(token !== audioRowPlaybackToken) return "invalidated";
+  if(!activeAudioRowPlayback) return "stopped";
+  if(activeAudioRowPlayback.rowId !== rowId) return "stopped";
+  if(activeAudioRowPlayback.playbackToken !== token) return "invalidated";
 
-  if(result === "stopped"){
-    return "stopped";
-  }
-
-  if(result === "switched"){
-    return "switched";
-  }
-
-  if(result === "ended"){
-    if(token !== audioRowPlaybackToken) return "invalidated";
-    if(!activeAudioRowPlayback) return "stopped";
-    if(activeAudioRowPlayback.rowId !== rowId) return "stopped";
-    if(activeAudioRowPlayback.playbackToken !== token) return "invalidated";
-
-    activeAudioRowPlayback.index += 1;
-    activeAudioRowPlayback.pausedOffsetSec = 0;
-    await playNextAudioRowItem(token);
-    return "ended";
-  }
-
-  updateAudioRowHeaderDom(rowId);
-  return result;
+  activeAudioRowPlayback.index += 1;
+  activeAudioRowPlayback.pausedOffsetSec = 0;
+  await playNextAudioRowItem(token);
+  return "ended";
 }
 
 async function playAudioTileFromOffsetForRow(rowId, itemId, offsetSec){
@@ -2704,6 +2673,7 @@ async function seekAudioRowPlayback(rowId, targetSec){
 
   if(wasPlaying === true){
     await stopActiveAudioPlayback();
+
     audioRowPlaybackToken += 1;
     const token = audioRowPlaybackToken;
 
@@ -2967,6 +2937,8 @@ function renderAudioRow(p, e){
     actions.style.display = "flex";
     actions.style.alignItems = "center";
     actions.style.gap = "6px";
+    actions.style.minWidth = "0";
+    actions.style.flexWrap = "nowrap";
 
     const counterEl = document.createElement("div");
     counterEl.className = "itemDesc";
@@ -2978,25 +2950,18 @@ function renderAudioRow(p, e){
     timeEl.dataset.audioRowTime = "1";
     timeEl.textContent = `0:00 / ${formatAudioDuration(getAudioRowTotalDurationSec(e.refId))}`;
 
-    const progressWrap = document.createElement("div");
-    progressWrap.dataset.audioRowProgressWrap = "1";
-    progressWrap.style.display = "flex";
-    progressWrap.style.alignItems = "center";
-    progressWrap.style.width = "220px";
-    progressWrap.style.flex = "0 0 220px";
-    progressWrap.style.position = "relative";
-    progressWrap.style.height = "18px";
-    progressWrap.innerHTML = `
-      <input type="range"
-             min="0"
-             max="1"
-             step="0.01"
-             value="0"
-             data-audio-row-slider
-             style="position:relative;z-index:2;width:100%;margin:0;background:transparent;" />
-    `;
-
-    const slider = progressWrap.querySelector("[data-audio-row-slider]");
+    const slider = document.createElement("input");
+    slider.type = "range";
+    slider.min = "0";
+    slider.max = "1";
+    slider.step = "0.01";
+    slider.value = "0";
+    slider.dataset.audioRowSlider = "1";
+    slider.style.minWidth = "140px";
+    slider.style.maxWidth = "220px";
+    slider.style.flex = "1";
+    slider.style.width = "100%";
+    slider.style.margin = "0";
 
     const playBtn = document.createElement("button");
     playBtn.className = "btnGhost";
@@ -3040,8 +3005,6 @@ function renderAudioRow(p, e){
         ev.stopPropagation();
         await seekAudioRowPlayback(e.refId, Number(slider.value || 0));
       });
-
-      slider.addEventListener("click", (ev)=> ev.stopPropagation());
     }
 
     renameBtn.addEventListener("click", async (ev)=>{
@@ -3066,7 +3029,7 @@ function renderAudioRow(p, e){
 
     actions.appendChild(counterEl);
     actions.appendChild(timeEl);
-    actions.appendChild(progressWrap);
+    actions.appendChild(slider);
     actions.appendChild(playBtn);
     actions.appendChild(renameBtn);
     actions.appendChild(deleteBtn);
@@ -3844,8 +3807,9 @@ function ensureAudioRangeStyles(){
   -webkit-appearance:none;
   appearance:none;
   height:4px;
-  background:transparent;
+  background:rgba(17,19,23,.14);
   border:none;
+  border-radius:999px;
 }
 [data-audio-row-slider]::-webkit-slider-thumb{
   -webkit-appearance:none;
@@ -3853,23 +3817,24 @@ function ensureAudioRangeStyles(){
   width:14px;
   height:14px;
   border-radius:999px;
-  background:transparent;
-  border:none;
-  box-shadow:none;
+  background:#fff;
+  border:2px solid rgba(84,132,255,.95);
+  box-shadow:0 1px 4px rgba(0,0,0,.18);
   margin-top:-5px;
 }
 [data-audio-row-slider]::-moz-range-track{
   height:4px;
-  background:transparent;
+  background:rgba(17,19,23,.14);
   border:none;
+  border-radius:999px;
 }
 [data-audio-row-slider]::-moz-range-thumb{
   width:14px;
   height:14px;
   border-radius:999px;
-  background:transparent;
-  border:none;
-  box-shadow:none;
+  background:#fff;
+  border:2px solid rgba(84,132,255,.95);
+  box-shadow:0 1px 4px rgba(0,0,0,.18);
 }
 `;
   document.head.appendChild(style);
