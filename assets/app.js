@@ -2381,11 +2381,20 @@ function updateAudioRowProgressDom(rowId){
 
   const totalSec = getAudioRowTotalDurationSec(rowId);
   const currentSec = getAudioRowCurrentPositionSec(rowId);
+  const max = Math.max(totalSec, 0.000001);
+  const val = clamp(currentSec, 0, totalSec);
+  const pct = (val / max) * 100;
 
   slider.min = "0";
-  slider.max = String(Math.max(totalSec, 0.000001));
+  slider.max = String(max);
   slider.step = "0.01";
-  slider.value = String(clamp(currentSec, 0, totalSec));
+  slider.value = String(val);
+  slider.style.background =
+    `linear-gradient(to right,
+      rgba(84,132,255,.95) 0%,
+      rgba(84,132,255,.95) ${pct}%,
+      rgba(17,19,23,.14) ${pct}%,
+      rgba(17,19,23,.14) 100%)`;
 }
 
 function updateAudioRowHeaderDom(rowId){
@@ -2753,6 +2762,30 @@ async function seekAudioRowPlayback(rowId, targetSec){
   return;
 }
 
+async function playAudioRowFromCurrentSeekState(rowId){
+  if(!activeAudioRowPlayback || activeAudioRowPlayback.rowId !== rowId) return;
+  if(activeAudioRowPlayback.isPaused !== true) return;
+
+  const currentItemId = activeAudioRowPlayback.itemIds[activeAudioRowPlayback.index] || null;
+  if(!currentItemId) return;
+
+  const pausedOffsetSec = Number(activeAudioRowPlayback.pausedOffsetSec || 0);
+  const token = audioRowPlaybackToken;
+
+  activeAudioRowPlayback.isPaused = false;
+  startAudioRowPlaybackUiTimer(rowId);
+  updateAudioRowHeaderDom(rowId);
+
+  await playAudioTileFromOffsetForRow(rowId, currentItemId, pausedOffsetSec);
+
+  if(!activeAudioRowPlayback) return;
+  if(activeAudioRowPlayback.rowId !== rowId) return;
+  if(token !== audioRowPlaybackToken) return;
+
+  activeAudioRowPlayback.pausedOffsetSec = 0;
+  await waitForAudioRowItemToFinish(rowId, currentItemId, token);
+}
+
 async function toggleAudioRowPlayback(rowId){
   if(activeAudioRowPlayback && activeAudioRowPlayback.rowId === rowId){
     if(activeAudioRowPlayback.isPaused === false){
@@ -3062,10 +3095,19 @@ function renderAudioRow(p, e){
 
       const updateTimePreview = (value)=>{
         const state = getPreviewStateForPosition(value);
+        const max = Math.max(state.totalSec, 0.000001);
+        const val = clamp(state.safeTargetSec, 0, state.totalSec);
+        const pct = (val / max) * 100;
         slider.min = "0";
-        slider.max = String(Math.max(state.totalSec, 0.000001));
+        slider.max = String(max);
         slider.step = "0.01";
-        slider.value = String(state.safeTargetSec);
+        slider.value = String(val);
+        slider.style.background =
+          `linear-gradient(to right,
+            rgba(84,132,255,.95) 0%,
+            rgba(84,132,255,.95) ${pct}%,
+            rgba(17,19,23,.14) ${pct}%,
+            rgba(17,19,23,.14) 100%)`;
         if(timeEl){
           timeEl.textContent = `${formatAudioDuration(state.safeTargetSec)} / ${formatAudioDuration(state.totalSec)}`;
         }
@@ -3078,9 +3120,10 @@ function renderAudioRow(p, e){
         if(seekApplyInFlight) return;
         seekApplyInFlight = true;
         try{
+          const shouldResume = wasPlayingBeforeSeek === true;
           await seekAudioRowPlayback(e.refId, Number(value || 0));
-          if(wasPlayingBeforeSeek && activeAudioRowPlayback && activeAudioRowPlayback.rowId === e.refId && activeAudioRowPlayback.isPaused){
-            await toggleAudioRowPlayback(e.refId);
+          if(shouldResume === true){
+            await playAudioRowFromCurrentSeekState(e.refId);
           }
         }finally{
           seekApplyInFlight = false;
@@ -3881,7 +3924,7 @@ function ensureAudioRangeStyles(){
   -webkit-appearance:none;
   appearance:none;
   width:100%;
-  background:transparent !important;
+  background:transparent;
   height:18px;
   outline:none;
 }
@@ -3920,7 +3963,7 @@ function ensureAudioRangeStyles(){
   -webkit-appearance:none;
   appearance:none;
   width:100%;
-  background:transparent !important;
+  background:rgba(17,19,23,.14);
   height:18px;
   outline:none;
   touch-action:none;
