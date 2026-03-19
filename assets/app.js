@@ -2383,17 +2383,24 @@ function updateAudioRowProgressDom(rowId){
   const currentSec = getAudioRowCurrentPositionSec(rowId);
   const max = Math.max(totalSec, 0.000001);
   const val = clamp(currentSec, 0, totalSec);
-  const pct = (val / max) * 100;
 
   slider.min = "0";
   slider.max = String(max);
   slider.step = "0.01";
   slider.value = String(val);
+
+  const trackWidth = slider.getBoundingClientRect().width || 0;
+  const thumbSize = 14;
+  const usable = Math.max(trackWidth - thumbSize, 0);
+  const ratio = clamp(val / max, 0, 1);
+  const thumbLeft = usable * ratio;
+  const fillWidth = thumbLeft + thumbSize / 2;
+
   slider.style.background =
     `linear-gradient(to right,
-      rgba(84,132,255,.95) 0%,
-      rgba(84,132,255,.95) ${pct}%,
-      rgba(17,19,23,.14) ${pct}%,
+      rgba(84,132,255,.95) 0px,
+      rgba(84,132,255,.95) ${fillWidth}px,
+      rgba(17,19,23,.14) ${fillWidth}px,
       rgba(17,19,23,.14) 100%)`;
 }
 
