@@ -2373,36 +2373,35 @@ function getAudioRowCurrentPositionSec(rowId){
   return Number(state.accumulatedSecBeforeIndex || 0) + Number(localSec || 0);
 }
 
-function updateAudioRowProgressVisualFromSlider(host, slider, currentSec, totalSec){
-  if(!host || !slider) return;
-  const fill = host.querySelector("[data-audio-row-progress-fill]");
-  const thumb = host.querySelector("[data-audio-row-progress-thumb]");
-
-  const trackWidth = slider.getBoundingClientRect().width || 0;
-  const thumbSize = 14;
-  const usable = Math.max(trackWidth - thumbSize, 0);
-  const ratio = clamp(currentSec / Math.max(totalSec, 0.000001), 0, 1);
-  const thumbLeft = usable * ratio;
-  const fillWidth = thumbLeft + thumbSize / 2;
-
-  if(fill) fill.style.width = fillWidth + "px";
-  if(thumb) thumb.style.left = thumbLeft + "px";
-}
-
 function updateAudioRowProgressDom(rowId){
   const host = document.querySelector(`[data-audio-row-id="${rowId}"]`);
   const slider = host ? host.querySelector("[data-audio-row-slider]") : null;
   if(!host || !slider) return;
+  if(slider.dataset.seeking === "1") return;
 
   const totalSec = getAudioRowTotalDurationSec(rowId);
   const currentSec = getAudioRowCurrentPositionSec(rowId);
+  const max = Math.max(totalSec, 0.000001);
+  const val = clamp(currentSec, 0, totalSec);
 
   slider.min = "0";
-  slider.max = String(Math.max(totalSec, 0.000001));
+  slider.max = String(max);
   slider.step = "0.01";
-  slider.value = String(clamp(currentSec, 0, totalSec));
+  slider.value = String(val);
 
-  updateAudioRowProgressVisualFromSlider(host, slider, currentSec, totalSec);
+  const trackWidth = slider.getBoundingClientRect().width || 0;
+  const thumbSize = 14;
+  const usable = Math.max(trackWidth - thumbSize, 0);
+  const ratio = clamp(val / max, 0, 1);
+  const thumbLeft = usable * ratio;
+  const fillWidth = thumbLeft + thumbSize / 2;
+
+  slider.style.background =
+    `linear-gradient(to right,
+      rgba(84,132,255,.95) 0px,
+      rgba(84,132,255,.95) ${fillWidth}px,
+      rgba(17,19,23,.14) ${fillWidth}px,
+      rgba(17,19,23,.14) 100%)`;
 }
 
 function updateAudioRowHeaderDom(rowId){
@@ -2412,6 +2411,7 @@ function updateAudioRowHeaderDom(rowId){
   const toggleBtn = host.querySelector("[data-audio-row-toggle]");
   const timeEl = host.querySelector("[data-audio-row-time]");
   const counterEl = host.querySelector("[data-audio-row-counter]");
+  const slider = host.querySelector("[data-audio-row-slider]");
   const totalSec = getAudioRowTotalDurationSec(rowId);
   const currentSec = getAudioRowCurrentPositionSec(rowId);
   const totalTiles = getAudioRowPlayableItems(rowId).length;
@@ -2422,6 +2422,9 @@ function updateAudioRowHeaderDom(rowId){
   if(toggleBtn){
     toggleBtn.textContent = isPlaying ? "❚❚" : "▶";
     toggleBtn.title = isPlaying ? "Pause row" : "Play row";
+  }
+  if(slider?.dataset.seeking === "1"){
+    return;
   }
   if(timeEl){
     const shownCurrent = isActiveRow ? currentSec : 0;
@@ -2508,10 +2511,6 @@ async function waitForAudioRowItemToFinish(rowId, currentItemId, token){
     if(!activeAudioRowPlayback) return "stopped";
     if(activeAudioRowPlayback.rowId !== rowId) return "stopped";
     if(activeAudioRowPlayback.playbackToken !== token) return "invalidated";
-
-    activeAudioRowPlayback.index += 1;
-    activeAudioRowPlayback.pausedOffsetSec = 0;
-    await playNextAudioRowItem(token);
     return "ended";
   }
 
@@ -2587,7 +2586,15 @@ async function playNextAudioRowItem(token = audioRowPlaybackToken){
 
   startAudioRowPlaybackUiTimer(rowId);
   updateAudioRowHeaderDom(rowId);
-  await waitForAudioRowItemToFinish(rowId, currentItemId, token);
+  const result = await waitForAudioRowItemToFinish(rowId, currentItemId, token);
+  if(result !== "ended") return;
+  if(token !== audioRowPlaybackToken) return;
+  if(!activeAudioRowPlayback) return;
+  if(activeAudioRowPlayback.rowId !== rowId) return;
+  if(activeAudioRowPlayback.playbackToken !== token) return;
+  activeAudioRowPlayback.index += 1;
+  activeAudioRowPlayback.pausedOffsetSec = 0;
+  await playNextAudioRowItem(token);
 }
 
 async function playAudioRow(rowId){
@@ -2707,14 +2714,7 @@ async function seekAudioRowPlayback(rowId, targetSec){
   }
 
   if(wasPlaying === true){
-    if(activeAudioPlayback){
-      await stopActiveAudioPlayback();
-    }
-
-    if(activeAudioRowPlayback && activeAudioRowPlayback.rowId !== rowId){
-      await stopActiveAudioRowPlayback();
-    }
-
+    await stopActiveAudioPlayback();
     audioRowPlaybackToken += 1;
     const token = audioRowPlaybackToken;
 
@@ -2730,22 +2730,20 @@ async function seekAudioRowPlayback(rowId, targetSec){
       playbackToken: token
     };
 
-    if(activeAudioRowPlayback.playbackToken !== token) return;
-    if(token !== audioRowPlaybackToken) return;
-
+    startAudioRowPlaybackUiTimer(rowId);
     await playAudioTileFromOffsetForRow(rowId, items[itemIndex].id, localOffset);
 
     if(!activeAudioRowPlayback) return;
     if(activeAudioRowPlayback.rowId !== rowId) return;
-    if(activeAudioRowPlayback.playbackToken !== token) return;
     if(token !== audioRowPlaybackToken) return;
+    if(activeAudioRowPlayback.isPaused) return;
 
-    startAudioRowPlaybackUiTimer(rowId);
     updateAudioRowHeaderDom(rowId);
     updateAudioRowProgressDom(rowId);
     await waitForAudioRowItemToFinish(rowId, items[itemIndex].id, token);
     return;
   }
+
 
   if(activeAudioPlayback){
     await stopActiveAudioPlayback();
@@ -2769,6 +2767,30 @@ async function seekAudioRowPlayback(rowId, targetSec){
   updateAudioRowHeaderDom(rowId);
   updateAudioRowProgressDom(rowId);
   return;
+}
+
+async function playAudioRowFromCurrentSeekState(rowId){
+  if(!activeAudioRowPlayback || activeAudioRowPlayback.rowId !== rowId) return;
+  if(activeAudioRowPlayback.isPaused !== true) return;
+
+  const currentItemId = activeAudioRowPlayback.itemIds[activeAudioRowPlayback.index] || null;
+  if(!currentItemId) return;
+
+  const pausedOffsetSec = Number(activeAudioRowPlayback.pausedOffsetSec || 0);
+  const token = audioRowPlaybackToken;
+
+  activeAudioRowPlayback.isPaused = false;
+  startAudioRowPlaybackUiTimer(rowId);
+  updateAudioRowHeaderDom(rowId);
+
+  await playAudioTileFromOffsetForRow(rowId, currentItemId, pausedOffsetSec);
+
+  if(!activeAudioRowPlayback) return;
+  if(activeAudioRowPlayback.rowId !== rowId) return;
+  if(token !== audioRowPlaybackToken) return;
+
+  activeAudioRowPlayback.pausedOffsetSec = 0;
+  await waitForAudioRowItemToFinish(rowId, currentItemId, token);
 }
 
 async function toggleAudioRowPlayback(rowId){
@@ -3001,43 +3023,15 @@ function renderAudioRow(p, e){
     progressWrap.style.minWidth = "140px";
     progressWrap.style.maxWidth = "220px";
     progressWrap.style.flex = "1";
-    progressWrap.style.position = "relative";
     progressWrap.style.height = "18px";
     progressWrap.innerHTML = `
-      <div data-audio-row-progress-bg
-           style="position:absolute;left:0;right:0;top:50%;transform:translateY(-50%);
-                  height:4px;border-radius:999px;background:rgba(17,19,23,.14);overflow:hidden;">
-        <div data-audio-row-progress-fill
-             style="height:100%;width:0%;border-radius:999px;background:rgba(84,132,255,.95);"></div>
-      </div>
-      <div data-audio-row-progress-thumb
-           style="position:absolute;top:50%;left:0;width:14px;height:14px;border-radius:999px;
-                  background:#fff;border:2px solid rgba(84,132,255,.95);
-                  box-shadow:0 1px 4px rgba(0,0,0,.18);
-                  transform:translate(0,-50%);
-                  pointer-events:none;
-                  z-index:3;"></div>
       <input type="range"
              min="0"
              max="1"
              step="0.01"
              value="0"
              data-audio-row-slider
-             style="
-  position:absolute;
-  inset:0;
-  z-index:4;
-  width:100%;
-  height:100%;
-  margin:0;
-  opacity:0.001;
-  background:transparent;
-  border:none;
-  outline:none;
-  box-shadow:none;
-  -webkit-appearance:none;
-  appearance:none;
-" />
+             style="width:100%;height:18px;margin:0;touch-action:none;pointer-events:auto;" />
     `;
 
     const slider = progressWrap.querySelector("[data-audio-row-slider]");
@@ -3074,71 +3068,114 @@ function renderAudioRow(p, e){
     });
 
     if(slider){
-      let isRowSeeking = false;
-      let rowSeekHandled = false;
-      let rowSeekDragSession = 0;
+      let isSeeking = false;
+      let wasPlayingBeforeSeek = false;
+      let seekApplyInFlight = false;
 
-      slider.addEventListener("pointerdown", (ev)=>{
-        ev.stopPropagation();
-        isRowSeeking = true;
-        rowSeekHandled = false;
-        rowSeekDragSession += 1;
-      });
-
-      slider.addEventListener("input", (ev)=>{
-        ev.preventDefault();
-        ev.stopPropagation();
-
+      const getPreviewStateForPosition = (targetSec)=>{
+        const playableItems = getAudioRowPlayableItems(e.refId);
+        const totalTiles = playableItems.length;
         const totalSec = getAudioRowTotalDurationSec(e.refId);
-        const currentSec = clamp(Number(slider.value || 0), 0, totalSec);
+        const safeTargetSec = clamp(Number(targetSec || 0), 0, totalSec);
+        if(totalTiles === 0){
+          return { totalSec, safeTargetSec, counterText: "0 / 0" };
+        }
 
+        let accumulated = 0;
+        let index = 0;
+        for(let i = 0; i < playableItems.length; i++){
+          const dur = getAudioTotalDurationSec(playableItems[i]);
+          const endSec = accumulated + dur;
+          if(safeTargetSec <= endSec || i === playableItems.length - 1){
+            index = i;
+            break;
+          }
+          accumulated = endSec;
+        }
+
+        return {
+          totalSec,
+          safeTargetSec,
+          counterText: `${Math.min(index + 1, totalTiles)} / ${totalTiles}`
+        };
+      };
+
+      const updateTimePreview = (value)=>{
+        const state = getPreviewStateForPosition(value);
+        const max = Math.max(state.totalSec, 0.000001);
+        const val = clamp(state.safeTargetSec, 0, state.totalSec);
+        const pct = (val / max) * 100;
         slider.min = "0";
-        slider.max = String(Math.max(totalSec, 0.000001));
-        slider.value = String(currentSec);
+        slider.max = String(max);
+        slider.step = "0.01";
+        slider.value = String(val);
+        slider.style.background =
+          `linear-gradient(to right,
+            rgba(84,132,255,.95) 0%,
+            rgba(84,132,255,.95) ${pct}%,
+            rgba(17,19,23,.14) ${pct}%,
+            rgba(17,19,23,.14) 100%)`;
+        if(timeEl){
+          timeEl.textContent = `${formatAudioDuration(state.safeTargetSec)} / ${formatAudioDuration(state.totalSec)}`;
+        }
+        if(counterEl){
+          counterEl.textContent = state.counterText;
+        }
+      };
 
-        updateAudioRowProgressVisualFromSlider(block, slider, currentSec, totalSec);
-      });
+      const applySeek = async (value)=>{
+        if(seekApplyInFlight) return;
+        seekApplyInFlight = true;
+        try{
+          const shouldResume = wasPlayingBeforeSeek === true;
+          await seekAudioRowPlayback(e.refId, Number(value || 0));
+          if(shouldResume === true){
+            await playAudioRowFromCurrentSeekState(e.refId);
+          }
+        }finally{
+          seekApplyInFlight = false;
+          wasPlayingBeforeSeek = false;
+        }
+      };
 
-      slider.addEventListener("change", async (ev)=>{
-        ev.preventDefault();
+      slider.addEventListener("pointerdown", async (ev)=>{
         ev.stopPropagation();
-
-        if(isRowSeeking) return;
-        if(rowSeekHandled) return;
-
-        rowSeekHandled = true;
-        await seekAudioRowPlayback(e.refId, Number(slider.value || 0));
-
-        setTimeout(()=>{
-          rowSeekHandled = false;
-        }, 0);
+        isSeeking = true;
+        slider.dataset.seeking = "1";
+        wasPlayingBeforeSeek = !!activeAudioRowPlayback && activeAudioRowPlayback.rowId === e.refId && activeAudioRowPlayback.isPaused === false;
+        if(wasPlayingBeforeSeek){
+          try{ await pauseAudioRow(e.refId); }catch{}
+        }
       });
 
       slider.addEventListener("pointerup", async (ev)=>{
         ev.preventDefault();
         ev.stopPropagation();
-
-        if(!isRowSeeking) return;
-
-        isRowSeeking = false;
-
-        if(rowSeekHandled) return;
-
-        rowSeekHandled = true;
-        const dragSessionAtPointerUp = rowSeekDragSession;
-
-        await seekAudioRowPlayback(e.refId, Number(slider.value || 0));
-
-        setTimeout(()=>{
-          if(rowSeekDragSession === dragSessionAtPointerUp){
-            rowSeekHandled = false;
-          }
-        }, 0);
+        if(!isSeeking) return;
+        isSeeking = false;
+        slider.dataset.seeking = "0";
+        await applySeek(slider.value);
       });
 
       slider.addEventListener("pointercancel", ()=>{
-        isRowSeeking = false;
-        rowSeekHandled = false;
+        isSeeking = false;
+        slider.dataset.seeking = "0";
+        wasPlayingBeforeSeek = false;
+        updateAudioRowHeaderDom(e.refId);
+      });
+
+      slider.addEventListener("input", (ev)=>{
+        ev.preventDefault();
+        ev.stopPropagation();
+        if(!isSeeking) return;
+        updateTimePreview(slider.value);
+      });
+
+      slider.addEventListener("change", async (ev)=>{
+        ev.preventDefault();
+        ev.stopPropagation();
+        if(isSeeking) return;
+        await applySeek(slider.value);
       });
 
       slider.addEventListener("click", (ev)=> ev.stopPropagation());
@@ -3175,9 +3212,6 @@ function renderAudioRow(p, e){
 
   requestAnimationFrame(()=>{
     updateAudioRowHeaderDom(e.refId);
-    requestAnimationFrame(()=>{
-      updateAudioRowHeaderDom(e.refId);
-    });
   });
   return block;
 }
@@ -3897,7 +3931,7 @@ function ensureAudioRangeStyles(){
   -webkit-appearance:none;
   appearance:none;
   width:100%;
-  background:transparent !important;
+  background:transparent;
   height:18px;
   outline:none;
 }
@@ -3933,44 +3967,46 @@ function ensureAudioRangeStyles(){
   box-shadow:none;
 }
 [data-audio-row-slider]{
-  -webkit-appearance:none !important;
-  appearance:none !important;
-  background:transparent !important;
-  background-image:none !important;
-  border:none !important;
-  outline:none !important;
-  box-shadow:none !important;
+  -webkit-appearance:none;
+  appearance:none;
+  width:100%;
+  background:rgba(17,19,23,.14);
+  height:18px;
+  outline:none;
+  touch-action:none;
 }
 [data-audio-row-slider]::-webkit-slider-runnable-track{
-  -webkit-appearance:none !important;
-  appearance:none !important;
-  background:transparent !important;
-  background-image:none !important;
-  border:none !important;
-  box-shadow:none !important;
+  -webkit-appearance:none;
+  appearance:none;
+  height:4px;
+  background:rgba(17,19,23,.14);
+  border:none;
+  border-radius:999px;
 }
 [data-audio-row-slider]::-webkit-slider-thumb{
-  -webkit-appearance:none !important;
-  appearance:none !important;
-  width:1px !important;
-  height:1px !important;
-  background:transparent !important;
-  border:none !important;
-  box-shadow:none !important;
-  opacity:0 !important;
+  -webkit-appearance:none;
+  appearance:none;
+  width:14px;
+  height:14px;
+  border-radius:999px;
+  background:#fff;
+  border:2px solid rgba(84,132,255,.95);
+  box-shadow:0 1px 4px rgba(0,0,0,.18);
+  margin-top:-5px;
 }
 [data-audio-row-slider]::-moz-range-track{
-  background:transparent !important;
-  border:none !important;
-  box-shadow:none !important;
+  height:4px;
+  background:rgba(17,19,23,.14);
+  border:none;
+  border-radius:999px;
 }
 [data-audio-row-slider]::-moz-range-thumb{
-  width:1px !important;
-  height:1px !important;
-  background:transparent !important;
-  border:none !important;
-  box-shadow:none !important;
-  opacity:0 !important;
+  width:14px;
+  height:14px;
+  border-radius:999px;
+  background:#fff;
+  border:2px solid rgba(84,132,255,.95);
+  box-shadow:0 1px 4px rgba(0,0,0,.18);
 }
 `;
   document.head.appendChild(style);
