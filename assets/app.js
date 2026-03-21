@@ -4886,6 +4886,8 @@ async function refreshRowAndKeepUI(rowId){
 
   const prevContainer = document.querySelector("[data-audio-row-container]") || mainPanel || null;
   const prevScrollTop = prevContainer ? Number(prevContainer.scrollTop || 0) : 0;
+  const prevRail = document.querySelector(`[data-row-inline-id="${rowId}"] .rowCarousel`);
+  const prevRailScrollLeft = prevRail ? Number(prevRail.scrollLeft || 0) : 0;
 
   await loadRowWithItems(rowId);
   if(currentPuchokId){
@@ -4895,15 +4897,24 @@ async function refreshRowAndKeepUI(rowId){
   viewMode = "puchok";
   render();
 
+  const restoreRailScroll = ()=>{
+    const nextRail = document.querySelector(`[data-row-inline-id="${rowId}"] .rowCarousel`);
+    if(nextRail){
+      nextRail.scrollLeft = prevRailScrollLeft;
+    }
+  };
+
   const restoreScroll = ()=>{
     const nextContainer = document.querySelector("[data-audio-row-container]") || mainPanel || null;
     if(nextContainer){
       nextContainer.scrollTop = prevScrollTop;
     }
+    restoreRailScroll();
   };
 
   restoreScroll();
   requestAnimationFrame(restoreScroll);
+  requestAnimationFrame(restoreRailScroll);
   return db.rows[rowId] || null;
 }
 
