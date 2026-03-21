@@ -3459,8 +3459,12 @@ function updateAudioTileDom(rowId, itemId){
   const totalEl = card.querySelector("[data-audio-total-time]");
   const recordingTotalEl = card.querySelector("[data-audio-recording-total]");
 
+  const isTileSeeking = card.dataset.tileSeeking === "1";
+
   let currentSec = 0;
-  if(isPlaybackCurrent){
+  if(isTileSeeking){
+    currentSec = clamp(Number(card.dataset.audioSeek || 0), 0, Math.max(totalSec, 0));
+  }else if(isPlaybackCurrent){
     currentSec = getActiveAudioPlaybackPositionSec(rowId, itemId);
   }else if(card.dataset.audioSeek && !isRecording){
     currentSec = clamp(Number(card.dataset.audioSeek || 0), 0, Math.max(totalSec, 0));
@@ -3508,7 +3512,9 @@ function updateAudioTileDom(rowId, itemId){
     slider.min = "0";
     slider.max = String(Math.max(totalSec, 0.000001));
     slider.step = "0.01";
-    slider.value = String(clamp(currentSec, 0, Math.max(totalSec, 0)));
+    if(!isTileSeeking){
+      slider.value = String(clamp(currentSec, 0, Math.max(totalSec, 0)));
+    }
     setRangeFill(slider);
   }
 
@@ -3934,6 +3940,7 @@ function ensureAudioRangeStyles(){
   background:transparent;
   height:18px;
   outline:none;
+  touch-action:none;
 }
 [data-audio-slider]::-webkit-slider-runnable-track{
   -webkit-appearance:none;
@@ -4055,7 +4062,7 @@ function buildAudioTileCard(card, rowId, it){
                  step="0.01"
                  value="0"
                  data-audio-slider
-                 style="position:relative;z-index:2;width:100%;margin:0;background:transparent;" />
+                 style="position:relative;z-index:2;width:100%;margin:0;background:transparent;touch-action:none;" />
         </div>
         <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
           <div class="itemDesc" data-audio-current-time>0:00</div>
@@ -4126,26 +4133,67 @@ function buildAudioTileCard(card, rowId, it){
     });
   }
   if(slider){
-    const syncSeek = async ()=>{
-      await seekAudioTilePlayback(rowId, it.id, Number(slider.value || 0));
-      setRangeFill(slider);
-    };
-    slider.addEventListener("input", async (e)=>{
+    let isTileSeeking = false;
+    let wasPlayingBeforeSeek = false;
+    let seekPreviewValue = 0;
+
+    slider.addEventListener("pointerdown", async (e)=>{
+      e.stopPropagation();
+      isTileSeeking = true;
+      card.dataset.tileSeeking = "1";
+      seekPreviewValue = Number(slider.value || 0);
+      card.dataset.audioSeek = String(seekPreviewValue);
+
+      wasPlayingBeforeSeek =
+        !!activeAudioPlayback &&
+        activeAudioPlayback.itemId === it.id &&
+        activeAudioPlayback.rowId === rowId &&
+        !activeAudioPlayback.isPaused;
+
+      if(wasPlayingBeforeSeek){
+        await pauseAudioTilePlayback(rowId, it.id);
+      }
+    });
+
+    slider.addEventListener("input", (e)=>{
       e.preventDefault();
       e.stopPropagation();
-      await syncSeek();
+
+      seekPreviewValue = Number(slider.value || 0);
+      card.dataset.audioSeek = String(seekPreviewValue);
+
+      const currentEl = card.querySelector("[data-audio-current-time]");
+      if(currentEl) currentEl.textContent = formatAudioDuration(seekPreviewValue);
+
+      setRangeFill(slider);
     });
+
     slider.addEventListener("change", async (e)=>{
       e.preventDefault();
       e.stopPropagation();
-      await syncSeek();
+
+      card.dataset.audioSeek = String(Number(slider.value || 0));
+      await seekAudioTilePlayback(rowId, it.id, Number(slider.value || 0));
+
+      if(wasPlayingBeforeSeek){
+        await playAudioTile(rowId, it.id);
+      }
+
+      isTileSeeking = false;
+      wasPlayingBeforeSeek = false;
+      delete card.dataset.tileSeeking;
     });
+
+    slider.addEventListener("pointercancel", ()=>{
+      isTileSeeking = false;
+      wasPlayingBeforeSeek = false;
+      delete card.dataset.tileSeeking;
+    });
+
     slider.addEventListener("click", (e)=>{
       e.stopPropagation();
     });
-    slider.addEventListener("pointerdown", (e)=>{
-      e.stopPropagation();
-    });
+
     slider.min = "0";
     slider.value = "0";
     setRangeFill(slider);
