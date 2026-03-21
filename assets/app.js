@@ -3219,6 +3219,7 @@ function renderAudioRow(p, e){
 function renderPuchokInside(p){
   const wrap = document.createElement("div");
   wrap.className = "list";
+  wrap.dataset.audioRowContainer = "1";
 
   const entries = (p.entries || []);
   if(entries.length === 0){
@@ -4882,6 +4883,10 @@ async function refreshStay(){
 }
 async function refreshRowAndKeepUI(rowId){
   if(!rowId) return null;
+
+  const prevContainer = document.querySelector("[data-audio-row-container]") || mainPanel || null;
+  const prevScrollTop = prevContainer ? Number(prevContainer.scrollTop || 0) : 0;
+
   await loadRowWithItems(rowId);
   if(currentPuchokId){
     try{ await loadPuchokWithEntries(currentPuchokId); }catch{}
@@ -4889,6 +4894,16 @@ async function refreshRowAndKeepUI(rowId){
   expandRowInline(rowId);
   viewMode = "puchok";
   render();
+
+  const restoreScroll = ()=>{
+    const nextContainer = document.querySelector("[data-audio-row-container]") || mainPanel || null;
+    if(nextContainer){
+      nextContainer.scrollTop = prevScrollTop;
+    }
+  };
+
+  restoreScroll();
+  requestAnimationFrame(restoreScroll);
   return db.rows[rowId] || null;
 }
 
