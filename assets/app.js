@@ -4828,7 +4828,6 @@ async function addItemViaRowTile(rowId){
         alert("Не удалось создать аудио-плитку.");
         return;
       }
-      await refreshRowAndKeepUI(rowId);
     }catch(e){
       addMsg("Ошибка аудио-плитки: " + (e?.message || e), "err");
     }
