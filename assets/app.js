@@ -3476,14 +3476,16 @@ function updateAudioTileDom(rowId, itemId){
     if(isRecording){
       recordBtn.textContent = "■";
       recordBtn.title = "Стоп запись";
+      recordBtn.disabled = false;
     }else if(hasSegments){
       recordBtn.textContent = "⏺+";
       recordBtn.title = "Дозапись";
+      recordBtn.disabled = isPlaybackPlaying;
     }else{
       recordBtn.textContent = "⏺";
       recordBtn.title = "Запись";
+      recordBtn.disabled = isPlaybackPlaying;
     }
-    recordBtn.disabled = isRecording ? false : isPlaybackPlaying;
   }
   if(playToggleBtn){
     playToggleBtn.textContent = isPlaybackPlaying ? "❚❚" : "▶";
@@ -4176,6 +4178,10 @@ function buildAudioTileCard(card, rowId, it){
 
       card.dataset.audioSeek = String(Number(slider.value || 0));
       await seekAudioTilePlayback(rowId, it.id, Number(slider.value || 0));
+
+      if(wasPlayingBeforeSeek){
+        await playAudioTile(rowId, it.id);
+      }
 
       isTileSeeking = false;
       wasPlayingBeforeSeek = false;
@@ -4881,22 +4887,10 @@ async function refreshStay(){
 async function refreshRowAndKeepUI(rowId){
   if(!rowId) return null;
 
+  const prevContainer = document.querySelector("[data-audio-row-container]") || mainPanel || null;
+  const prevScrollTop = prevContainer ? Number(prevContainer.scrollTop || 0) : 0;
   const prevRail = document.querySelector(`[data-row-inline-id="${rowId}"] .rowCarousel`);
-  let anchorItemId = null;
-  let prevRailScrollLeft = 0;
-
-  if(prevRail){
-    prevRailScrollLeft = Number(prevRail.scrollLeft || 0);
-    const cards = [...prevRail.querySelectorAll("[data-row-tile-item-id]")];
-    let minDiff = Infinity;
-    for(const card of cards){
-      const diff = Math.abs(Number(card.offsetLeft || 0) - prevRailScrollLeft);
-      if(diff < minDiff){
-        minDiff = diff;
-        anchorItemId = card.getAttribute("data-row-tile-item-id") || null;
-      }
-    }
-  }
+  const prevRailScrollLeft = prevRail ? Number(prevRail.scrollLeft || 0) : 0;
 
   await loadRowWithItems(rowId);
   if(currentPuchokId){
@@ -4906,23 +4900,24 @@ async function refreshRowAndKeepUI(rowId){
   viewMode = "puchok";
   render();
 
-  const restoreRailPosition = ()=>{
+  const restoreRailScroll = ()=>{
     const nextRail = document.querySelector(`[data-row-inline-id="${rowId}"] .rowCarousel`);
-    if(!nextRail) return;
-
-    if(anchorItemId){
-      const anchorCard = nextRail.querySelector(`[data-row-tile-item-id="${anchorItemId}"]`);
-      if(anchorCard){
-        nextRail.scrollLeft = Math.max(0, anchorCard.offsetLeft - 12);
-        return;
-      }
+    if(nextRail){
+      nextRail.scrollLeft = prevRailScrollLeft;
     }
-
-    nextRail.scrollLeft = prevRailScrollLeft;
   };
 
-  restoreRailPosition();
-  requestAnimationFrame(restoreRailPosition);
+  const restoreScroll = ()=>{
+    const nextContainer = document.querySelector("[data-audio-row-container]") || mainPanel || null;
+    if(nextContainer){
+      nextContainer.scrollTop = prevScrollTop;
+    }
+    restoreRailScroll();
+  };
+
+  restoreScroll();
+  requestAnimationFrame(restoreScroll);
+  requestAnimationFrame(restoreRailScroll);
   return db.rows[rowId] || null;
 }
 
