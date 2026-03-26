@@ -308,7 +308,7 @@ async function exportPhotoRowHtml(rowId, rowTitle){
       const reader = new FileReader();
       reader.onload = () => resolve(reader.result);
       reader.onerror = () => reject(reader.error || new Error("FILE_READER_ERROR"));
-      reader.readAsDataURL(blob);
+      reader.readAsDataURL(sourceBlob);
     });
   }
 
@@ -3537,12 +3537,12 @@ function stopAudioTileTimer(itemId){
     state.timerId = null;
   }
 }
-function blobToDataURLLocal(blob){
+function blobToDataURLLocal(sourceBlob){
   return new Promise((resolve, reject)=>{
     const reader = new FileReader();
     reader.onload = ()=> resolve(String(reader.result || ""));
     reader.onerror = ()=> reject(reader.error || new Error("FILE_READER_ERROR"));
-    reader.readAsDataURL(blob);
+    reader.readAsDataURL(sourceBlob);
   });
 }
 function dataURLToBlobLocal(dataURL){
