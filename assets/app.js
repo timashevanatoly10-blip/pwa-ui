@@ -3219,6 +3219,7 @@ function renderAudioRow(p, e){
 function renderPuchokInside(p){
   const wrap = document.createElement("div");
   wrap.className = "list";
+  wrap.dataset.audioRowContainer = "1";
 
   const entries = (p.entries || []);
   if(entries.length === 0){
@@ -3449,7 +3450,6 @@ function updateAudioTileDom(rowId, itemId){
 
   const segsEl = card.querySelector("[data-audio-seg-count]");
   const recordBtn = card.querySelector("[data-audio-record]");
-  const stopRecordBtn = card.querySelector("[data-audio-stop-record]");
   const playToggleBtn = card.querySelector("[data-audio-play-toggle]");
   const saveBtn = card.querySelector("[data-audio-save]");
   const deleteBtn = card.querySelector("[data-audio-delete]");
@@ -3473,14 +3473,17 @@ function updateAudioTileDom(rowId, itemId){
   if(segsEl) segsEl.textContent = `Сегментов: ${segments.length}`;
 
   if(recordBtn){
-    recordBtn.textContent = hasSegments ? "⏺+" : "⏺";
-    recordBtn.title = hasSegments ? "Дозапись" : "Record";
-    recordBtn.disabled = isRecording || isPlaybackPlaying;
-  }
-  if(stopRecordBtn){
-    stopRecordBtn.textContent = "■";
-    stopRecordBtn.title = "Stop recording";
-    stopRecordBtn.disabled = !isRecording;
+    if(isRecording){
+      recordBtn.textContent = "■";
+      recordBtn.title = "Стоп запись";
+    }else if(hasSegments){
+      recordBtn.textContent = "⏺+";
+      recordBtn.title = "Дозапись";
+    }else{
+      recordBtn.textContent = "⏺";
+      recordBtn.title = "Запись";
+    }
+    recordBtn.disabled = isRecording ? false : isPlaybackPlaying;
   }
   if(playToggleBtn){
     playToggleBtn.textContent = isPlaybackPlaying ? "❚❚" : "▶";
@@ -4038,7 +4041,6 @@ function buildAudioTileCard(card, rowId, it){
 
       <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:flex-start;">
         <button type="button" class="btnGhost" data-audio-record>⏺</button>
-        <button type="button" class="btnGhost" data-audio-stop-record>■</button>
       </div>
 
       <div style="display:flex;flex-direction:column;gap:6px;">
@@ -4079,7 +4081,6 @@ function buildAudioTileCard(card, rowId, it){
   `;
 
   const btnRecord = card.querySelector("[data-audio-record]");
-  const btnStopRecord = card.querySelector("[data-audio-stop-record]");
   const btnPlayToggle = card.querySelector("[data-audio-play-toggle]");
   const btnSave = card.querySelector("[data-audio-save]");
   const btnDelete = card.querySelector("[data-audio-delete]");
@@ -4090,14 +4091,15 @@ function buildAudioTileCard(card, rowId, it){
     btnRecord.addEventListener("click", async (e)=>{
       e.preventDefault();
       e.stopPropagation();
+
+      const state = audioTileRecorderStates.get(it.id);
+
+      if(state && state.status === "recording"){
+        await stopAudioTileRecording(rowId, it.id);
+        return;
+      }
+
       await startAudioTileRecording(rowId, it.id);
-    });
-  }
-  if(btnStopRecord){
-    btnStopRecord.addEventListener("click", async (e)=>{
-      e.preventDefault();
-      e.stopPropagation();
-      await stopAudioTileRecording(rowId, it.id);
     });
   }
   if(btnPlayToggle){
@@ -4174,10 +4176,6 @@ function buildAudioTileCard(card, rowId, it){
 
       card.dataset.audioSeek = String(Number(slider.value || 0));
       await seekAudioTilePlayback(rowId, it.id, Number(slider.value || 0));
-
-      if(wasPlayingBeforeSeek){
-        await playAudioTile(rowId, it.id);
-      }
 
       isTileSeeking = false;
       wasPlayingBeforeSeek = false;
@@ -4882,6 +4880,24 @@ async function refreshStay(){
 }
 async function refreshRowAndKeepUI(rowId){
   if(!rowId) return null;
+
+  const prevRail = document.querySelector(`[data-row-inline-id="${rowId}"] .rowCarousel`);
+  let anchorItemId = null;
+  let prevRailScrollLeft = 0;
+
+  if(prevRail){
+    prevRailScrollLeft = Number(prevRail.scrollLeft || 0);
+    const cards = [...prevRail.querySelectorAll("[data-row-tile-item-id]")];
+    let minDiff = Infinity;
+    for(const card of cards){
+      const diff = Math.abs(Number(card.offsetLeft || 0) - prevRailScrollLeft);
+      if(diff < minDiff){
+        minDiff = diff;
+        anchorItemId = card.getAttribute("data-row-tile-item-id") || null;
+      }
+    }
+  }
+
   await loadRowWithItems(rowId);
   if(currentPuchokId){
     try{ await loadPuchokWithEntries(currentPuchokId); }catch{}
@@ -4889,6 +4905,24 @@ async function refreshRowAndKeepUI(rowId){
   expandRowInline(rowId);
   viewMode = "puchok";
   render();
+
+  const restoreRailPosition = ()=>{
+    const nextRail = document.querySelector(`[data-row-inline-id="${rowId}"] .rowCarousel`);
+    if(!nextRail) return;
+
+    if(anchorItemId){
+      const anchorCard = nextRail.querySelector(`[data-row-tile-item-id="${anchorItemId}"]`);
+      if(anchorCard){
+        nextRail.scrollLeft = Math.max(0, anchorCard.offsetLeft - 12);
+        return;
+      }
+    }
+
+    nextRail.scrollLeft = prevRailScrollLeft;
+  };
+
+  restoreRailPosition();
+  requestAnimationFrame(restoreRailPosition);
   return db.rows[rowId] || null;
 }
 
