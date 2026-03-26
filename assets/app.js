@@ -2373,35 +2373,36 @@ function getAudioRowCurrentPositionSec(rowId){
   return Number(state.accumulatedSecBeforeIndex || 0) + Number(localSec || 0);
 }
 
-function updateAudioRowProgressDom(rowId){
-  const host = document.querySelector(`[data-audio-row-id="${rowId}"]`);
-  const slider = host ? host.querySelector("[data-audio-row-slider]") : null;
+function updateAudioRowProgressVisualFromSlider(host, slider, currentSec, totalSec){
   if(!host || !slider) return;
-  if(slider.dataset.seeking === "1") return;
-
-  const totalSec = getAudioRowTotalDurationSec(rowId);
-  const currentSec = getAudioRowCurrentPositionSec(rowId);
-  const max = Math.max(totalSec, 0.000001);
-  const val = clamp(currentSec, 0, totalSec);
-
-  slider.min = "0";
-  slider.max = String(max);
-  slider.step = "0.01";
-  slider.value = String(val);
+  const fill = host.querySelector("[data-audio-row-progress-fill]");
+  const thumb = host.querySelector("[data-audio-row-progress-thumb]");
 
   const trackWidth = slider.getBoundingClientRect().width || 0;
   const thumbSize = 14;
   const usable = Math.max(trackWidth - thumbSize, 0);
-  const ratio = clamp(val / max, 0, 1);
+  const ratio = clamp(currentSec / Math.max(totalSec, 0.000001), 0, 1);
   const thumbLeft = usable * ratio;
   const fillWidth = thumbLeft + thumbSize / 2;
 
-  slider.style.background =
-    `linear-gradient(to right,
-      rgba(84,132,255,.95) 0px,
-      rgba(84,132,255,.95) ${fillWidth}px,
-      rgba(17,19,23,.14) ${fillWidth}px,
-      rgba(17,19,23,.14) 100%)`;
+  if(fill) fill.style.width = fillWidth + "px";
+  if(thumb) thumb.style.left = thumbLeft + "px";
+}
+
+function updateAudioRowProgressDom(rowId){
+  const host = document.querySelector(`[data-audio-row-id="${rowId}"]`);
+  const slider = host ? host.querySelector("[data-audio-row-slider]") : null;
+  if(!host || !slider) return;
+
+  const totalSec = getAudioRowTotalDurationSec(rowId);
+  const currentSec = getAudioRowCurrentPositionSec(rowId);
+
+  slider.min = "0";
+  slider.max = String(Math.max(totalSec, 0.000001));
+  slider.step = "0.01";
+  slider.value = String(clamp(currentSec, 0, totalSec));
+
+  updateAudioRowProgressVisualFromSlider(host, slider, currentSec, totalSec);
 }
 
 function updateAudioRowHeaderDom(rowId){
@@ -2411,7 +2412,6 @@ function updateAudioRowHeaderDom(rowId){
   const toggleBtn = host.querySelector("[data-audio-row-toggle]");
   const timeEl = host.querySelector("[data-audio-row-time]");
   const counterEl = host.querySelector("[data-audio-row-counter]");
-  const slider = host.querySelector("[data-audio-row-slider]");
   const totalSec = getAudioRowTotalDurationSec(rowId);
   const currentSec = getAudioRowCurrentPositionSec(rowId);
   const totalTiles = getAudioRowPlayableItems(rowId).length;
@@ -2422,9 +2422,6 @@ function updateAudioRowHeaderDom(rowId){
   if(toggleBtn){
     toggleBtn.textContent = isPlaying ? "❚❚" : "▶";
     toggleBtn.title = isPlaying ? "Pause row" : "Play row";
-  }
-  if(slider?.dataset.seeking === "1"){
-    return;
   }
   if(timeEl){
     const shownCurrent = isActiveRow ? currentSec : 0;
@@ -2511,6 +2508,10 @@ async function waitForAudioRowItemToFinish(rowId, currentItemId, token){
     if(!activeAudioRowPlayback) return "stopped";
     if(activeAudioRowPlayback.rowId !== rowId) return "stopped";
     if(activeAudioRowPlayback.playbackToken !== token) return "invalidated";
+
+    activeAudioRowPlayback.index += 1;
+    activeAudioRowPlayback.pausedOffsetSec = 0;
+    await playNextAudioRowItem(token);
     return "ended";
   }
 
@@ -2586,15 +2587,7 @@ async function playNextAudioRowItem(token = audioRowPlaybackToken){
 
   startAudioRowPlaybackUiTimer(rowId);
   updateAudioRowHeaderDom(rowId);
-  const result = await waitForAudioRowItemToFinish(rowId, currentItemId, token);
-  if(result !== "ended") return;
-  if(token !== audioRowPlaybackToken) return;
-  if(!activeAudioRowPlayback) return;
-  if(activeAudioRowPlayback.rowId !== rowId) return;
-  if(activeAudioRowPlayback.playbackToken !== token) return;
-  activeAudioRowPlayback.index += 1;
-  activeAudioRowPlayback.pausedOffsetSec = 0;
-  await playNextAudioRowItem(token);
+  await waitForAudioRowItemToFinish(rowId, currentItemId, token);
 }
 
 async function playAudioRow(rowId){
@@ -2714,7 +2707,14 @@ async function seekAudioRowPlayback(rowId, targetSec){
   }
 
   if(wasPlaying === true){
-    await stopActiveAudioPlayback();
+    if(activeAudioPlayback){
+      await stopActiveAudioPlayback();
+    }
+
+    if(activeAudioRowPlayback && activeAudioRowPlayback.rowId !== rowId){
+      await stopActiveAudioRowPlayback();
+    }
+
     audioRowPlaybackToken += 1;
     const token = audioRowPlaybackToken;
 
@@ -2730,20 +2730,22 @@ async function seekAudioRowPlayback(rowId, targetSec){
       playbackToken: token
     };
 
-    startAudioRowPlaybackUiTimer(rowId);
+    if(activeAudioRowPlayback.playbackToken !== token) return;
+    if(token !== audioRowPlaybackToken) return;
+
     await playAudioTileFromOffsetForRow(rowId, items[itemIndex].id, localOffset);
 
     if(!activeAudioRowPlayback) return;
     if(activeAudioRowPlayback.rowId !== rowId) return;
+    if(activeAudioRowPlayback.playbackToken !== token) return;
     if(token !== audioRowPlaybackToken) return;
-    if(activeAudioRowPlayback.isPaused) return;
 
+    startAudioRowPlaybackUiTimer(rowId);
     updateAudioRowHeaderDom(rowId);
     updateAudioRowProgressDom(rowId);
     await waitForAudioRowItemToFinish(rowId, items[itemIndex].id, token);
     return;
   }
-
 
   if(activeAudioPlayback){
     await stopActiveAudioPlayback();
@@ -2767,30 +2769,6 @@ async function seekAudioRowPlayback(rowId, targetSec){
   updateAudioRowHeaderDom(rowId);
   updateAudioRowProgressDom(rowId);
   return;
-}
-
-async function playAudioRowFromCurrentSeekState(rowId){
-  if(!activeAudioRowPlayback || activeAudioRowPlayback.rowId !== rowId) return;
-  if(activeAudioRowPlayback.isPaused !== true) return;
-
-  const currentItemId = activeAudioRowPlayback.itemIds[activeAudioRowPlayback.index] || null;
-  if(!currentItemId) return;
-
-  const pausedOffsetSec = Number(activeAudioRowPlayback.pausedOffsetSec || 0);
-  const token = audioRowPlaybackToken;
-
-  activeAudioRowPlayback.isPaused = false;
-  startAudioRowPlaybackUiTimer(rowId);
-  updateAudioRowHeaderDom(rowId);
-
-  await playAudioTileFromOffsetForRow(rowId, currentItemId, pausedOffsetSec);
-
-  if(!activeAudioRowPlayback) return;
-  if(activeAudioRowPlayback.rowId !== rowId) return;
-  if(token !== audioRowPlaybackToken) return;
-
-  activeAudioRowPlayback.pausedOffsetSec = 0;
-  await waitForAudioRowItemToFinish(rowId, currentItemId, token);
 }
 
 async function toggleAudioRowPlayback(rowId){
@@ -3023,15 +3001,43 @@ function renderAudioRow(p, e){
     progressWrap.style.minWidth = "140px";
     progressWrap.style.maxWidth = "220px";
     progressWrap.style.flex = "1";
+    progressWrap.style.position = "relative";
     progressWrap.style.height = "18px";
     progressWrap.innerHTML = `
+      <div data-audio-row-progress-bg
+           style="position:absolute;left:0;right:0;top:50%;transform:translateY(-50%);
+                  height:4px;border-radius:999px;background:rgba(17,19,23,.14);overflow:hidden;">
+        <div data-audio-row-progress-fill
+             style="height:100%;width:0%;border-radius:999px;background:rgba(84,132,255,.95);"></div>
+      </div>
+      <div data-audio-row-progress-thumb
+           style="position:absolute;top:50%;left:0;width:14px;height:14px;border-radius:999px;
+                  background:#fff;border:2px solid rgba(84,132,255,.95);
+                  box-shadow:0 1px 4px rgba(0,0,0,.18);
+                  transform:translate(0,-50%);
+                  pointer-events:none;
+                  z-index:3;"></div>
       <input type="range"
              min="0"
              max="1"
              step="0.01"
              value="0"
              data-audio-row-slider
-             style="width:100%;height:18px;margin:0;touch-action:none;pointer-events:auto;" />
+             style="
+  position:absolute;
+  inset:0;
+  z-index:4;
+  width:100%;
+  height:100%;
+  margin:0;
+  opacity:0.001;
+  background:transparent;
+  border:none;
+  outline:none;
+  box-shadow:none;
+  -webkit-appearance:none;
+  appearance:none;
+" />
     `;
 
     const slider = progressWrap.querySelector("[data-audio-row-slider]");
@@ -3068,114 +3074,71 @@ function renderAudioRow(p, e){
     });
 
     if(slider){
-      let isSeeking = false;
-      let wasPlayingBeforeSeek = false;
-      let seekApplyInFlight = false;
+      let isRowSeeking = false;
+      let rowSeekHandled = false;
+      let rowSeekDragSession = 0;
 
-      const getPreviewStateForPosition = (targetSec)=>{
-        const playableItems = getAudioRowPlayableItems(e.refId);
-        const totalTiles = playableItems.length;
-        const totalSec = getAudioRowTotalDurationSec(e.refId);
-        const safeTargetSec = clamp(Number(targetSec || 0), 0, totalSec);
-        if(totalTiles === 0){
-          return { totalSec, safeTargetSec, counterText: "0 / 0" };
-        }
-
-        let accumulated = 0;
-        let index = 0;
-        for(let i = 0; i < playableItems.length; i++){
-          const dur = getAudioTotalDurationSec(playableItems[i]);
-          const endSec = accumulated + dur;
-          if(safeTargetSec <= endSec || i === playableItems.length - 1){
-            index = i;
-            break;
-          }
-          accumulated = endSec;
-        }
-
-        return {
-          totalSec,
-          safeTargetSec,
-          counterText: `${Math.min(index + 1, totalTiles)} / ${totalTiles}`
-        };
-      };
-
-      const updateTimePreview = (value)=>{
-        const state = getPreviewStateForPosition(value);
-        const max = Math.max(state.totalSec, 0.000001);
-        const val = clamp(state.safeTargetSec, 0, state.totalSec);
-        const pct = (val / max) * 100;
-        slider.min = "0";
-        slider.max = String(max);
-        slider.step = "0.01";
-        slider.value = String(val);
-        slider.style.background =
-          `linear-gradient(to right,
-            rgba(84,132,255,.95) 0%,
-            rgba(84,132,255,.95) ${pct}%,
-            rgba(17,19,23,.14) ${pct}%,
-            rgba(17,19,23,.14) 100%)`;
-        if(timeEl){
-          timeEl.textContent = `${formatAudioDuration(state.safeTargetSec)} / ${formatAudioDuration(state.totalSec)}`;
-        }
-        if(counterEl){
-          counterEl.textContent = state.counterText;
-        }
-      };
-
-      const applySeek = async (value)=>{
-        if(seekApplyInFlight) return;
-        seekApplyInFlight = true;
-        try{
-          const shouldResume = wasPlayingBeforeSeek === true;
-          await seekAudioRowPlayback(e.refId, Number(value || 0));
-          if(shouldResume === true){
-            await playAudioRowFromCurrentSeekState(e.refId);
-          }
-        }finally{
-          seekApplyInFlight = false;
-          wasPlayingBeforeSeek = false;
-        }
-      };
-
-      slider.addEventListener("pointerdown", async (ev)=>{
+      slider.addEventListener("pointerdown", (ev)=>{
         ev.stopPropagation();
-        isSeeking = true;
-        slider.dataset.seeking = "1";
-        wasPlayingBeforeSeek = !!activeAudioRowPlayback && activeAudioRowPlayback.rowId === e.refId && activeAudioRowPlayback.isPaused === false;
-        if(wasPlayingBeforeSeek){
-          try{ await pauseAudioRow(e.refId); }catch{}
-        }
-      });
-
-      slider.addEventListener("pointerup", async (ev)=>{
-        ev.preventDefault();
-        ev.stopPropagation();
-        if(!isSeeking) return;
-        isSeeking = false;
-        slider.dataset.seeking = "0";
-        await applySeek(slider.value);
-      });
-
-      slider.addEventListener("pointercancel", ()=>{
-        isSeeking = false;
-        slider.dataset.seeking = "0";
-        wasPlayingBeforeSeek = false;
-        updateAudioRowHeaderDom(e.refId);
+        isRowSeeking = true;
+        rowSeekHandled = false;
+        rowSeekDragSession += 1;
       });
 
       slider.addEventListener("input", (ev)=>{
         ev.preventDefault();
         ev.stopPropagation();
-        if(!isSeeking) return;
-        updateTimePreview(slider.value);
+
+        const totalSec = getAudioRowTotalDurationSec(e.refId);
+        const currentSec = clamp(Number(slider.value || 0), 0, totalSec);
+
+        slider.min = "0";
+        slider.max = String(Math.max(totalSec, 0.000001));
+        slider.value = String(currentSec);
+
+        updateAudioRowProgressVisualFromSlider(block, slider, currentSec, totalSec);
       });
 
       slider.addEventListener("change", async (ev)=>{
         ev.preventDefault();
         ev.stopPropagation();
-        if(isSeeking) return;
-        await applySeek(slider.value);
+
+        if(isRowSeeking) return;
+        if(rowSeekHandled) return;
+
+        rowSeekHandled = true;
+        await seekAudioRowPlayback(e.refId, Number(slider.value || 0));
+
+        setTimeout(()=>{
+          rowSeekHandled = false;
+        }, 0);
+      });
+
+      slider.addEventListener("pointerup", async (ev)=>{
+        ev.preventDefault();
+        ev.stopPropagation();
+
+        if(!isRowSeeking) return;
+
+        isRowSeeking = false;
+
+        if(rowSeekHandled) return;
+
+        rowSeekHandled = true;
+        const dragSessionAtPointerUp = rowSeekDragSession;
+
+        await seekAudioRowPlayback(e.refId, Number(slider.value || 0));
+
+        setTimeout(()=>{
+          if(rowSeekDragSession === dragSessionAtPointerUp){
+            rowSeekHandled = false;
+          }
+        }, 0);
+      });
+
+      slider.addEventListener("pointercancel", ()=>{
+        isRowSeeking = false;
+        rowSeekHandled = false;
       });
 
       slider.addEventListener("click", (ev)=> ev.stopPropagation());
@@ -3212,6 +3175,9 @@ function renderAudioRow(p, e){
 
   requestAnimationFrame(()=>{
     updateAudioRowHeaderDom(e.refId);
+    requestAnimationFrame(()=>{
+      updateAudioRowHeaderDom(e.refId);
+    });
   });
   return block;
 }
@@ -3219,7 +3185,6 @@ function renderAudioRow(p, e){
 function renderPuchokInside(p){
   const wrap = document.createElement("div");
   wrap.className = "list";
-  wrap.dataset.audioRowContainer = "1";
 
   const entries = (p.entries || []);
   if(entries.length === 0){
@@ -3450,6 +3415,7 @@ function updateAudioTileDom(rowId, itemId){
 
   const segsEl = card.querySelector("[data-audio-seg-count]");
   const recordBtn = card.querySelector("[data-audio-record]");
+  const stopRecordBtn = card.querySelector("[data-audio-stop-record]");
   const playToggleBtn = card.querySelector("[data-audio-play-toggle]");
   const saveBtn = card.querySelector("[data-audio-save]");
   const deleteBtn = card.querySelector("[data-audio-delete]");
@@ -3459,12 +3425,8 @@ function updateAudioTileDom(rowId, itemId){
   const totalEl = card.querySelector("[data-audio-total-time]");
   const recordingTotalEl = card.querySelector("[data-audio-recording-total]");
 
-  const isTileSeeking = card.dataset.tileSeeking === "1";
-
   let currentSec = 0;
-  if(isTileSeeking){
-    currentSec = clamp(Number(card.dataset.audioSeek || 0), 0, Math.max(totalSec, 0));
-  }else if(isPlaybackCurrent){
+  if(isPlaybackCurrent){
     currentSec = getActiveAudioPlaybackPositionSec(rowId, itemId);
   }else if(card.dataset.audioSeek && !isRecording){
     currentSec = clamp(Number(card.dataset.audioSeek || 0), 0, Math.max(totalSec, 0));
@@ -3473,17 +3435,14 @@ function updateAudioTileDom(rowId, itemId){
   if(segsEl) segsEl.textContent = `Сегментов: ${segments.length}`;
 
   if(recordBtn){
-    if(isRecording){
-      recordBtn.textContent = "■";
-      recordBtn.title = "Стоп запись";
-    }else if(hasSegments){
-      recordBtn.textContent = "⏺+";
-      recordBtn.title = "Дозапись";
-    }else{
-      recordBtn.textContent = "⏺";
-      recordBtn.title = "Запись";
-    }
-    recordBtn.disabled = isRecording ? false : isPlaybackPlaying;
+    recordBtn.textContent = hasSegments ? "⏺+" : "⏺";
+    recordBtn.title = hasSegments ? "Дозапись" : "Record";
+    recordBtn.disabled = isRecording || isPlaybackPlaying;
+  }
+  if(stopRecordBtn){
+    stopRecordBtn.textContent = "■";
+    stopRecordBtn.title = "Stop recording";
+    stopRecordBtn.disabled = !isRecording;
   }
   if(playToggleBtn){
     playToggleBtn.textContent = isPlaybackPlaying ? "❚❚" : "▶";
@@ -3515,9 +3474,7 @@ function updateAudioTileDom(rowId, itemId){
     slider.min = "0";
     slider.max = String(Math.max(totalSec, 0.000001));
     slider.step = "0.01";
-    if(!isTileSeeking){
-      slider.value = String(clamp(currentSec, 0, Math.max(totalSec, 0)));
-    }
+    slider.value = String(clamp(currentSec, 0, Math.max(totalSec, 0)));
     setRangeFill(slider);
   }
 
@@ -3940,10 +3897,9 @@ function ensureAudioRangeStyles(){
   -webkit-appearance:none;
   appearance:none;
   width:100%;
-  background:transparent;
+  background:transparent !important;
   height:18px;
   outline:none;
-  touch-action:none;
 }
 [data-audio-slider]::-webkit-slider-runnable-track{
   -webkit-appearance:none;
@@ -3977,46 +3933,44 @@ function ensureAudioRangeStyles(){
   box-shadow:none;
 }
 [data-audio-row-slider]{
-  -webkit-appearance:none;
-  appearance:none;
-  width:100%;
-  background:rgba(17,19,23,.14);
-  height:18px;
-  outline:none;
-  touch-action:none;
+  -webkit-appearance:none !important;
+  appearance:none !important;
+  background:transparent !important;
+  background-image:none !important;
+  border:none !important;
+  outline:none !important;
+  box-shadow:none !important;
 }
 [data-audio-row-slider]::-webkit-slider-runnable-track{
-  -webkit-appearance:none;
-  appearance:none;
-  height:4px;
-  background:rgba(17,19,23,.14);
-  border:none;
-  border-radius:999px;
+  -webkit-appearance:none !important;
+  appearance:none !important;
+  background:transparent !important;
+  background-image:none !important;
+  border:none !important;
+  box-shadow:none !important;
 }
 [data-audio-row-slider]::-webkit-slider-thumb{
-  -webkit-appearance:none;
-  appearance:none;
-  width:14px;
-  height:14px;
-  border-radius:999px;
-  background:#fff;
-  border:2px solid rgba(84,132,255,.95);
-  box-shadow:0 1px 4px rgba(0,0,0,.18);
-  margin-top:-5px;
+  -webkit-appearance:none !important;
+  appearance:none !important;
+  width:1px !important;
+  height:1px !important;
+  background:transparent !important;
+  border:none !important;
+  box-shadow:none !important;
+  opacity:0 !important;
 }
 [data-audio-row-slider]::-moz-range-track{
-  height:4px;
-  background:rgba(17,19,23,.14);
-  border:none;
-  border-radius:999px;
+  background:transparent !important;
+  border:none !important;
+  box-shadow:none !important;
 }
 [data-audio-row-slider]::-moz-range-thumb{
-  width:14px;
-  height:14px;
-  border-radius:999px;
-  background:#fff;
-  border:2px solid rgba(84,132,255,.95);
-  box-shadow:0 1px 4px rgba(0,0,0,.18);
+  width:1px !important;
+  height:1px !important;
+  background:transparent !important;
+  border:none !important;
+  box-shadow:none !important;
+  opacity:0 !important;
 }
 `;
   document.head.appendChild(style);
@@ -4041,6 +3995,7 @@ function buildAudioTileCard(card, rowId, it){
 
       <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:flex-start;">
         <button type="button" class="btnGhost" data-audio-record>⏺</button>
+        <button type="button" class="btnGhost" data-audio-stop-record>■</button>
       </div>
 
       <div style="display:flex;flex-direction:column;gap:6px;">
@@ -4064,7 +4019,7 @@ function buildAudioTileCard(card, rowId, it){
                  step="0.01"
                  value="0"
                  data-audio-slider
-                 style="position:relative;z-index:2;width:100%;margin:0;background:transparent;touch-action:none;" />
+                 style="position:relative;z-index:2;width:100%;margin:0;background:transparent;" />
         </div>
         <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
           <div class="itemDesc" data-audio-current-time>0:00</div>
@@ -4081,6 +4036,7 @@ function buildAudioTileCard(card, rowId, it){
   `;
 
   const btnRecord = card.querySelector("[data-audio-record]");
+  const btnStopRecord = card.querySelector("[data-audio-stop-record]");
   const btnPlayToggle = card.querySelector("[data-audio-play-toggle]");
   const btnSave = card.querySelector("[data-audio-save]");
   const btnDelete = card.querySelector("[data-audio-delete]");
@@ -4091,15 +4047,14 @@ function buildAudioTileCard(card, rowId, it){
     btnRecord.addEventListener("click", async (e)=>{
       e.preventDefault();
       e.stopPropagation();
-
-      const state = audioTileRecorderStates.get(it.id);
-
-      if(state && state.status === "recording"){
-        await stopAudioTileRecording(rowId, it.id);
-        return;
-      }
-
       await startAudioTileRecording(rowId, it.id);
+    });
+  }
+  if(btnStopRecord){
+    btnStopRecord.addEventListener("click", async (e)=>{
+      e.preventDefault();
+      e.stopPropagation();
+      await stopAudioTileRecording(rowId, it.id);
     });
   }
   if(btnPlayToggle){
@@ -4135,63 +4090,26 @@ function buildAudioTileCard(card, rowId, it){
     });
   }
   if(slider){
-    let isTileSeeking = false;
-    let wasPlayingBeforeSeek = false;
-    let seekPreviewValue = 0;
-
-    slider.addEventListener("pointerdown", async (e)=>{
-      e.stopPropagation();
-      isTileSeeking = true;
-      card.dataset.tileSeeking = "1";
-      seekPreviewValue = Number(slider.value || 0);
-      card.dataset.audioSeek = String(seekPreviewValue);
-
-      wasPlayingBeforeSeek =
-        !!activeAudioPlayback &&
-        activeAudioPlayback.itemId === it.id &&
-        activeAudioPlayback.rowId === rowId &&
-        !activeAudioPlayback.isPaused;
-
-      if(wasPlayingBeforeSeek){
-        await pauseAudioTilePlayback(rowId, it.id);
-      }
-    });
-
-    slider.addEventListener("input", (e)=>{
+    const syncSeek = async ()=>{
+      await seekAudioTilePlayback(rowId, it.id, Number(slider.value || 0));
+      setRangeFill(slider);
+    };
+    slider.addEventListener("input", async (e)=>{
       e.preventDefault();
       e.stopPropagation();
-
-      seekPreviewValue = Number(slider.value || 0);
-      card.dataset.audioSeek = String(seekPreviewValue);
-
-      const currentEl = card.querySelector("[data-audio-current-time]");
-      if(currentEl) currentEl.textContent = formatAudioDuration(seekPreviewValue);
-
-      setRangeFill(slider);
+      await syncSeek();
     });
-
     slider.addEventListener("change", async (e)=>{
       e.preventDefault();
       e.stopPropagation();
-
-      card.dataset.audioSeek = String(Number(slider.value || 0));
-      await seekAudioTilePlayback(rowId, it.id, Number(slider.value || 0));
-
-      isTileSeeking = false;
-      wasPlayingBeforeSeek = false;
-      delete card.dataset.tileSeeking;
+      await syncSeek();
     });
-
-    slider.addEventListener("pointercancel", ()=>{
-      isTileSeeking = false;
-      wasPlayingBeforeSeek = false;
-      delete card.dataset.tileSeeking;
-    });
-
     slider.addEventListener("click", (e)=>{
       e.stopPropagation();
     });
-
+    slider.addEventListener("pointerdown", (e)=>{
+      e.stopPropagation();
+    });
     slider.min = "0";
     slider.value = "0";
     setRangeFill(slider);
@@ -4880,24 +4798,6 @@ async function refreshStay(){
 }
 async function refreshRowAndKeepUI(rowId){
   if(!rowId) return null;
-
-  const prevRail = document.querySelector(`[data-row-inline-id="${rowId}"] .rowCarousel`);
-  let anchorItemId = null;
-  let prevRailScrollLeft = 0;
-
-  if(prevRail){
-    prevRailScrollLeft = Number(prevRail.scrollLeft || 0);
-    const cards = [...prevRail.querySelectorAll("[data-row-tile-item-id]")];
-    let minDiff = Infinity;
-    for(const card of cards){
-      const diff = Math.abs(Number(card.offsetLeft || 0) - prevRailScrollLeft);
-      if(diff < minDiff){
-        minDiff = diff;
-        anchorItemId = card.getAttribute("data-row-tile-item-id") || null;
-      }
-    }
-  }
-
   await loadRowWithItems(rowId);
   if(currentPuchokId){
     try{ await loadPuchokWithEntries(currentPuchokId); }catch{}
@@ -4905,24 +4805,6 @@ async function refreshRowAndKeepUI(rowId){
   expandRowInline(rowId);
   viewMode = "puchok";
   render();
-
-  const restoreRailPosition = ()=>{
-    const nextRail = document.querySelector(`[data-row-inline-id="${rowId}"] .rowCarousel`);
-    if(!nextRail) return;
-
-    if(anchorItemId){
-      const anchorCard = nextRail.querySelector(`[data-row-tile-item-id="${anchorItemId}"]`);
-      if(anchorCard){
-        nextRail.scrollLeft = Math.max(0, anchorCard.offsetLeft - 12);
-        return;
-      }
-    }
-
-    nextRail.scrollLeft = prevRailScrollLeft;
-  };
-
-  restoreRailPosition();
-  requestAnimationFrame(restoreRailPosition);
   return db.rows[rowId] || null;
 }
 
