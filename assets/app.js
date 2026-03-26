@@ -3557,8 +3557,14 @@ function dataURLToBlobLocal(dataURL){
   return new Blob([bytes], { type: mime });
 }
 async function getAudioSegmentBlob(seg){
-  if(seg?.dataUrl) return dataURLToBlobLocal(seg.dataUrl);
-  if(seg?.r2?.dataUrl) return dataURLToBlobLocal(seg.r2.dataUrl);
+  if(seg?.blobItemId){
+    return await downloadItemBlobFromR2(
+      seg.blobItemId,
+      seg.mime || "audio/webm",
+      "audio",
+      { showProgress:false }
+    );
+  }
   return null;
 }
 async function decodeAudioBlobWithContext(blob, ctx){
@@ -3660,15 +3666,24 @@ async function finalizeAudioTileSegment(rowId, itemId, blob, durationSec){
   const current = getAudioItemLocalByRow(rowId, itemId);
   if(!current) return;
 
-  const dataUrl = await blobToDataURLLocal(blob);
+  const segmentId = uid();
+  const blobItemId = `${itemId}__seg__${segmentId}`;
+  const segFile = new File(
+    [blob],
+    `${segmentId}.webm`,
+    { type: blob.type || "audio/webm" }
+  );
+
+  await uploadItemBlobToR2(blobItemId, segFile, { enforceLimit:false });
+
   current.segments = getAudioSegments(current);
   current.segments.push({
-    id: uid(),
+    id: segmentId,
+    blobItemId,
     mime: blob.type || "audio/webm",
     size: blob.size || 0,
     durationSec: Math.max(0, Number(durationSec || 0)),
-    dataUrl,
-    r2: { embedded: true }
+    r2: { hasBlob: true }
   });
   await persistAudioItem(rowId, itemId);
 }
