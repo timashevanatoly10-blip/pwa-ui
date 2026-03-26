@@ -35,6 +35,10 @@ function itemBlobPath(itemId, qs = "") {
   const base = `/items/${encodeURIComponent(itemId)}/blob`;
   return qs ? `${base}?${qs}` : base;
 }
+function audioSegmentBlobPath(segmentId, qs = "") {
+  const base = `/audio-segments/${encodeURIComponent(segmentId)}/blob`;
+  return qs ? `${base}?${qs}` : base;
+}
 function r2PresignPath(){ return `/r2/presign`; }
 function itemBlobCompletePath(itemId){ return `/items/${encodeURIComponent(itemId)}/blob/complete`; }
 
@@ -1758,6 +1762,51 @@ async function uploadItemBlobToR2(itemId, file, { enforceLimit = true } = {}){
   return data;
 }
 
+async function uploadAudioSegmentBlob(segmentId, file){
+  if(!file) throw new Error("NO_FILE");
+
+  const url = WORKER_URL + audioSegmentBlobPath(segmentId);
+  const headers = {
+    ...authHeaders(),
+    "Content-Type": (file.type || "application/octet-stream"),
+  };
+
+  showXfer({
+    title: "Загрузка аудио сегмента",
+    sub: `${file.name || "segment"} • ${fmtBytes(file.size || 0)}`,
+    determinate: true
+  });
+
+  const res = await xhrRequest({
+    url,
+    method: "PUT",
+    headers,
+    body: file,
+    responseType: "",
+    onUploadProgress: ({ loaded, total })=>{
+      updateXfer({
+        loaded,
+        total: total || (file.size || null),
+        title: "Загрузка аудио сегмента",
+        sub: `${file.name || "segment"}`
+      });
+    }
+  });
+
+  const raw = (res.responseText || "").toString();
+  let data = {};
+  try{ data = JSON.parse(raw); }catch{}
+
+  if(!res.ok || data.ok === false){
+    const msg = (data && data.error) ? data.error : (raw || `HTTP ${res.status}`);
+    finishXfer({ ok:false, title:"Ошибка загрузки", sub: msg, autoHideMs: 2200 });
+    throw new Error(msg);
+  }
+
+  finishXfer({ ok:true, title:"Загружено", sub:"Аудио сегмент сохранён", autoHideMs: 650 });
+  return data;
+}
+
 
 async function downloadItemBlobFromR2(itemId, fallbackType = "application/octet-stream", itemType = "", opts = {}){
   const showProgress = opts.showProgress !== false;
@@ -1813,6 +1862,21 @@ async function downloadItemBlobFromR2(itemId, fallbackType = "application/octet-
     finishXfer({ ok:true, title:"Скачано", sub: total ? "Готово" : `Получено: ${fmtBytes(loaded)}`, autoHideMs: 600 });
   }
   return new Blob(chunks, { type: blobType });
+}
+
+async function downloadAudioSegmentBlob(segmentId, fallbackType = "audio/webm"){
+  const resp = await apiFetch(audioSegmentBlobPath(segmentId), { method:"GET" });
+  if(resp.status === 404) return null;
+  if(!resp.ok){
+    const t = await resp.text().catch(()=> "");
+    throw new Error(t || `HTTP ${resp.status}`);
+  }
+
+  const blob = await resp.blob();
+  const finalMime = chooseBlobMimeType(blob?.type || "", fallbackType, "audio");
+  return (blob && sanitizeMimeType(blob.type || "", "") === finalMime)
+    ? blob
+    : new Blob([blob], { type: finalMime });
 }
 
 /** ===========================
@@ -3557,12 +3621,10 @@ function dataURLToBlobLocal(dataURL){
   return new Blob([bytes], { type: mime });
 }
 async function getAudioSegmentBlob(seg){
-  if(seg?.blobItemId){
-    return await downloadItemBlobFromR2(
-      seg.blobItemId,
-      seg.mime || "audio/webm",
-      "audio",
-      { showProgress:false }
+  if(seg?.id){
+    return await downloadAudioSegmentBlob(
+      seg.id,
+      seg.mime || "audio/webm"
     );
   }
   return null;
@@ -3667,19 +3729,18 @@ async function finalizeAudioTileSegment(rowId, itemId, blob, durationSec){
   if(!current) return;
 
   const segmentId = uid();
-  const blobItemId = `${itemId}__seg__${segmentId}`;
+
   const segFile = new File(
     [blob],
     `${segmentId}.webm`,
     { type: blob.type || "audio/webm" }
   );
 
-  await uploadItemBlobToR2(blobItemId, segFile, { enforceLimit:false });
+  await uploadAudioSegmentBlob(segmentId, segFile);
 
   current.segments = getAudioSegments(current);
   current.segments.push({
     id: segmentId,
-    blobItemId,
     mime: blob.type || "audio/webm",
     size: blob.size || 0,
     durationSec: Math.max(0, Number(durationSec || 0)),
