@@ -2584,6 +2584,18 @@ async function waitForAudioRowItemToFinish(rowId, currentItemId, token){
   return result;
 }
 
+async function continueAudioRowAfterCurrentItem(rowId, currentItemId, token){
+  const result = await waitForAudioRowItemToFinish(rowId, currentItemId, token);
+  if(result !== "ended") return;
+  if(!activeAudioRowPlayback) return;
+  if(activeAudioRowPlayback.rowId !== rowId) return;
+  if(activeAudioRowPlayback.playbackToken !== token) return;
+  if(token !== audioRowPlaybackToken) return;
+  activeAudioRowPlayback.index += 1;
+  activeAudioRowPlayback.pausedOffsetSec = 0;
+  await playNextAudioRowItem(token);
+}
+
 async function playAudioTileFromOffsetForRow(rowId, itemId, offsetSec){
   const it = getAudioItemLocalByRow(rowId, itemId);
   if(!it || !getAudioSegments(it).length) return;
@@ -2652,15 +2664,7 @@ async function playNextAudioRowItem(token = audioRowPlaybackToken){
 
   startAudioRowPlaybackUiTimer(rowId);
   updateAudioRowHeaderDom(rowId);
-  const result = await waitForAudioRowItemToFinish(rowId, currentItemId, token);
-  if(result !== "ended") return;
-  if(token !== audioRowPlaybackToken) return;
-  if(!activeAudioRowPlayback) return;
-  if(activeAudioRowPlayback.rowId !== rowId) return;
-  if(activeAudioRowPlayback.playbackToken !== token) return;
-  activeAudioRowPlayback.index += 1;
-  activeAudioRowPlayback.pausedOffsetSec = 0;
-  await playNextAudioRowItem(token);
+  await continueAudioRowAfterCurrentItem(rowId, currentItemId, token);
 }
 
 async function playAudioRow(rowId){
@@ -2806,7 +2810,7 @@ async function seekAudioRowPlayback(rowId, targetSec){
 
     updateAudioRowHeaderDom(rowId);
     updateAudioRowProgressDom(rowId);
-    await waitForAudioRowItemToFinish(rowId, items[itemIndex].id, token);
+    continueAudioRowAfterCurrentItem(rowId, items[itemIndex].id, token);
     return;
   }
 
@@ -2856,7 +2860,7 @@ async function playAudioRowFromCurrentSeekState(rowId){
   if(token !== audioRowPlaybackToken) return;
 
   activeAudioRowPlayback.pausedOffsetSec = 0;
-  await waitForAudioRowItemToFinish(rowId, currentItemId, token);
+  await continueAudioRowAfterCurrentItem(rowId, currentItemId, token);
 }
 
 async function toggleAudioRowPlayback(rowId){
@@ -2879,7 +2883,7 @@ async function toggleAudioRowPlayback(rowId){
       if(activeAudioRowPlayback.rowId !== rowId) return;
       if(token !== audioRowPlaybackToken) return;
       activeAudioRowPlayback.pausedOffsetSec = 0;
-      await waitForAudioRowItemToFinish(rowId, currentItemId, token);
+      await continueAudioRowAfterCurrentItem(rowId, currentItemId, token);
     }
     return;
   }
@@ -3135,11 +3139,7 @@ async function jumpAudioRowBy(rowId, deltaSec){
     const totalSec = getAudioRowTotalDurationSec(rowId);
     const currentSec = getAudioRowCurrentPositionSec(rowId);
     const targetSec = clamp(currentSec + Number(deltaSec || 0), 0, totalSec);
-    const shouldResume = !!activeAudioRowPlayback && activeAudioRowPlayback.rowId === rowId && activeAudioRowPlayback.isPaused === false;
     await seekAudioRowPlayback(rowId, targetSec);
-    if(shouldResume){
-      await playAudioRowFromCurrentSeekState(rowId);
-    }
     updateAudioRowHeaderDom(rowId);
     updateAudioRowProgressDom(rowId);
   }finally{
