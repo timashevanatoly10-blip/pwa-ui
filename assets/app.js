@@ -2858,9 +2858,10 @@ async function playAudioRowFromCurrentSeekState(rowId){
   if(!activeAudioRowPlayback) return;
   if(activeAudioRowPlayback.rowId !== rowId) return;
   if(token !== audioRowPlaybackToken) return;
+  if(activeAudioRowPlayback.isPaused === true) return;
 
   activeAudioRowPlayback.pausedOffsetSec = 0;
-  await continueAudioRowAfterCurrentItem(rowId, currentItemId, token);
+  continueAudioRowAfterCurrentItem(rowId, currentItemId, token);
 }
 
 async function toggleAudioRowPlayback(rowId){
@@ -2870,21 +2871,7 @@ async function toggleAudioRowPlayback(rowId){
       return;
     }
 
-    const currentItemId = activeAudioRowPlayback.itemIds[activeAudioRowPlayback.index] || null;
-    const pausedOffsetSec = Number(activeAudioRowPlayback.pausedOffsetSec || 0);
-    const token = audioRowPlaybackToken;
-    activeAudioRowPlayback.isPaused = false;
-    startAudioRowPlaybackUiTimer(rowId);
-    updateAudioRowHeaderDom(rowId);
-
-    if(currentItemId){
-      await playAudioTileFromOffsetForRow(rowId, currentItemId, pausedOffsetSec);
-      if(!activeAudioRowPlayback) return;
-      if(activeAudioRowPlayback.rowId !== rowId) return;
-      if(token !== audioRowPlaybackToken) return;
-      activeAudioRowPlayback.pausedOffsetSec = 0;
-      await continueAudioRowAfterCurrentItem(rowId, currentItemId, token);
-    }
+    await playAudioRowFromCurrentSeekState(rowId);
     return;
   }
 
