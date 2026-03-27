@@ -666,6 +666,7 @@ const audioTileRecorderStates = new Map();
 let activeAudioPlayback = null;
 let activeAudioRowPlayback = null;
 let audioRowPlaybackToken = 0;
+let audioRowSharedCtx = null;
 let activeTileMenu = null;
 const audioRowJumpLocks = new Map();
 
@@ -692,6 +693,13 @@ function hasMediaRecorder(){
 }
 function canUseWebAudio(){
   return typeof (window.AudioContext || window.webkitAudioContext) !== "undefined";
+}
+function getAudioRowContext(){
+  if(!audioRowSharedCtx){
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    audioRowSharedCtx = new AudioCtx();
+  }
+  return audioRowSharedCtx;
 }
 function chooseAudioMode(){
   return hasMediaRecorder() ? "mediarecorder" : "capture";
@@ -2519,6 +2527,12 @@ async function stopActiveAudioRowPlayback({ keepTilePlayback = false } = {}){
   if(!keepTilePlayback && activeAudioPlayback && activeAudioPlayback.rowId === prevRowId){
     await stopActiveAudioPlayback();
   }
+  if(audioRowSharedCtx){
+    try{
+      await audioRowSharedCtx.close();
+    }catch{}
+    audioRowSharedCtx = null;
+  }
   updateAudioRowHeaderDom(prevRowId);
   updateAudioRowProgressDom(prevRowId);
 }
@@ -4126,7 +4140,7 @@ async function stopActiveAudioPlayback(){
     try{ activeAudioPlayback.source.onended = null; }catch{}
     try{ activeAudioPlayback.source.stop(0); }catch{}
   }
-  if(activeAudioPlayback.ctx){
+  if(activeAudioPlayback.ctx && activeAudioPlayback.ctx !== audioRowSharedCtx){
     try{ await activeAudioPlayback.ctx.close(); }catch{}
   }
   const prev = activeAudioPlayback;
@@ -4141,7 +4155,7 @@ async function startAudioPlaybackFromOffset(rowId, itemId, merged, offsetSec){
   const AudioCtx = window.AudioContext || window.webkitAudioContext;
   if(!AudioCtx) throw new Error("Web Audio не поддерживается");
 
-  const ctx = new AudioCtx();
+  const ctx = getAudioRowContext();
   const source = ctx.createBufferSource();
   source.buffer = merged.buffer;
   source.connect(ctx.destination);
@@ -4166,7 +4180,9 @@ async function startAudioPlaybackFromOffset(rowId, itemId, merged, offsetSec){
     const current = activeAudioPlayback;
     if(!current || current.itemId !== itemId || current.rowId !== rowId) return;
     stopAudioPlaybackUiTimer();
-    try{ await ctx.close(); }catch{}
+    if(ctx !== audioRowSharedCtx){
+      try{ await ctx.close(); }catch{}
+    }
     activeAudioPlayback = null;
     updateAudioTileDom(rowId, itemId);
     updateAudioRowHeaderDom(rowId);
@@ -4227,7 +4243,7 @@ async function pauseAudioTilePlayback(rowId, itemId){
     try{ activeAudioPlayback.source.onended = null; }catch{}
     try{ activeAudioPlayback.source.stop(0); }catch{}
   }
-  if(activeAudioPlayback.ctx){
+  if(activeAudioPlayback.ctx && activeAudioPlayback.ctx !== audioRowSharedCtx){
     try{ await activeAudioPlayback.ctx.close(); }catch{}
   }
   activeAudioPlayback = {
