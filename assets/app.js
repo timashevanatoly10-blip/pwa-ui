@@ -4172,7 +4172,20 @@ async function startAudioPlaybackFromOffset(rowId, itemId, merged, offsetSec){
     updateAudioRowHeaderDom(rowId);
   };
 
+  if(ctx.state === "suspended"){
+    try{
+      await ctx.resume();
+    }catch{}
+  }
+
   source.start(0, safeOffset);
+
+  if(ctx.state === "suspended"){
+    try{
+      await ctx.resume();
+    }catch{}
+  }
+
   startAudioPlaybackUiTimer(rowId, itemId);
   updateAudioTileDom(rowId, itemId);
   updateAudioRowHeaderDom(rowId);
