@@ -4336,6 +4336,9 @@ function ensureAudioRangeStyles(){
   background:transparent;
   height:18px;
   outline:none;
+  border:none;
+  box-shadow:none;
+  padding:0;
   touch-action:none;
 }
 [data-audio-slider]::-webkit-slider-runnable-track{
@@ -4431,7 +4434,7 @@ function buildAudioTileCard(card, rowId, it){
       </div>
 
       <div style="display:grid;grid-template-columns:minmax(0,1fr) auto;grid-template-rows:auto auto;column-gap:10px;row-gap:6px;align-items:center;">
-        <div data-audio-progress-wrap style="grid-column:1 / span 2;grid-row:1 / span 2;position:relative;height:18px;display:flex;align-items:center;">
+        <div data-audio-progress-wrap style="grid-column:1 / span 2;grid-row:1 / span 2;position:relative;height:18px;display:flex;align-items:center;background:transparent;border:none;outline:none;box-shadow:none;padding:0;">
           <div data-audio-progress-bg
                style="position:absolute;left:0;right:0;top:50%;transform:translateY(-50%);
                       height:4px;border-radius:999px;background:rgba(17,19,23,.14);overflow:hidden;">
@@ -4451,7 +4454,7 @@ function buildAudioTileCard(card, rowId, it){
                  step="0.01"
                  value="0"
                  data-audio-slider
-                 style="position:relative;z-index:2;width:100%;margin:0;background:transparent;touch-action:none;" />
+                 style="position:relative;z-index:2;width:100%;margin:0;background:transparent;touch-action:none;-webkit-appearance:none;appearance:none;border:none;outline:none;box-shadow:none;padding:0;" />
         </div>
         <div class="itemDesc" data-audio-recording-total
              style="grid-column:2;grid-row:1;justify-self:end;align-self:start;">${initialTotal}</div>
