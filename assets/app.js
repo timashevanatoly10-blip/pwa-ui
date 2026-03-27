@@ -3824,7 +3824,6 @@ function updateAudioTileDom(rowId, itemId){
   const renameBtn = card.querySelector("[data-audio-rename]");
   const slider = card.querySelector("[data-audio-slider]");
   const currentEl = card.querySelector("[data-audio-current-time]");
-  const totalEl = card.querySelector("[data-audio-total-time]");
   const recordingTotalEl = card.querySelector("[data-audio-recording-total]");
 
   const isTileSeeking = card.dataset.tileSeeking === "1";
@@ -3890,7 +3889,6 @@ function updateAudioTileDom(rowId, itemId){
   }
 
   if(currentEl) currentEl.textContent = formatAudioDuration(currentSec);
-  if(totalEl) totalEl.textContent = formatAudioDuration(totalSec);
 }
 function startAudioTileTimer(rowId, itemId){
   const state = audioTileRecorderStates.get(itemId);
@@ -4455,9 +4453,8 @@ function buildAudioTileCard(card, rowId, it){
                  data-audio-slider
                  style="position:relative;z-index:2;width:100%;margin:0;background:transparent;touch-action:none;" />
         </div>
-        <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
+        <div style="display:flex;align-items:center;justify-content:flex-start;gap:10px;">
           <div class="itemDesc" data-audio-current-time>0:00</div>
-          <div class="itemDesc" data-audio-total-time>${initialTotal}</div>
         </div>
       </div>
 
