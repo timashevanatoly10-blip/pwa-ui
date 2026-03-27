@@ -666,6 +666,8 @@ const audioTileRecorderStates = new Map();
 let activeAudioPlayback = null;
 let activeAudioRowPlayback = null;
 let audioRowPlaybackToken = 0;
+let activeTileMenu = null;
+const audioRowJumpLocks = new Map();
 
 // In-memory store:
 // - db.puchki: root containers list + cached containers
@@ -2885,6 +2887,266 @@ async function toggleAudioRowPlayback(rowId){
   await playAudioRow(rowId);
 }
 
+function closeActiveTileMenu(){
+  if(activeTileMenu?.menu){
+    try{ activeTileMenu.menu.remove(); }catch{}
+  }
+  if(activeTileMenu?.button){
+    activeTileMenu.button.setAttribute("aria-expanded", "false");
+  }
+  activeTileMenu = null;
+}
+
+function positionTileMenu(menu, button){
+  if(!menu || !button) return;
+  const rect = button.getBoundingClientRect();
+  const menuRect = menu.getBoundingClientRect();
+  const gap = 6;
+  let left = rect.right - menuRect.width;
+  let top = rect.bottom + gap;
+
+  if(left < 8) left = 8;
+  if(left + menuRect.width > window.innerWidth - 8){
+    left = window.innerWidth - menuRect.width - 8;
+  }
+  if(top + menuRect.height > window.innerHeight - 8){
+    top = Math.max(8, rect.top - menuRect.height - gap);
+  }
+
+  menu.style.left = `${Math.round(left)}px`;
+  menu.style.top = `${Math.round(top)}px`;
+}
+
+function openTileMenu(button, actions = []){
+  if(!button) return;
+  if(activeTileMenu?.button === button){
+    closeActiveTileMenu();
+    return;
+  }
+
+  closeActiveTileMenu();
+
+  const menu = document.createElement("div");
+  menu.dataset.tilePopupMenu = "1";
+  menu.style.position = "fixed";
+  menu.style.minWidth = "152px";
+  menu.style.maxWidth = "220px";
+  menu.style.padding = "6px";
+  menu.style.borderRadius = "14px";
+  menu.style.background = "rgba(17,19,23,.96)";
+  menu.style.border = "1px solid rgba(255,255,255,.08)";
+  menu.style.boxShadow = "0 16px 40px rgba(0,0,0,.26)";
+  menu.style.backdropFilter = "blur(12px)";
+  menu.style.zIndex = "140000";
+  menu.style.display = "flex";
+  menu.style.flexDirection = "column";
+  menu.style.gap = "4px";
+
+  const safeActions = Array.isArray(actions) ? actions.filter(Boolean) : [];
+  for(const action of safeActions){
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.textContent = action.label || "Action";
+    btn.style.appearance = "none";
+    btn.style.border = "0";
+    btn.style.borderRadius = "10px";
+    btn.style.padding = "10px 12px";
+    btn.style.background = "transparent";
+    btn.style.color = "#fff";
+    btn.style.fontSize = "13px";
+    btn.style.lineHeight = "1.2";
+    btn.style.textAlign = "left";
+    btn.style.cursor = "pointer";
+    btn.addEventListener("click", async (e)=>{
+      e.preventDefault();
+      e.stopPropagation();
+      closeActiveTileMenu();
+      if(typeof action.onClick === "function"){
+        await action.onClick(e);
+      }
+    });
+    menu.appendChild(btn);
+  }
+
+  document.body.appendChild(menu);
+  positionTileMenu(menu, button);
+  button.setAttribute("aria-expanded", "true");
+  activeTileMenu = { button, menu };
+}
+
+function createTileMenuButton(actions, options = {}){
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.dataset.rowTileMenuBtn = "1";
+  btn.setAttribute("aria-haspopup", "menu");
+  btn.setAttribute("aria-expanded", "false");
+  btn.textContent = "⋮";
+  btn.title = options.title || "Меню";
+  btn.style.position = "absolute";
+  btn.style.top = "8px";
+  btn.style.right = "8px";
+  btn.style.zIndex = "7";
+  btn.style.appearance = "none";
+  btn.style.border = "1px solid rgba(255,255,255,.14)";
+  btn.style.width = "30px";
+  btn.style.height = "30px";
+  btn.style.borderRadius = "999px";
+  btn.style.background = "rgba(17,19,23,.62)";
+  btn.style.color = "#fff";
+  btn.style.backdropFilter = "blur(10px)";
+  btn.style.boxShadow = "0 6px 18px rgba(0,0,0,.22)";
+  btn.style.cursor = "pointer";
+  btn.style.display = "inline-flex";
+  btn.style.alignItems = "center";
+  btn.style.justifyContent = "center";
+  btn.style.fontSize = "16px";
+  btn.style.fontWeight = "700";
+  btn.style.lineHeight = "1";
+  btn.addEventListener("click", (e)=>{
+    e.preventDefault();
+    e.stopPropagation();
+    openTileMenu(btn, actions);
+  });
+  return btn;
+}
+
+async function renameRowTileItem(rowId, itemId){
+  const pack = db.rows[rowId] || null;
+  const it = (pack?.items || []).find(x => x.id === itemId) || null;
+  if(!it) return;
+  if(it.type === "audio") return await renameAudioTile(rowId, itemId);
+
+  const nextTitle = prompt("Новое название:", it.title || "");
+  if(nextTitle === null) return;
+  const title = (nextTitle || "").trim() || (it.title || "Элемент");
+
+  await apiJson(`/items/${encodeURIComponent(itemId)}`, {
+    method:"PATCH",
+    json:{ title }
+  });
+
+  it.title = title;
+  it.updatedAt = nowISO();
+  await refreshRowAndKeepUI(rowId);
+}
+
+async function downloadRowTileItem(rowId, itemId){
+  const pack = db.rows[rowId] || null;
+  const it = (pack?.items || []).find(x => x.id === itemId) || null;
+  if(!it) return;
+
+  if(it.type === "audio") return await saveAudioTileWav(rowId, itemId);
+
+  if(it.type === "image" || it.type === "video" || it.type === "file"){
+    const kind = it.type === "video" ? "video" : (it.type === "image" ? "image" : "file");
+    const blob = await downloadItemBlobFromR2(it.id, it.mime || (kind === "video" ? "video/*" : (kind === "image" ? "image/*" : "application/octet-stream")), kind);
+    if(!blob) throw new Error(kind === "video" ? "Blob видео не найден" : (kind === "image" ? "Blob фото не найден" : "Blob файла не найден"));
+    const finalMime = chooseBlobMimeType(blob?.type || "", it.mime || (kind === "video" ? "video/*" : (kind === "image" ? "image/*" : "application/octet-stream")), kind);
+    const typedBlob = (blob && sanitizeMimeType(blob.type || "", "") === finalMime)
+      ? blob
+      : new Blob([blob], { type: finalMime });
+
+    let filename = sanitizeDownloadName(it.title || (kind === "video" ? "video" : (kind === "image" ? "photo" : "file")), kind === "video" ? "video" : (kind === "image" ? "photo" : "file"));
+    if(!/\.[a-z0-9]{2,6}$/i.test(filename)){
+      const mime = sanitizeMimeType(finalMime, "");
+      let ext = "";
+      if(mime.includes("/")){
+        ext = mime.split("/")[1].toLowerCase().replace("jpeg", "jpg").replace("quicktime", "mov").replace("x-matroska", "mkv").replace("svg+xml", "svg").replace(/[^a-z0-9]+/g, "");
+      }
+      if(ext) filename += `.${ext}`;
+    }
+    triggerBlobDownload(typedBlob, filename);
+    return;
+  }
+
+  if(it.type === "text" || it.type === "code"){
+    const content = (it.content || "").toString();
+    const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
+    const base = sanitizeDownloadName(it.title || (it.type === "code" ? "code" : "text"), it.type === "code" ? "code" : "text");
+    const filename = /\.[a-z0-9]{2,6}$/i.test(base) ? base : `${base}.txt`;
+    triggerBlobDownload(blob, filename);
+    return;
+  }
+
+  if(it.type === "link"){
+    const blob = new Blob([(it.url || "").toString()], { type: "text/plain;charset=utf-8" });
+    const filename = `${sanitizeDownloadName(it.title || "link", "link")}.url.txt`;
+    triggerBlobDownload(blob, filename);
+    return;
+  }
+}
+
+async function deleteRowTileItem(rowId, itemId){
+  const pack = db.rows[rowId] || null;
+  const it = (pack?.items || []).find(x => x.id === itemId) || null;
+  if(!it) return;
+
+  if(it.type === "audio") return await deleteAudioTile(rowId, itemId);
+
+  const confirmText =
+    it.type === "image" ? "Удалить это фото?" :
+    it.type === "video" ? "Удалить это видео?" :
+    "Удалить этот элемент?";
+  if(!confirm(confirmText)) return;
+
+  isBusy = true;
+  try{
+    if(it.type === "image" || it.type === "video" || it.type === "file"){
+      try{ await deleteItemBlobFromR2(it.id); }catch{}
+      if(it.type === "image" && imageViewerRowId === rowId && imageViewerItemIds.includes(it.id)) closeImageViewer();
+      if(it.type === "video" && videoViewerRowId === rowId && videoViewerItemIds.includes(it.id)) closeVideoViewer();
+      try{
+        const cachedPreviewUrl = itemPreviewUrlCache.get(it.id);
+        if(cachedPreviewUrl) URL.revokeObjectURL(cachedPreviewUrl);
+      }catch{}
+      itemPreviewUrlCache.delete(it.id);
+    }else{
+      await cleanupItemBlobsSafe(it);
+    }
+
+    await apiJson(`/items/${encodeURIComponent(it.id)}`, { method:"DELETE" });
+
+    if(it.type === "audio"){
+      const p = getPuchokLocal(currentPuchokId);
+      if(p && p.items) p.items = p.items.filter(x => x.id !== it.id);
+    }
+
+    await refreshRowAndKeepUI(rowId);
+  }catch(err){
+    addMsg("Ошибка удаления: " + (err?.message || err), "err");
+  }finally{
+    isBusy = false;
+  }
+}
+
+function createDefaultTileMenuActions(rowId, itemId){
+  return [
+    { label: "✏️ Rename", onClick: ()=> renameRowTileItem(rowId, itemId) },
+    { label: "⬇️ Download", onClick: ()=> downloadRowTileItem(rowId, itemId) },
+    { label: "🗑 Delete", onClick: ()=> deleteRowTileItem(rowId, itemId) },
+  ];
+}
+
+async function jumpAudioRowBy(rowId, deltaSec){
+  if(!rowId || !Number.isFinite(Number(deltaSec || 0))) return;
+  if(audioRowJumpLocks.get(rowId)) return;
+  audioRowJumpLocks.set(rowId, true);
+  try{
+    const totalSec = getAudioRowTotalDurationSec(rowId);
+    const currentSec = getAudioRowCurrentPositionSec(rowId);
+    const targetSec = clamp(currentSec + Number(deltaSec || 0), 0, totalSec);
+    const shouldResume = !!activeAudioRowPlayback && activeAudioRowPlayback.rowId === rowId && activeAudioRowPlayback.isPaused === false;
+    await seekAudioRowPlayback(rowId, targetSec);
+    if(shouldResume){
+      await playAudioRowFromCurrentSeekState(rowId);
+    }
+    updateAudioRowHeaderDom(rowId);
+    updateAudioRowProgressDom(rowId);
+  }finally{
+    audioRowJumpLocks.delete(rowId);
+  }
+}
+
 function renderStandardRowEntry(p, e){
   const block = document.createElement("div");
   block.className = "rowInlineBlock";
@@ -3080,6 +3342,13 @@ function renderAudioRow(p, e){
     timeEl.dataset.audioRowTime = "1";
     timeEl.textContent = `0:00 / ${formatAudioDuration(getAudioRowTotalDurationSec(e.refId))}`;
 
+    const backBtn = document.createElement("button");
+    backBtn.className = "btnGhost";
+    backBtn.type = "button";
+    backBtn.textContent = "⏪";
+    backBtn.title = "-5s";
+    backBtn.dataset.audioRowBack5 = "1";
+
     const progressWrap = document.createElement("div");
     progressWrap.dataset.audioRowProgressWrap = "1";
     progressWrap.style.display = "flex";
@@ -3099,6 +3368,13 @@ function renderAudioRow(p, e){
     `;
 
     const slider = progressWrap.querySelector("[data-audio-row-slider]");
+
+    const forwardBtn = document.createElement("button");
+    forwardBtn.className = "btnGhost";
+    forwardBtn.type = "button";
+    forwardBtn.textContent = "⏩";
+    forwardBtn.title = "+5s";
+    forwardBtn.dataset.audioRowForward5 = "1";
 
     const playBtn = document.createElement("button");
     playBtn.className = "btnGhost";
@@ -3128,6 +3404,26 @@ function renderAudioRow(p, e){
         await toggleAudioRowPlayback(e.refId);
       }catch(err){
         addMsg("Ошибка Play Row: " + (err?.message || err), "err");
+      }
+    });
+
+    backBtn.addEventListener("click", async (ev)=>{
+      ev.preventDefault();
+      ev.stopPropagation();
+      try{
+        await jumpAudioRowBy(e.refId, -5);
+      }catch(err){
+        addMsg("Ошибка перемотки: " + (err?.message || err), "err");
+      }
+    });
+
+    forwardBtn.addEventListener("click", async (ev)=>{
+      ev.preventDefault();
+      ev.stopPropagation();
+      try{
+        await jumpAudioRowBy(e.refId, 5);
+      }catch(err){
+        addMsg("Ошибка перемотки: " + (err?.message || err), "err");
       }
     });
 
@@ -3168,16 +3464,21 @@ function renderAudioRow(p, e){
         const state = getPreviewStateForPosition(value);
         const max = Math.max(state.totalSec, 0.000001);
         const val = clamp(state.safeTargetSec, 0, state.totalSec);
-        const pct = (val / max) * 100;
+        const trackWidth = slider.getBoundingClientRect().width || 0;
+        const thumbSize = 14;
+        const usable = Math.max(trackWidth - thumbSize, 0);
+        const ratio = clamp(val / max, 0, 1);
+        const thumbLeft = usable * ratio;
+        const fillWidth = thumbLeft + thumbSize / 2;
         slider.min = "0";
         slider.max = String(max);
         slider.step = "0.01";
         slider.value = String(val);
         slider.style.background =
           `linear-gradient(to right,
-            rgba(84,132,255,.95) 0%,
-            rgba(84,132,255,.95) ${pct}%,
-            rgba(17,19,23,.14) ${pct}%,
+            rgba(84,132,255,.95) 0px,
+            rgba(84,132,255,.95) ${fillWidth}px,
+            rgba(17,19,23,.14) ${fillWidth}px,
             rgba(17,19,23,.14) 100%)`;
         if(timeEl){
           timeEl.textContent = `${formatAudioDuration(state.safeTargetSec)} / ${formatAudioDuration(state.totalSec)}`;
@@ -3267,7 +3568,9 @@ function renderAudioRow(p, e){
 
     actions.appendChild(counterEl);
     actions.appendChild(timeEl);
+    actions.appendChild(backBtn);
     actions.appendChild(progressWrap);
+    actions.appendChild(forwardBtn);
     actions.appendChild(playBtn);
     actions.appendChild(renameBtn);
     actions.appendChild(deleteBtn);
@@ -4104,15 +4407,9 @@ function buildAudioTileCard(card, rowId, it){
   const initialTotal = formatAudioDuration(getAudioTotalDurationSec(it));
   card.innerHTML = `
     <div style="display:flex;flex-direction:column;gap:10px;">
-      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;min-width:0;">
-        <div style="display:flex;flex-direction:column;gap:2px;min-width:0;flex:1;">
-          <div style="display:flex;align-items:center;gap:8px;min-width:0;">
-            <div class="itemTitle" style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHTML(it.title || "Audio Tile")}</div>
-            <button type="button" class="btnGhost" data-audio-rename style="padding:4px 8px;min-width:0;">✎</button>
-          </div>
-          <div class="itemDesc" data-audio-seg-count>Сегментов: ${getAudioSegments(it).length}</div>
-        </div>
-        <div class="itemDesc" data-audio-recording-total>${initialTotal}</div>
+      <div style="display:flex;flex-direction:column;gap:2px;min-width:0;padding-right:42px;">
+        <div class="itemTitle" style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHTML(it.title || "Audio Tile")}</div>
+        <div class="itemDesc" data-audio-seg-count>Сегментов: ${getAudioSegments(it).length}</div>
       </div>
 
       <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:flex-start;">
@@ -4150,17 +4447,16 @@ function buildAudioTileCard(card, rowId, it){
 
       <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;">
         <button type="button" class="btnGhost" data-audio-play-toggle>▶</button>
-        <button type="button" class="btnGhost" data-audio-save>⬇</button>
-        <button type="button" class="btnGhost" data-audio-delete>🗑</button>
+        <div class="itemDesc" data-audio-recording-total>${initialTotal}</div>
       </div>
     </div>
   `;
 
+  const menuBtn = createTileMenuButton(createDefaultTileMenuActions(rowId, it.id));
+  card.appendChild(menuBtn);
+
   const btnRecord = card.querySelector("[data-audio-record]");
   const btnPlayToggle = card.querySelector("[data-audio-play-toggle]");
-  const btnSave = card.querySelector("[data-audio-save]");
-  const btnDelete = card.querySelector("[data-audio-delete]");
-  const btnRename = card.querySelector("[data-audio-rename]");
   const slider = card.querySelector("[data-audio-slider]");
 
   if(btnRecord){
@@ -4187,27 +4483,6 @@ function buildAudioTileCard(card, rowId, it){
       }else{
         await playAudioTile(rowId, it.id);
       }
-    });
-  }
-  if(btnSave){
-    btnSave.addEventListener("click", async (e)=>{
-      e.preventDefault();
-      e.stopPropagation();
-      await saveAudioTileWav(rowId, it.id);
-    });
-  }
-  if(btnDelete){
-    btnDelete.addEventListener("click", async (e)=>{
-      e.preventDefault();
-      e.stopPropagation();
-      await deleteAudioTile(rowId, it.id);
-    });
-  }
-  if(btnRename){
-    btnRename.addEventListener("click", async (e)=>{
-      e.preventDefault();
-      e.stopPropagation();
-      await renameAudioTile(rowId, it.id);
     });
   }
   if(slider){
@@ -4340,20 +4615,19 @@ function buildInlineRowContent(p, cached){
     }
 
     const isPhotoTile = it.type === "image";
-    const isVideoTile = it.type === "video";
     const isAudioTile = it.type === "audio";
     if(isAudioTile){
       buildAudioTileCard(card, row.id, it);
     }else if(isPhotoTile){
       card.innerHTML = `
-        <div class="itemText" style="min-width:0;padding-right:84px;">
+        <div class="itemText" style="min-width:0;padding-right:42px;">
           <div class="itemTitle">${escapeHTML(it.title || "Фото")}</div>
         </div>
         <div class="rowTilePreviewHost" style="min-height:168px;">${previewHTML}</div>
       `;
     }else{
       card.innerHTML = `
-        <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding-right:42px;">
           <div style="display:flex;align-items:center;gap:10px;min-width:0;">
             <div class="thumb">${icoSVG(it.type==="image" ? "photo" : (it.type==="video" ? "video" : (it.type || "file")))}</div>
             <div class="itemText" style="min-width:0;">
@@ -4367,97 +4641,14 @@ function buildInlineRowContent(p, cached){
       `;
     }
 
-    if(isPhotoTile || isVideoTile){
-      if(isPhotoTile){
-        const previewHost = card.querySelector(".rowTilePreviewHost");
-        mountImageTilePreview(previewHost, it);
-      }
+    if(isPhotoTile){
+      const previewHost = card.querySelector(".rowTilePreviewHost");
+      mountImageTilePreview(previewHost, it);
+    }
 
-      const bubbles = document.createElement("div");
-      bubbles.style.position = "absolute";
-      bubbles.style.top = "8px";
-      bubbles.style.right = "8px";
-      bubbles.style.display = "flex";
-      bubbles.style.gap = "6px";
-      bubbles.style.zIndex = "6";
-
-      const makeBubbleBtn = (label, titleText)=>{
-        const btn = document.createElement("button");
-        btn.type = "button";
-        btn.textContent = label;
-        btn.title = titleText;
-        btn.style.appearance = "none";
-        btn.style.border = "1px solid rgba(255,255,255,.14)";
-        btn.style.width = "28px";
-        btn.style.height = "28px";
-        btn.style.borderRadius = "999px";
-        btn.style.background = "rgba(17,19,23,.62)";
-        btn.style.color = "#fff";
-        btn.style.backdropFilter = "blur(10px)";
-        btn.style.boxShadow = "0 6px 18px rgba(0,0,0,.22)";
-        btn.style.cursor = "pointer";
-        btn.style.display = "inline-flex";
-        btn.style.alignItems = "center";
-        btn.style.justifyContent = "center";
-        btn.style.fontSize = "13px";
-        btn.style.fontWeight = "700";
-        btn.style.lineHeight = "1";
-        return btn;
-      };
-
-      const downloadBtn = makeBubbleBtn("↓", isVideoTile ? "Скачать видео" : "Скачать фото");
-      downloadBtn.addEventListener("click", async (e)=>{
-        e.preventDefault();
-        e.stopPropagation();
-        try{
-          const blob = await downloadItemBlobFromR2(it.id, it.mime || (isVideoTile ? "video/*" : "image/*"), isVideoTile ? "video" : "image");
-          if(!blob) throw new Error(isVideoTile ? "Blob видео не найден" : "Blob фото не найден");
-          const finalMime = chooseBlobMimeType(blob?.type || "", it.mime || (isVideoTile ? "video/*" : "image/*"), isVideoTile ? "video" : "image");
-          const typedBlob = (blob && sanitizeMimeType(blob.type || "", "") === finalMime)
-            ? blob
-            : new Blob([blob], { type: finalMime });
-          const url = URL.createObjectURL(typedBlob);
-          const a = document.createElement("a");
-          a.href = url;
-          a.download = it.title || (isVideoTile ? "video" : "photo");
-          a.click();
-          setTimeout(()=>{ try{ URL.revokeObjectURL(url); }catch{} }, 1500);
-        }catch(err){
-          addMsg((isVideoTile ? "Ошибка скачивания видео: " : "Ошибка скачивания фото: ") + (err?.message || err), "err");
-        }
-      });
-
-      const deleteBtn = makeBubbleBtn("×", isVideoTile ? "Удалить видео" : "Удалить фото");
-      deleteBtn.addEventListener("click", async (e)=>{
-        e.preventDefault();
-        e.stopPropagation();
-        if(!confirm(isVideoTile ? "Удалить это видео?" : "Удалить это фото?")) return;
-        isBusy = true;
-        try{
-          try{ await deleteItemBlobFromR2(it.id); }catch{}
-          await apiJson(`/items/${encodeURIComponent(it.id)}`, { method:"DELETE" });
-          if(!isVideoTile && imageViewerRowId === row.id && imageViewerItemIds.includes(it.id)){
-            closeImageViewer();
-          }
-          if(isVideoTile && videoViewerRowId === row.id && videoViewerItemIds.includes(it.id)){
-            closeVideoViewer();
-          }
-          try{
-            const cachedPreviewUrl = itemPreviewUrlCache.get(it.id);
-            if(cachedPreviewUrl) URL.revokeObjectURL(cachedPreviewUrl);
-          }catch{}
-          itemPreviewUrlCache.delete(it.id);
-          await refreshRowAndKeepUI(row.id);
-        }catch(err){
-          addMsg((isVideoTile ? "Ошибка удаления видео: " : "Ошибка удаления фото: ") + (err?.message || err), "err");
-        }finally{
-          isBusy = false;
-        }
-      });
-
-      bubbles.appendChild(downloadBtn);
-      bubbles.appendChild(deleteBtn);
-      card.appendChild(bubbles);
+    if(!isAudioTile){
+      const menuBtn = createTileMenuButton(createDefaultTileMenuActions(row.id, it.id));
+      card.appendChild(menuBtn);
     }
 
     rail.appendChild(card);
@@ -6424,6 +6615,25 @@ document.addEventListener("keydown", async (e)=>{
 
 document.addEventListener("click", ()=> closeAddMenu());
 addMenu.addEventListener("click", (e)=> e.stopPropagation());
+
+document.addEventListener("pointerdown", (e)=>{
+  if(!activeTileMenu) return;
+  const target = e.target;
+  if(activeTileMenu.menu?.contains(target) || activeTileMenu.button?.contains(target)) return;
+  closeActiveTileMenu();
+}, true);
+
+window.addEventListener("resize", ()=>{
+  if(activeTileMenu?.menu && activeTileMenu?.button){
+    positionTileMenu(activeTileMenu.menu, activeTileMenu.button);
+  }
+});
+
+window.addEventListener("scroll", ()=>{
+  if(activeTileMenu?.menu && activeTileMenu?.button){
+    positionTileMenu(activeTileMenu.menu, activeTileMenu.button);
+  }
+}, true);
 
 /** ===========================
  *  INIT
