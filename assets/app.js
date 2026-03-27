@@ -4426,12 +4426,12 @@ function buildAudioTileCard(card, rowId, it){
         <div class="itemDesc" data-audio-seg-count>Сегментов: ${getAudioSegments(it).length}</div>
       </div>
 
-      <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:flex-start;">
+      <div style="display:flex;justify-content:center;align-items:center;">
         <button type="button" class="btnGhost" data-audio-record>⏺</button>
       </div>
 
-      <div style="display:flex;flex-direction:column;gap:6px;">
-        <div data-audio-progress-wrap style="position:relative;height:18px;display:flex;align-items:center;">
+      <div style="display:grid;grid-template-columns:minmax(0,1fr) auto;grid-template-rows:auto auto;column-gap:10px;row-gap:6px;align-items:center;">
+        <div data-audio-progress-wrap style="grid-column:1 / span 2;grid-row:1 / span 2;position:relative;height:18px;display:flex;align-items:center;">
           <div data-audio-progress-bg
                style="position:absolute;left:0;right:0;top:50%;transform:translateY(-50%);
                       height:4px;border-radius:999px;background:rgba(17,19,23,.14);overflow:hidden;">
@@ -4453,14 +4453,14 @@ function buildAudioTileCard(card, rowId, it){
                  data-audio-slider
                  style="position:relative;z-index:2;width:100%;margin:0;background:transparent;touch-action:none;" />
         </div>
-        <div style="display:flex;align-items:center;justify-content:flex-start;gap:10px;">
-          <div class="itemDesc" data-audio-current-time>0:00</div>
-        </div>
+        <div class="itemDesc" data-audio-recording-total
+             style="grid-column:2;grid-row:1;justify-self:end;align-self:start;">${initialTotal}</div>
+        <div class="itemDesc" data-audio-current-time
+             style="grid-column:1;grid-row:2;justify-self:start;align-self:end;">0:00</div>
       </div>
 
-      <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;">
+      <div style="display:flex;justify-content:center;align-items:center;">
         <button type="button" class="btnGhost" data-audio-play-toggle>▶</button>
-        <div class="itemDesc" data-audio-recording-total>${initialTotal}</div>
       </div>
     </div>
   `;
