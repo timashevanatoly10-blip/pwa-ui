@@ -2462,6 +2462,7 @@ function updateAudioRowProgressDom(rowId){
   slider.max = String(max);
   slider.step = "0.01";
   slider.value = String(val);
+  slider.style.background = "transparent";
 
   const trackWidth = slider.getBoundingClientRect().width || 0;
   const thumbSize = 14;
@@ -2470,12 +2471,12 @@ function updateAudioRowProgressDom(rowId){
   const thumbLeft = usable * ratio;
   const fillWidth = thumbLeft + thumbSize / 2;
 
-  slider.style.background =
-    `linear-gradient(to right,
-      rgba(84,132,255,.95) 0px,
-      rgba(84,132,255,.95) ${fillWidth}px,
-      rgba(17,19,23,.14) ${fillWidth}px,
-      rgba(17,19,23,.14) 100%)`;
+  const wrap = slider.closest("[data-audio-row-progress-wrap]") || slider.parentElement || null;
+  const fill = wrap ? wrap.querySelector("[data-audio-row-progress-fill]") : null;
+  const thumb = wrap ? wrap.querySelector("[data-audio-row-progress-thumb]") : null;
+
+  if(fill) fill.style.width = `${fillWidth}px`;
+  if(thumb) thumb.style.left = `${thumbLeft}px`;
 }
 
 function updateAudioRowHeaderDom(rowId){
@@ -3353,6 +3354,9 @@ function renderAudioRow(p, e){
       textWrap.style.alignItems = "flex-start";
       textWrap.style.justifyContent = "flex-start";
     }
+
+    const descEl = left.querySelector(".itemDesc");
+    if(descEl) descEl.remove();
   }
 
   if(right){
@@ -3420,14 +3424,30 @@ function renderAudioRow(p, e){
     progressWrap.style.width = "auto";
     progressWrap.style.flex = "1 1 auto";
     progressWrap.style.height = "18px";
+    progressWrap.style.background = "transparent";
+    progressWrap.style.border = "none";
+    progressWrap.style.borderRadius = "0";
+    progressWrap.style.boxShadow = "none";
+    progressWrap.style.padding = "0";
+    progressWrap.style.position = "relative";
     progressWrap.innerHTML = `
+      <div data-audio-row-progress-bg
+           style="position:absolute;left:0;right:0;top:50%;transform:translateY(-50%);
+                  height:4px;border-radius:999px;background:rgba(17,19,23,.14);overflow:hidden;pointer-events:none;">
+        <div data-audio-row-progress-fill
+             style="height:100%;width:0%;border-radius:999px;background:rgba(84,132,255,.95);"></div>
+      </div>
+      <div data-audio-row-progress-thumb
+           style="position:absolute;top:50%;left:0;width:14px;height:14px;border-radius:999px;
+                  background:#fff;border:2px solid rgba(84,132,255,.95);box-shadow:0 1px 4px rgba(0,0,0,.18);
+                  transform:translate(0,-50%);pointer-events:none;z-index:3;"></div>
       <input type="range"
              min="0"
              max="1"
              step="0.01"
              value="0"
              data-audio-row-slider
-             style="width:100%;height:18px;margin:0;touch-action:none;pointer-events:auto;" />
+             style="position:relative;z-index:2;width:100%;height:18px;margin:0;background:transparent;touch-action:none;pointer-events:auto;-webkit-appearance:none;appearance:none;border:none;outline:none;box-shadow:none;padding:0;" />
     `;
 
     const slider = progressWrap.querySelector("[data-audio-row-slider]");
@@ -4435,16 +4455,19 @@ function ensureAudioRangeStyles(){
   -webkit-appearance:none;
   appearance:none;
   width:100%;
-  background:rgba(17,19,23,.14);
+  background:transparent;
   height:18px;
   outline:none;
+  border:none;
+  box-shadow:none;
+  padding:0;
   touch-action:none;
 }
 [data-audio-row-slider]::-webkit-slider-runnable-track{
   -webkit-appearance:none;
   appearance:none;
   height:4px;
-  background:rgba(17,19,23,.14);
+  background:transparent;
   border:none;
   border-radius:999px;
 }
@@ -4461,7 +4484,7 @@ function ensureAudioRangeStyles(){
 }
 [data-audio-row-slider]::-moz-range-track{
   height:4px;
-  background:rgba(17,19,23,.14);
+  background:transparent;
   border:none;
   border-radius:999px;
 }
