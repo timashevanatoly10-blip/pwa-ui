@@ -666,6 +666,7 @@ const audioTileRecorderStates = new Map();
 let activeAudioPlayback = null;
 let activeAudioRowPlayback = null;
 let audioRowPlaybackToken = 0;
+let audioRowSharedCtx = null;
 let activeTileMenu = null;
 const audioRowJumpLocks = new Map();
 
@@ -692,6 +693,13 @@ function hasMediaRecorder(){
 }
 function canUseWebAudio(){
   return typeof (window.AudioContext || window.webkitAudioContext) !== "undefined";
+}
+function getAudioRowContext(){
+  if(!audioRowSharedCtx){
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    audioRowSharedCtx = new AudioCtx();
+  }
+  return audioRowSharedCtx;
 }
 function chooseAudioMode(){
   return hasMediaRecorder() ? "mediarecorder" : "capture";
@@ -2519,6 +2527,12 @@ async function stopActiveAudioRowPlayback({ keepTilePlayback = false } = {}){
   if(!keepTilePlayback && activeAudioPlayback && activeAudioPlayback.rowId === prevRowId){
     await stopActiveAudioPlayback();
   }
+  if(audioRowSharedCtx){
+    try{
+      await audioRowSharedCtx.close();
+    }catch{}
+    audioRowSharedCtx = null;
+  }
   updateAudioRowHeaderDom(prevRowId);
   updateAudioRowProgressDom(prevRowId);
 }
@@ -2858,9 +2872,10 @@ async function playAudioRowFromCurrentSeekState(rowId){
   if(!activeAudioRowPlayback) return;
   if(activeAudioRowPlayback.rowId !== rowId) return;
   if(token !== audioRowPlaybackToken) return;
+  if(activeAudioRowPlayback.isPaused === true) return;
 
   activeAudioRowPlayback.pausedOffsetSec = 0;
-  await continueAudioRowAfterCurrentItem(rowId, currentItemId, token);
+  continueAudioRowAfterCurrentItem(rowId, currentItemId, token);
 }
 
 async function toggleAudioRowPlayback(rowId){
@@ -2870,21 +2885,7 @@ async function toggleAudioRowPlayback(rowId){
       return;
     }
 
-    const currentItemId = activeAudioRowPlayback.itemIds[activeAudioRowPlayback.index] || null;
-    const pausedOffsetSec = Number(activeAudioRowPlayback.pausedOffsetSec || 0);
-    const token = audioRowPlaybackToken;
-    activeAudioRowPlayback.isPaused = false;
-    startAudioRowPlaybackUiTimer(rowId);
-    updateAudioRowHeaderDom(rowId);
-
-    if(currentItemId){
-      await playAudioTileFromOffsetForRow(rowId, currentItemId, pausedOffsetSec);
-      if(!activeAudioRowPlayback) return;
-      if(activeAudioRowPlayback.rowId !== rowId) return;
-      if(token !== audioRowPlaybackToken) return;
-      activeAudioRowPlayback.pausedOffsetSec = 0;
-      await continueAudioRowAfterCurrentItem(rowId, currentItemId, token);
-    }
+    await playAudioRowFromCurrentSeekState(rowId);
     return;
   }
 
@@ -3321,16 +3322,27 @@ function renderAudioRow(p, e){
 
   const right = header.lastElementChild;
   if(right){
-    right.style.display = "flex";
-    right.style.alignItems = "center";
-    right.style.gap = "8px";
+    const expanded = isRowExpanded(e.refId);
 
-    const actions = document.createElement("div");
-    actions.style.display = "flex";
-    actions.style.alignItems = "center";
-    actions.style.gap = "6px";
-    actions.style.minWidth = "0";
-    actions.style.flexWrap = "nowrap";
+    right.style.display = "flex";
+    right.style.flexDirection = "column";
+    right.style.alignItems = "stretch";
+    right.style.gap = "8px";
+    right.style.minWidth = "0";
+
+    const topRowActions = document.createElement("div");
+    topRowActions.style.display = "flex";
+    topRowActions.style.alignItems = "center";
+    topRowActions.style.gap = "6px";
+    topRowActions.style.minWidth = "0";
+    topRowActions.style.flexWrap = "nowrap";
+
+    const transportRow = document.createElement("div");
+    transportRow.style.display = expanded ? "flex" : "none";
+    transportRow.style.alignItems = "center";
+    transportRow.style.gap = "8px";
+    transportRow.style.minWidth = "0";
+    transportRow.style.width = "100%";
 
     const counterEl = document.createElement("div");
     counterEl.className = "itemDesc";
@@ -3353,8 +3365,7 @@ function renderAudioRow(p, e){
     progressWrap.dataset.audioRowProgressWrap = "1";
     progressWrap.style.display = "flex";
     progressWrap.style.alignItems = "center";
-    progressWrap.style.minWidth = "140px";
-    progressWrap.style.maxWidth = "220px";
+    progressWrap.style.minWidth = "120px";
     progressWrap.style.flex = "1";
     progressWrap.style.height = "18px";
     progressWrap.innerHTML = `
@@ -3566,15 +3577,18 @@ function renderAudioRow(p, e){
       }
     });
 
-    actions.appendChild(counterEl);
-    actions.appendChild(timeEl);
-    actions.appendChild(backBtn);
-    actions.appendChild(progressWrap);
-    actions.appendChild(forwardBtn);
-    actions.appendChild(playBtn);
-    actions.appendChild(renameBtn);
-    actions.appendChild(deleteBtn);
-    right.appendChild(actions);
+    topRowActions.appendChild(counterEl);
+    topRowActions.appendChild(playBtn);
+    topRowActions.appendChild(renameBtn);
+    topRowActions.appendChild(deleteBtn);
+
+    transportRow.appendChild(backBtn);
+    transportRow.appendChild(timeEl);
+    transportRow.appendChild(progressWrap);
+    transportRow.appendChild(forwardBtn);
+
+    right.appendChild(topRowActions);
+    right.appendChild(transportRow);
   }
 
   requestAnimationFrame(()=>{
@@ -3823,7 +3837,6 @@ function updateAudioTileDom(rowId, itemId){
   const renameBtn = card.querySelector("[data-audio-rename]");
   const slider = card.querySelector("[data-audio-slider]");
   const currentEl = card.querySelector("[data-audio-current-time]");
-  const totalEl = card.querySelector("[data-audio-total-time]");
   const recordingTotalEl = card.querySelector("[data-audio-recording-total]");
 
   const isTileSeeking = card.dataset.tileSeeking === "1";
@@ -3889,7 +3902,6 @@ function updateAudioTileDom(rowId, itemId){
   }
 
   if(currentEl) currentEl.textContent = formatAudioDuration(currentSec);
-  if(totalEl) totalEl.textContent = formatAudioDuration(totalSec);
 }
 function startAudioTileTimer(rowId, itemId){
   const state = audioTileRecorderStates.get(itemId);
@@ -4139,7 +4151,7 @@ async function stopActiveAudioPlayback(){
     try{ activeAudioPlayback.source.onended = null; }catch{}
     try{ activeAudioPlayback.source.stop(0); }catch{}
   }
-  if(activeAudioPlayback.ctx){
+  if(activeAudioPlayback.ctx && activeAudioPlayback.ctx !== audioRowSharedCtx){
     try{ await activeAudioPlayback.ctx.close(); }catch{}
   }
   const prev = activeAudioPlayback;
@@ -4154,7 +4166,7 @@ async function startAudioPlaybackFromOffset(rowId, itemId, merged, offsetSec){
   const AudioCtx = window.AudioContext || window.webkitAudioContext;
   if(!AudioCtx) throw new Error("Web Audio не поддерживается");
 
-  const ctx = new AudioCtx();
+  const ctx = getAudioRowContext();
   const source = ctx.createBufferSource();
   source.buffer = merged.buffer;
   source.connect(ctx.destination);
@@ -4179,13 +4191,28 @@ async function startAudioPlaybackFromOffset(rowId, itemId, merged, offsetSec){
     const current = activeAudioPlayback;
     if(!current || current.itemId !== itemId || current.rowId !== rowId) return;
     stopAudioPlaybackUiTimer();
-    try{ await ctx.close(); }catch{}
+    if(ctx !== audioRowSharedCtx){
+      try{ await ctx.close(); }catch{}
+    }
     activeAudioPlayback = null;
     updateAudioTileDom(rowId, itemId);
     updateAudioRowHeaderDom(rowId);
   };
 
+  if(ctx.state === "suspended"){
+    try{
+      await ctx.resume();
+    }catch{}
+  }
+
   source.start(0, safeOffset);
+
+  if(ctx.state === "suspended"){
+    try{
+      await ctx.resume();
+    }catch{}
+  }
+
   startAudioPlaybackUiTimer(rowId, itemId);
   updateAudioTileDom(rowId, itemId);
   updateAudioRowHeaderDom(rowId);
@@ -4227,7 +4254,7 @@ async function pauseAudioTilePlayback(rowId, itemId){
     try{ activeAudioPlayback.source.onended = null; }catch{}
     try{ activeAudioPlayback.source.stop(0); }catch{}
   }
-  if(activeAudioPlayback.ctx){
+  if(activeAudioPlayback.ctx && activeAudioPlayback.ctx !== audioRowSharedCtx){
     try{ await activeAudioPlayback.ctx.close(); }catch{}
   }
   activeAudioPlayback = {
@@ -4322,6 +4349,9 @@ function ensureAudioRangeStyles(){
   background:transparent;
   height:18px;
   outline:none;
+  border:none;
+  box-shadow:none;
+  padding:0;
   touch-action:none;
 }
 [data-audio-slider]::-webkit-slider-runnable-track{
@@ -4412,12 +4442,12 @@ function buildAudioTileCard(card, rowId, it){
         <div class="itemDesc" data-audio-seg-count>Сегментов: ${getAudioSegments(it).length}</div>
       </div>
 
-      <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:flex-start;">
+      <div style="display:flex;justify-content:center;align-items:center;">
         <button type="button" class="btnGhost" data-audio-record>⏺</button>
       </div>
 
-      <div style="display:flex;flex-direction:column;gap:6px;">
-        <div data-audio-progress-wrap style="position:relative;height:18px;display:flex;align-items:center;">
+      <div style="display:grid;grid-template-columns:minmax(0,1fr) auto;grid-template-rows:auto auto;column-gap:10px;row-gap:6px;align-items:center;">
+        <div data-audio-progress-wrap style="grid-column:1 / span 2;grid-row:1 / span 2;position:relative;height:18px;display:flex;align-items:center;background:transparent;border:none;outline:none;box-shadow:none;padding:0;">
           <div data-audio-progress-bg
                style="position:absolute;left:0;right:0;top:50%;transform:translateY(-50%);
                       height:4px;border-radius:999px;background:rgba(17,19,23,.14);overflow:hidden;">
@@ -4437,17 +4467,16 @@ function buildAudioTileCard(card, rowId, it){
                  step="0.01"
                  value="0"
                  data-audio-slider
-                 style="position:relative;z-index:2;width:100%;margin:0;background:transparent;touch-action:none;" />
+                 style="position:relative;z-index:2;width:100%;margin:0;background:transparent;touch-action:none;-webkit-appearance:none;appearance:none;border:none;outline:none;box-shadow:none;padding:0;" />
         </div>
-        <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
-          <div class="itemDesc" data-audio-current-time>0:00</div>
-          <div class="itemDesc" data-audio-total-time>${initialTotal}</div>
-        </div>
+        <div class="itemDesc" data-audio-recording-total
+             style="grid-column:2;grid-row:1;justify-self:end;align-self:start;">${initialTotal}</div>
+        <div class="itemDesc" data-audio-current-time
+             style="grid-column:1;grid-row:2;justify-self:start;align-self:end;">0:00</div>
       </div>
 
-      <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;">
+      <div style="display:flex;justify-content:center;align-items:center;">
         <button type="button" class="btnGhost" data-audio-play-toggle>▶</button>
-        <div class="itemDesc" data-audio-recording-total>${initialTotal}</div>
       </div>
     </div>
   `;
