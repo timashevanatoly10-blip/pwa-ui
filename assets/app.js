@@ -2457,26 +2457,13 @@ function updateAudioRowProgressDom(rowId){
   const currentSec = getAudioRowCurrentPositionSec(rowId);
   const max = Math.max(totalSec, 0.000001);
   const val = clamp(currentSec, 0, totalSec);
+  const pct = clamp((val / max) * 100, 0, 100);
 
   slider.min = "0";
   slider.max = String(max);
   slider.step = "0.01";
   slider.value = String(val);
-  slider.style.background = "transparent";
-
-  const trackWidth = slider.getBoundingClientRect().width || 0;
-  const thumbSize = 14;
-  const usable = Math.max(trackWidth - thumbSize, 0);
-  const ratio = clamp(val / max, 0, 1);
-  const thumbLeft = usable * ratio;
-  const fillWidth = thumbLeft + thumbSize / 2;
-
-  const wrap = slider.closest("[data-audio-row-progress-wrap]") || slider.parentElement || null;
-  const fill = wrap ? wrap.querySelector("[data-audio-row-progress-fill]") : null;
-  const thumb = wrap ? wrap.querySelector("[data-audio-row-progress-thumb]") : null;
-
-  if(fill) fill.style.width = `${fillWidth}px`;
-  if(thumb) thumb.style.left = `${thumbLeft}px`;
+  slider.style.background = `linear-gradient(to right, rgba(84,132,255,.95) 0%, rgba(84,132,255,.95) ${pct}%, rgba(17,19,23,.14) ${pct}%, rgba(17,19,23,.14) 100%)`;
 }
 
 function updateAudioRowHeaderDom(rowId){
@@ -3341,6 +3328,7 @@ function renderAudioRow(p, e){
     left.style.minWidth = "0";
     left.style.gap = "0";
     left.style.flex = "1 1 auto";
+    left.style.overflow = "hidden";
 
     const thumb = left.querySelector(".thumb");
     if(thumb) thumb.remove();
@@ -3353,6 +3341,16 @@ function renderAudioRow(p, e){
       textWrap.style.flexDirection = "column";
       textWrap.style.alignItems = "flex-start";
       textWrap.style.justifyContent = "flex-start";
+      textWrap.style.overflow = "hidden";
+    }
+
+    const titleEl = left.querySelector(".itemTitle");
+    if(titleEl){
+      titleEl.style.minWidth = "0";
+      titleEl.style.width = "100%";
+      titleEl.style.whiteSpace = "nowrap";
+      titleEl.style.overflow = "hidden";
+      titleEl.style.textOverflow = "ellipsis";
     }
 
     const descEl = left.querySelector(".itemDesc");
@@ -3364,12 +3362,14 @@ function renderAudioRow(p, e){
     right.className = "";
     right.style.display = "flex";
     right.style.flexDirection = "column";
-    right.style.alignItems = "stretch";
+    right.style.alignItems = "flex-start";
     right.style.justifyContent = "flex-start";
     right.style.gap = "8px";
     right.style.minWidth = "0";
     right.style.flex = "0 0 auto";
     right.style.alignSelf = "flex-start";
+    right.style.width = "auto";
+    right.style.maxWidth = "100%";
 
     const topRowActions = document.createElement("div");
     topRowActions.style.display = "flex";
@@ -3378,7 +3378,7 @@ function renderAudioRow(p, e){
     topRowActions.style.gap = "8px";
     topRowActions.style.minWidth = "0";
     topRowActions.style.flexWrap = "nowrap";
-    topRowActions.style.width = "100%";
+    topRowActions.style.width = "auto";
 
     const transportRow = document.createElement("div");
     transportRow.style.display = expanded ? "flex" : "none";
@@ -3393,6 +3393,7 @@ function renderAudioRow(p, e){
     counterEl.dataset.audioRowCounter = "1";
     counterEl.textContent = "0 / 0";
     counterEl.style.whiteSpace = "nowrap";
+    counterEl.style.flex = "0 0 auto";
 
     const currentTimeEl = document.createElement("div");
     currentTimeEl.className = "itemDesc";
@@ -3409,56 +3410,68 @@ function renderAudioRow(p, e){
     totalTimeEl.style.whiteSpace = "nowrap";
 
     const backBtn = document.createElement("button");
-    backBtn.className = "btnGhost";
+    backBtn.className = "";
     backBtn.type = "button";
     backBtn.textContent = "⏪";
     backBtn.title = "-5s";
     backBtn.dataset.audioRowBack5 = "1";
     backBtn.style.flex = "0 0 auto";
+    backBtn.style.appearance = "none";
+    backBtn.style.border = "none";
+    backBtn.style.background = "transparent";
+    backBtn.style.boxShadow = "none";
+    backBtn.style.padding = "2px 4px";
+    backBtn.style.margin = "0";
+    backBtn.style.minWidth = "auto";
+    backBtn.style.borderRadius = "0";
+    backBtn.style.fontSize = "15px";
+    backBtn.style.lineHeight = "1";
+    backBtn.style.cursor = "pointer";
+    backBtn.style.color = "#111317";
 
     const progressWrap = document.createElement("div");
     progressWrap.dataset.audioRowProgressWrap = "1";
     progressWrap.style.display = "flex";
     progressWrap.style.alignItems = "center";
+    progressWrap.style.flex = "1 1 auto";
     progressWrap.style.minWidth = "0";
     progressWrap.style.width = "auto";
-    progressWrap.style.flex = "1 1 auto";
-    progressWrap.style.height = "18px";
     progressWrap.style.background = "transparent";
     progressWrap.style.border = "none";
-    progressWrap.style.borderRadius = "0";
     progressWrap.style.boxShadow = "none";
     progressWrap.style.padding = "0";
     progressWrap.style.position = "relative";
     progressWrap.innerHTML = `
-      <div data-audio-row-progress-bg
-           style="position:absolute;left:0;right:0;top:50%;transform:translateY(-50%);
-                  height:4px;border-radius:999px;background:rgba(17,19,23,.14);overflow:hidden;pointer-events:none;">
-        <div data-audio-row-progress-fill
-             style="height:100%;width:0%;border-radius:999px;background:rgba(84,132,255,.95);"></div>
-      </div>
-      <div data-audio-row-progress-thumb
-           style="position:absolute;top:50%;left:0;width:14px;height:14px;border-radius:999px;
-                  background:#fff;border:2px solid rgba(84,132,255,.95);box-shadow:0 1px 4px rgba(0,0,0,.18);
-                  transform:translate(0,-50%);pointer-events:none;z-index:3;"></div>
       <input type="range"
              min="0"
              max="1"
              step="0.01"
              value="0"
              data-audio-row-slider
-             style="position:relative;z-index:2;width:100%;height:18px;margin:0;background:transparent;touch-action:none;pointer-events:auto;-webkit-appearance:none;appearance:none;border:none;outline:none;box-shadow:none;padding:0;" />
+             style="position:relative;z-index:1;width:100%;height:18px;margin:0;touch-action:none;pointer-events:auto;-webkit-appearance:none;appearance:none;border:none;outline:none;box-shadow:none;padding:0;border-radius:999px;background:linear-gradient(to right, rgba(84,132,255,.95) 0%, rgba(84,132,255,.95) 0%, rgba(17,19,23,.14) 0%, rgba(17,19,23,.14) 100%);" />
     `;
 
     const slider = progressWrap.querySelector("[data-audio-row-slider]");
 
     const forwardBtn = document.createElement("button");
-    forwardBtn.className = "btnGhost";
+    forwardBtn.className = "";
     forwardBtn.type = "button";
     forwardBtn.textContent = "⏩";
     forwardBtn.title = "+5s";
     forwardBtn.dataset.audioRowForward5 = "1";
     forwardBtn.style.flex = "0 0 auto";
+    forwardBtn.style.appearance = "none";
+    forwardBtn.style.border = "none";
+    forwardBtn.style.background = "transparent";
+    forwardBtn.style.boxShadow = "none";
+    forwardBtn.style.padding = "2px 4px";
+    forwardBtn.style.margin = "0";
+    forwardBtn.style.minWidth = "auto";
+    forwardBtn.style.borderRadius = "0";
+    forwardBtn.style.fontSize = "15px";
+    forwardBtn.style.lineHeight = "1";
+    forwardBtn.style.cursor = "pointer";
+    forwardBtn.style.color = "#111317";
 
     const playBtn = document.createElement("button");
     playBtn.className = "btnGhost";
@@ -3466,6 +3479,9 @@ function renderAudioRow(p, e){
     playBtn.textContent = "▶";
     playBtn.title = "Play row";
     playBtn.dataset.audioRowToggle = "1";
+    playBtn.style.flex = "0 0 auto";
+    playBtn.style.minWidth = "32px";
+    playBtn.style.padding = "6px 10px";
 
     const menuBtn = document.createElement("button");
     menuBtn.className = "btnGhost";
@@ -3475,6 +3491,9 @@ function renderAudioRow(p, e){
     menuBtn.dataset.audioRowMenu = "1";
     menuBtn.setAttribute("aria-haspopup", "menu");
     menuBtn.setAttribute("aria-expanded", "false");
+    menuBtn.style.flex = "0 0 auto";
+    menuBtn.style.minWidth = "32px";
+    menuBtn.style.padding = "6px 10px";
 
     playBtn.addEventListener("click", async (ev)=>{
       ev.preventDefault();
@@ -3558,22 +3577,12 @@ function renderAudioRow(p, e){
         const state = getPreviewStateForPosition(value);
         const max = Math.max(state.totalSec, 0.000001);
         const val = clamp(state.safeTargetSec, 0, state.totalSec);
-        const trackWidth = slider.getBoundingClientRect().width || 0;
-        const thumbSize = 14;
-        const usable = Math.max(trackWidth - thumbSize, 0);
-        const ratio = clamp(val / max, 0, 1);
-        const thumbLeft = usable * ratio;
-        const fillWidth = thumbLeft + thumbSize / 2;
+        const pct = clamp((val / max) * 100, 0, 100);
         slider.min = "0";
         slider.max = String(max);
         slider.step = "0.01";
         slider.value = String(val);
-        slider.style.background =
-          `linear-gradient(to right,
-            rgba(84,132,255,.95) 0px,
-            rgba(84,132,255,.95) ${fillWidth}px,
-            rgba(17,19,23,.14) ${fillWidth}px,
-            rgba(17,19,23,.14) 100%)`;
+        slider.style.background = `linear-gradient(to right, rgba(84,132,255,.95) 0%, rgba(84,132,255,.95) ${pct}%, rgba(17,19,23,.14) ${pct}%, rgba(17,19,23,.14) 100%)`;
         if(currentTimeEl){
           currentTimeEl.textContent = formatAudioDuration(state.safeTargetSec);
         }
@@ -4462,6 +4471,7 @@ function ensureAudioRangeStyles(){
   box-shadow:none;
   padding:0;
   touch-action:none;
+  border-radius:999px;
 }
 [data-audio-row-slider]::-webkit-slider-runnable-track{
   -webkit-appearance:none;
@@ -4483,6 +4493,12 @@ function ensureAudioRangeStyles(){
   margin-top:-5px;
 }
 [data-audio-row-slider]::-moz-range-track{
+  height:4px;
+  background:transparent;
+  border:none;
+  border-radius:999px;
+}
+[data-audio-row-slider]::-moz-range-progress{
   height:4px;
   background:transparent;
   border:none;
