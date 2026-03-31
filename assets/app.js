@@ -2483,7 +2483,8 @@ function updateAudioRowHeaderDom(rowId){
   if(!host) return;
 
   const toggleBtn = host.querySelector("[data-audio-row-toggle]");
-  const timeEl = host.querySelector("[data-audio-row-time]");
+  const currentTimeEl = host.querySelector("[data-audio-row-current-time]");
+  const totalTimeEl = host.querySelector("[data-audio-row-total-time]");
   const counterEl = host.querySelector("[data-audio-row-counter]");
   const slider = host.querySelector("[data-audio-row-slider]");
   const totalSec = getAudioRowTotalDurationSec(rowId);
@@ -2500,9 +2501,13 @@ function updateAudioRowHeaderDom(rowId){
   if(slider?.dataset.seeking === "1"){
     return;
   }
-  if(timeEl){
-    const shownCurrent = isActiveRow ? currentSec : 0;
-    timeEl.textContent = `${formatAudioDuration(shownCurrent)} / ${formatAudioDuration(totalSec)}`;
+
+  const shownCurrent = isActiveRow ? currentSec : 0;
+  if(currentTimeEl){
+    currentTimeEl.textContent = formatAudioDuration(shownCurrent);
+  }
+  if(totalTimeEl){
+    totalTimeEl.textContent = formatAudioDuration(totalSec);
   }
   if(counterEl){
     if(totalTiles === 0){
@@ -3320,29 +3325,61 @@ function renderAudioRow(p, e){
   const header = block.firstElementChild;
   if(!header) return block;
 
+  const left = header.firstElementChild;
   const right = header.lastElementChild;
-  if(right){
-    const expanded = isRowExpanded(e.refId);
+  const expanded = isRowExpanded(e.refId);
 
+  header.style.display = "flex";
+  header.style.alignItems = "flex-start";
+  header.style.justifyContent = "space-between";
+  header.style.gap = "12px";
+
+  if(left){
+    left.style.display = "flex";
+    left.style.alignItems = "flex-start";
+    left.style.minWidth = "0";
+    left.style.gap = "0";
+    left.style.flex = "1 1 auto";
+
+    const thumb = left.querySelector(".thumb");
+    if(thumb) thumb.remove();
+
+    const textWrap = left.querySelector(".itemText");
+    if(textWrap){
+      textWrap.style.minWidth = "0";
+      textWrap.style.width = "100%";
+      textWrap.style.display = "flex";
+      textWrap.style.flexDirection = "column";
+      textWrap.style.alignItems = "flex-start";
+      textWrap.style.justifyContent = "flex-start";
+    }
+  }
+
+  if(right){
     right.textContent = "";
     right.className = "";
     right.style.display = "flex";
     right.style.flexDirection = "column";
     right.style.alignItems = "stretch";
+    right.style.justifyContent = "flex-start";
     right.style.gap = "8px";
     right.style.minWidth = "0";
+    right.style.flex = "0 0 auto";
+    right.style.alignSelf = "flex-start";
 
     const topRowActions = document.createElement("div");
     topRowActions.style.display = "flex";
     topRowActions.style.alignItems = "center";
-    topRowActions.style.justifyContent = "flex-end";
-    topRowActions.style.gap = "6px";
+    topRowActions.style.justifyContent = "flex-start";
+    topRowActions.style.gap = "8px";
     topRowActions.style.minWidth = "0";
     topRowActions.style.flexWrap = "nowrap";
+    topRowActions.style.width = "100%";
 
     const transportRow = document.createElement("div");
     transportRow.style.display = expanded ? "flex" : "none";
     transportRow.style.alignItems = "center";
+    transportRow.style.justifyContent = "flex-start";
     transportRow.style.gap = "8px";
     transportRow.style.minWidth = "0";
     transportRow.style.width = "100%";
@@ -3351,11 +3388,21 @@ function renderAudioRow(p, e){
     counterEl.className = "itemDesc";
     counterEl.dataset.audioRowCounter = "1";
     counterEl.textContent = "0 / 0";
+    counterEl.style.whiteSpace = "nowrap";
 
-    const timeEl = document.createElement("div");
-    timeEl.className = "itemDesc";
-    timeEl.dataset.audioRowTime = "1";
-    timeEl.textContent = `0:00 / ${formatAudioDuration(getAudioRowTotalDurationSec(e.refId))}`;
+    const currentTimeEl = document.createElement("div");
+    currentTimeEl.className = "itemDesc";
+    currentTimeEl.dataset.audioRowCurrentTime = "1";
+    currentTimeEl.textContent = "0:00";
+    currentTimeEl.style.flex = "0 0 auto";
+    currentTimeEl.style.whiteSpace = "nowrap";
+
+    const totalTimeEl = document.createElement("div");
+    totalTimeEl.className = "itemDesc";
+    totalTimeEl.dataset.audioRowTotalTime = "1";
+    totalTimeEl.textContent = formatAudioDuration(getAudioRowTotalDurationSec(e.refId));
+    totalTimeEl.style.flex = "0 0 auto";
+    totalTimeEl.style.whiteSpace = "nowrap";
 
     const backBtn = document.createElement("button");
     backBtn.className = "btnGhost";
@@ -3363,13 +3410,15 @@ function renderAudioRow(p, e){
     backBtn.textContent = "⏪";
     backBtn.title = "-5s";
     backBtn.dataset.audioRowBack5 = "1";
+    backBtn.style.flex = "0 0 auto";
 
     const progressWrap = document.createElement("div");
     progressWrap.dataset.audioRowProgressWrap = "1";
     progressWrap.style.display = "flex";
     progressWrap.style.alignItems = "center";
-    progressWrap.style.minWidth = "120px";
-    progressWrap.style.flex = "1";
+    progressWrap.style.minWidth = "0";
+    progressWrap.style.width = "auto";
+    progressWrap.style.flex = "1 1 auto";
     progressWrap.style.height = "18px";
     progressWrap.innerHTML = `
       <input type="range"
@@ -3389,6 +3438,7 @@ function renderAudioRow(p, e){
     forwardBtn.textContent = "⏩";
     forwardBtn.title = "+5s";
     forwardBtn.dataset.audioRowForward5 = "1";
+    forwardBtn.style.flex = "0 0 auto";
 
     const playBtn = document.createElement("button");
     playBtn.className = "btnGhost";
@@ -3504,8 +3554,11 @@ function renderAudioRow(p, e){
             rgba(84,132,255,.95) ${fillWidth}px,
             rgba(17,19,23,.14) ${fillWidth}px,
             rgba(17,19,23,.14) 100%)`;
-        if(timeEl){
-          timeEl.textContent = `${formatAudioDuration(state.safeTargetSec)} / ${formatAudioDuration(state.totalSec)}`;
+        if(currentTimeEl){
+          currentTimeEl.textContent = formatAudioDuration(state.safeTargetSec);
+        }
+        if(totalTimeEl){
+          totalTimeEl.textContent = formatAudioDuration(state.totalSec);
         }
         if(counterEl){
           counterEl.textContent = state.counterText;
@@ -3575,8 +3628,9 @@ function renderAudioRow(p, e){
     topRowActions.appendChild(menuBtn);
 
     transportRow.appendChild(backBtn);
-    transportRow.appendChild(timeEl);
+    transportRow.appendChild(currentTimeEl);
     transportRow.appendChild(progressWrap);
+    transportRow.appendChild(totalTimeEl);
     transportRow.appendChild(forwardBtn);
 
     right.appendChild(topRowActions);
