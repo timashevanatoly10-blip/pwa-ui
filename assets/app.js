@@ -3324,6 +3324,8 @@ function renderAudioRow(p, e){
   if(right){
     const expanded = isRowExpanded(e.refId);
 
+    right.textContent = "";
+    right.className = "";
     right.style.display = "flex";
     right.style.flexDirection = "column";
     right.style.alignItems = "stretch";
@@ -3333,6 +3335,7 @@ function renderAudioRow(p, e){
     const topRowActions = document.createElement("div");
     topRowActions.style.display = "flex";
     topRowActions.style.alignItems = "center";
+    topRowActions.style.justifyContent = "flex-end";
     topRowActions.style.gap = "6px";
     topRowActions.style.minWidth = "0";
     topRowActions.style.flexWrap = "nowrap";
@@ -3394,19 +3397,14 @@ function renderAudioRow(p, e){
     playBtn.title = "Play row";
     playBtn.dataset.audioRowToggle = "1";
 
-    const renameBtn = document.createElement("button");
-    renameBtn.className = "btnGhost";
-    renameBtn.type = "button";
-    renameBtn.textContent = "✎";
-    renameBtn.title = "Rename";
-    renameBtn.dataset.audioRowRename = "1";
-
-    const deleteBtn = document.createElement("button");
-    deleteBtn.className = "btnGhost";
-    deleteBtn.type = "button";
-    deleteBtn.textContent = "🗑";
-    deleteBtn.title = "Delete";
-    deleteBtn.dataset.audioRowDelete = "1";
+    const menuBtn = document.createElement("button");
+    menuBtn.className = "btnGhost";
+    menuBtn.type = "button";
+    menuBtn.textContent = "⋮";
+    menuBtn.title = "Меню";
+    menuBtn.dataset.audioRowMenu = "1";
+    menuBtn.setAttribute("aria-haspopup", "menu");
+    menuBtn.setAttribute("aria-expanded", "false");
 
     playBtn.addEventListener("click", async (ev)=>{
       ev.preventDefault();
@@ -3436,6 +3434,21 @@ function renderAudioRow(p, e){
       }catch(err){
         addMsg("Ошибка перемотки: " + (err?.message || err), "err");
       }
+    });
+
+    menuBtn.addEventListener("click", (ev)=>{
+      ev.preventDefault();
+      ev.stopPropagation();
+      openTileMenu(menuBtn, [
+        {
+          label: "✏️ Rename",
+          onClick: async ()=>{ await renameAudioRow(e.refId); }
+        },
+        {
+          label: "🗑 Delete",
+          onClick: async ()=>{ await deleteAudioRow(e.refId); }
+        }
+      ]);
     });
 
     if(slider){
@@ -3557,30 +3570,9 @@ function renderAudioRow(p, e){
       slider.addEventListener("click", (ev)=> ev.stopPropagation());
     }
 
-    renameBtn.addEventListener("click", async (ev)=>{
-      ev.preventDefault();
-      ev.stopPropagation();
-      try{
-        await renameAudioRow(e.refId);
-      }catch(err){
-        addMsg("Ошибка Rename row: " + (err?.message || err), "err");
-      }
-    });
-
-    deleteBtn.addEventListener("click", async (ev)=>{
-      ev.preventDefault();
-      ev.stopPropagation();
-      try{
-        await deleteAudioRow(e.refId);
-      }catch(err){
-        addMsg("Ошибка Delete row: " + (err?.message || err), "err");
-      }
-    });
-
-    topRowActions.appendChild(counterEl);
     topRowActions.appendChild(playBtn);
-    topRowActions.appendChild(renameBtn);
-    topRowActions.appendChild(deleteBtn);
+    topRowActions.appendChild(counterEl);
+    topRowActions.appendChild(menuBtn);
 
     transportRow.appendChild(backBtn);
     transportRow.appendChild(timeEl);
