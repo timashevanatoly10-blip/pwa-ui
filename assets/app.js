@@ -3151,31 +3151,47 @@ async function jumpAudioRowBy(rowId, deltaSec){
 
   const targetSec = clamp(getBaseSec() + Number(deltaSec || 0), 0, totalSec);
   activeAudioRowPlayback.pendingJumpTargetSec = targetSec;
+  updateAudioRowHeaderDom(rowId);
+  updateAudioRowProgressDom(rowId);
 
   if(audioRowJumpLocks.get(rowId)){
-    updateAudioRowHeaderDom(rowId);
-    updateAudioRowProgressDom(rowId);
     return;
   }
 
   audioRowJumpLocks.set(rowId, true);
   try{
+    let appliedTarget = null;
+
     while(true){
       const state = activeAudioRowPlayback;
       if(!state || state.rowId !== rowId || state.isPaused !== false) break;
 
-      const latestTarget = Number(state.pendingJumpTargetSec);
+      const rawPending = state.pendingJumpTargetSec;
+      const latestTarget = rawPending == null ? null : Number(rawPending);
       if(!Number.isFinite(latestTarget)) break;
       state.pendingJumpTargetSec = null;
 
       await seekAudioRowPlayback(rowId, latestTarget);
 
-      if(activeAudioRowPlayback && activeAudioRowPlayback.rowId === rowId && activeAudioRowPlayback.isPaused === true){
+      const pausedState = activeAudioRowPlayback;
+      if(
+        pausedState &&
+        pausedState.rowId === rowId &&
+        pausedState.isPaused === true
+      ){
         await playAudioRowFromCurrentSeekState(rowId);
       }
 
       updateAudioRowHeaderDom(rowId);
       updateAudioRowProgressDom(rowId);
+      appliedTarget = latestTarget;
+
+      const nextState = activeAudioRowPlayback;
+      if(!nextState || nextState.rowId !== rowId || nextState.isPaused !== false) break;
+
+      const rawNextPending = nextState.pendingJumpTargetSec;
+      const nextPending = rawNextPending == null ? null : Number(rawNextPending);
+      if(!Number.isFinite(nextPending) || nextPending === appliedTarget) break;
     }
   }finally{
     if(activeAudioRowPlayback && activeAudioRowPlayback.rowId === rowId){
