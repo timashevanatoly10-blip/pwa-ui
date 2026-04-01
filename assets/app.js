@@ -668,6 +668,7 @@ let activeAudioRowPlayback = null;
 let audioRowPlaybackToken = 0;
 let audioRowSharedCtx = null;
 let activeTileMenu = null;
+const audioRowJumpLocks = new Map();
 
 // In-memory store:
 // - db.puchki: root containers list + cached containers
@@ -2431,11 +2432,6 @@ function getAudioRowTotalDurationSec(rowId){
 function getAudioRowCurrentPositionSec(rowId){
   if(!activeAudioRowPlayback || activeAudioRowPlayback.rowId !== rowId) return 0;
   const state = activeAudioRowPlayback;
-  const totalSec = getAudioRowTotalDurationSec(rowId);
-  if(Number.isFinite(Number(state.pendingSeekTargetSec))){
-    return clamp(Number(state.pendingSeekTargetSec || 0), 0, totalSec);
-  }
-
   const currentItemId = state.itemIds[state.index] || null;
   if(!currentItemId) return Number(state.accumulatedSecBeforeIndex || 0);
 
@@ -2607,142 +2603,6 @@ async function continueAudioRowAfterCurrentItem(rowId, currentItemId, token){
   await playNextAudioRowItem(token);
 }
 
-function createAudioRowPlaybackState({
-  rowId,
-  itemIds,
-  index,
-  isPaused,
-  accumulatedSecBeforeIndex,
-  pausedOffsetSec,
-  playbackToken,
-  pendingSeekTargetSec = null,
-  seekInFlight = false,
-  pendingSeekRevision = 0,
-  appliedSeekRevision = 0,
-}){
-  return {
-    rowId,
-    itemIds,
-    index,
-    isPaused,
-    startedAt: Date.now(),
-    accumulatedSecBeforeIndex,
-    pausedOffsetSec,
-    timerId: null,
-    playbackToken,
-    pendingSeekTargetSec,
-    seekInFlight,
-    pendingSeekRevision,
-    appliedSeekRevision,
-  };
-}
-
-function resolveAudioRowSeekTarget(rowId, targetSec){
-  const items = getAudioRowPlayableItems(rowId);
-  const totalSec = getAudioRowTotalDurationSec(rowId);
-  const safeTargetSec = clamp(Number(targetSec || 0), 0, totalSec);
-
-  let accumulatedBefore = 0;
-  let itemIndex = 0;
-  let localOffset = 0;
-
-  for(let i = 0; i < items.length; i++){
-    const dur = getAudioTotalDurationSec(items[i]);
-    const end = accumulatedBefore + dur;
-    if(safeTargetSec <= end || i === items.length - 1){
-      itemIndex = i;
-      localOffset = clamp(safeTargetSec - accumulatedBefore, 0, dur);
-      break;
-    }
-    accumulatedBefore = end;
-  }
-
-  return {
-    items,
-    totalSec,
-    safeTargetSec,
-    accumulatedBefore,
-    itemIndex,
-    localOffset,
-  };
-}
-
-async function performSinglePlayingAudioRowSeek(rowId, targetSec, revision){
-  const prevState = activeAudioRowPlayback;
-  if(!prevState || prevState.rowId !== rowId) return;
-
-  const resolved = resolveAudioRowSeekTarget(rowId, targetSec);
-  if(resolved.items.length === 0) return;
-
-  await stopActiveAudioPlayback();
-  audioRowPlaybackToken += 1;
-  const token = audioRowPlaybackToken;
-
-  activeAudioRowPlayback = createAudioRowPlaybackState({
-    rowId,
-    itemIds: resolved.items.map(x => x.id),
-    index: resolved.itemIndex,
-    isPaused: false,
-    accumulatedSecBeforeIndex: resolved.accumulatedBefore,
-    pausedOffsetSec: 0,
-    playbackToken: token,
-    pendingSeekTargetSec: resolved.safeTargetSec,
-    seekInFlight: true,
-    pendingSeekRevision: Math.max(Number(prevState.pendingSeekRevision || 0), Number(revision || 0)),
-    appliedSeekRevision: Number(prevState.appliedSeekRevision || 0),
-  });
-
-  startAudioRowPlaybackUiTimer(rowId);
-  await playAudioTileFromOffsetForRow(rowId, resolved.items[resolved.itemIndex].id, resolved.localOffset);
-
-  if(!activeAudioRowPlayback) return;
-  if(activeAudioRowPlayback.rowId !== rowId) return;
-  if(token !== audioRowPlaybackToken) return;
-  if(activeAudioRowPlayback.isPaused) return;
-
-  activeAudioRowPlayback.appliedSeekRevision = Math.max(Number(activeAudioRowPlayback.appliedSeekRevision || 0), Number(revision || 0));
-  updateAudioRowHeaderDom(rowId);
-  updateAudioRowProgressDom(rowId);
-  continueAudioRowAfterCurrentItem(rowId, resolved.items[resolved.itemIndex].id, token);
-}
-
-async function flushPendingAudioRowSeek(rowId){
-  const initialState = activeAudioRowPlayback;
-  if(!initialState || initialState.rowId !== rowId) return;
-  if(initialState.seekInFlight) return;
-
-  initialState.seekInFlight = true;
-
-  try{
-    while(true){
-      const state = activeAudioRowPlayback;
-      if(!state || state.rowId !== rowId) return;
-
-      const revision = Number(state.pendingSeekRevision || 0);
-      const targetSec = Number.isFinite(Number(state.pendingSeekTargetSec))
-        ? Number(state.pendingSeekTargetSec)
-        : getAudioRowCurrentPositionSec(rowId);
-
-      await performSinglePlayingAudioRowSeek(rowId, targetSec, revision);
-
-      const after = activeAudioRowPlayback;
-      if(!after || after.rowId !== rowId) return;
-
-      if(Number(after.pendingSeekRevision || 0) === revision){
-        after.pendingSeekTargetSec = null;
-        after.appliedSeekRevision = revision;
-        break;
-      }
-    }
-  }finally{
-    if(activeAudioRowPlayback && activeAudioRowPlayback.rowId === rowId){
-      activeAudioRowPlayback.seekInFlight = false;
-    }
-    updateAudioRowHeaderDom(rowId);
-    updateAudioRowProgressDom(rowId);
-  }
-}
-
 async function playAudioTileFromOffsetForRow(rowId, itemId, offsetSec){
   const it = getAudioItemLocalByRow(rowId, itemId);
   if(!it || !getAudioSegments(it).length) return;
@@ -2835,15 +2695,17 @@ async function playAudioRow(rowId){
   audioRowPlaybackToken += 1;
   const token = audioRowPlaybackToken;
 
-  activeAudioRowPlayback = createAudioRowPlaybackState({
+  activeAudioRowPlayback = {
     rowId,
     itemIds: items.map(x => x.id),
     index: 0,
     isPaused: false,
+    startedAt: Date.now(),
     accumulatedSecBeforeIndex: 0,
     pausedOffsetSec: 0,
-    playbackToken: token,
-  });
+    timerId: null,
+    playbackToken: token
+  };
 
   startAudioRowPlaybackUiTimer(rowId);
   updateAudioRowHeaderDom(rowId);
@@ -2870,22 +2732,38 @@ async function pauseAudioRow(rowId){
 }
 
 async function seekAudioRowPlayback(rowId, targetSec){
-  const resolved = resolveAudioRowSeekTarget(rowId, targetSec);
-  if(resolved.items.length === 0) return;
+  const items = getAudioRowPlayableItems(rowId);
+  if(items.length === 0) return;
 
   const prevRowState =
     activeAudioRowPlayback && activeAudioRowPlayback.rowId === rowId
       ? {
           isPaused: !!activeAudioRowPlayback.isPaused,
           index: Number(activeAudioRowPlayback.index || 0),
-          pendingSeekRevision: Number(activeAudioRowPlayback.pendingSeekRevision || 0),
-          appliedSeekRevision: Number(activeAudioRowPlayback.appliedSeekRevision || 0),
-          seekInFlight: !!activeAudioRowPlayback.seekInFlight,
         }
       : null;
 
   const wasPaused = !!prevRowState && prevRowState.isPaused === true;
   const wasPlaying = !!prevRowState && prevRowState.isPaused === false;
+
+  const totalSec = getAudioRowTotalDurationSec(rowId);
+  if(!Number.isFinite(Number(targetSec))) return;
+  const safeTargetSec = clamp(Number(targetSec || 0), 0, totalSec);
+
+  let accumulatedBefore = 0;
+  let itemIndex = 0;
+  let localOffset = 0;
+
+  for(let i = 0; i < items.length; i++){
+    const dur = getAudioTotalDurationSec(items[i]);
+    const end = accumulatedBefore + dur;
+    if(safeTargetSec <= end || i === items.length - 1){
+      itemIndex = i;
+      localOffset = clamp(safeTargetSec - accumulatedBefore, 0, dur);
+      break;
+    }
+    accumulatedBefore = end;
+  }
 
   if(wasPaused === true){
     if(activeAudioPlayback){
@@ -2895,17 +2773,17 @@ async function seekAudioRowPlayback(rowId, targetSec){
     audioRowPlaybackToken += 1;
     const token = audioRowPlaybackToken;
 
-    activeAudioRowPlayback = createAudioRowPlaybackState({
+    activeAudioRowPlayback = {
       rowId,
-      itemIds: resolved.items.map(x => x.id),
-      index: resolved.itemIndex,
+      itemIds: items.map(x => x.id),
+      index: itemIndex,
       isPaused: true,
-      accumulatedSecBeforeIndex: resolved.accumulatedBefore,
-      pausedOffsetSec: resolved.localOffset,
-      playbackToken: token,
-      pendingSeekRevision: prevRowState ? prevRowState.pendingSeekRevision : 0,
-      appliedSeekRevision: prevRowState ? prevRowState.appliedSeekRevision : 0,
-    });
+      startedAt: Date.now(),
+      accumulatedSecBeforeIndex: accumulatedBefore,
+      pausedOffsetSec: localOffset,
+      timerId: null,
+      playbackToken: token
+    };
 
     updateAudioRowHeaderDom(rowId);
     updateAudioRowProgressDom(rowId);
@@ -2913,17 +2791,36 @@ async function seekAudioRowPlayback(rowId, targetSec){
   }
 
   if(wasPlaying === true){
-    await performSinglePlayingAudioRowSeek(
+    await stopActiveAudioPlayback();
+    audioRowPlaybackToken += 1;
+    const token = audioRowPlaybackToken;
+
+    activeAudioRowPlayback = {
       rowId,
-      resolved.safeTargetSec,
-      prevRowState ? prevRowState.pendingSeekRevision : 0
-    );
-    if(activeAudioRowPlayback && activeAudioRowPlayback.rowId === rowId){
-      activeAudioRowPlayback.pendingSeekTargetSec = null;
-      activeAudioRowPlayback.seekInFlight = false;
-    }
+      itemIds: items.map(x => x.id),
+      index: itemIndex,
+      isPaused: false,
+      startedAt: Date.now(),
+      accumulatedSecBeforeIndex: accumulatedBefore,
+      pausedOffsetSec: 0,
+      timerId: null,
+      playbackToken: token
+    };
+
+    startAudioRowPlaybackUiTimer(rowId);
+    await playAudioTileFromOffsetForRow(rowId, items[itemIndex].id, localOffset);
+
+    if(!activeAudioRowPlayback) return;
+    if(activeAudioRowPlayback.rowId !== rowId) return;
+    if(token !== audioRowPlaybackToken) return;
+    if(activeAudioRowPlayback.isPaused) return;
+
+    updateAudioRowHeaderDom(rowId);
+    updateAudioRowProgressDom(rowId);
+    continueAudioRowAfterCurrentItem(rowId, items[itemIndex].id, token);
     return;
   }
+
 
   if(activeAudioPlayback){
     await stopActiveAudioPlayback();
@@ -2932,15 +2829,17 @@ async function seekAudioRowPlayback(rowId, targetSec){
   audioRowPlaybackToken += 1;
   const token = audioRowPlaybackToken;
 
-  activeAudioRowPlayback = createAudioRowPlaybackState({
+  activeAudioRowPlayback = {
     rowId,
-    itemIds: resolved.items.map(x => x.id),
-    index: resolved.itemIndex,
+    itemIds: items.map(x => x.id),
+    index: itemIndex,
     isPaused: true,
-    accumulatedSecBeforeIndex: resolved.accumulatedBefore,
-    pausedOffsetSec: resolved.localOffset,
-    playbackToken: token,
-  });
+    startedAt: Date.now(),
+    accumulatedSecBeforeIndex: accumulatedBefore,
+    pausedOffsetSec: localOffset,
+    timerId: null,
+    playbackToken: token
+  };
 
   updateAudioRowHeaderDom(rowId);
   updateAudioRowProgressDom(rowId);
@@ -3229,32 +3128,60 @@ function createDefaultTileMenuActions(rowId, itemId){
 async function jumpAudioRowBy(rowId, deltaSec){
   if(!rowId || !Number.isFinite(Number(deltaSec || 0))) return;
 
-  const totalSec = getAudioRowTotalDurationSec(rowId);
-  const currentState = activeAudioRowPlayback && activeAudioRowPlayback.rowId === rowId
-    ? activeAudioRowPlayback
-    : null;
-  const isPlaying = !!currentState && currentState.isPaused === false;
+  const isPlayingRow =
+    !!activeAudioRowPlayback &&
+    activeAudioRowPlayback.rowId === rowId &&
+    activeAudioRowPlayback.isPaused === false;
 
-  if(!isPlaying){
-    const currentSec = getAudioRowCurrentPositionSec(rowId);
-    const targetSec = clamp(currentSec + Number(deltaSec || 0), 0, totalSec);
+  const totalSec = getAudioRowTotalDurationSec(rowId);
+  const getBaseSec = ()=>{
+    const pending = Number(activeAudioRowPlayback?.pendingJumpTargetSec);
+    if(Number.isFinite(pending)) return pending;
+    return getAudioRowCurrentPositionSec(rowId);
+  };
+
+  if(!isPlayingRow){
+    const targetSec = clamp(getBaseSec() + Number(deltaSec || 0), 0, totalSec);
     await seekAudioRowPlayback(rowId, targetSec);
     updateAudioRowHeaderDom(rowId);
     updateAudioRowProgressDom(rowId);
     return;
   }
 
-  const baseSec = Number.isFinite(Number(currentState.pendingSeekTargetSec))
-    ? Number(currentState.pendingSeekTargetSec)
-    : getAudioRowCurrentPositionSec(rowId);
-  const targetSec = clamp(baseSec + Number(deltaSec || 0), 0, totalSec);
+  const targetSec = clamp(getBaseSec() + Number(deltaSec || 0), 0, totalSec);
+  activeAudioRowPlayback.pendingJumpTargetSec = targetSec;
 
-  currentState.pendingSeekTargetSec = targetSec;
-  currentState.pendingSeekRevision = Number(currentState.pendingSeekRevision || 0) + 1;
+  if(audioRowJumpLocks.get(rowId)){
+    updateAudioRowHeaderDom(rowId);
+    updateAudioRowProgressDom(rowId);
+    return;
+  }
 
-  updateAudioRowHeaderDom(rowId);
-  updateAudioRowProgressDom(rowId);
-  await flushPendingAudioRowSeek(rowId);
+  audioRowJumpLocks.set(rowId, true);
+  try{
+    while(true){
+      const state = activeAudioRowPlayback;
+      if(!state || state.rowId !== rowId || state.isPaused !== false) break;
+
+      const latestTarget = Number(state.pendingJumpTargetSec);
+      if(!Number.isFinite(latestTarget)) break;
+      state.pendingJumpTargetSec = null;
+
+      await seekAudioRowPlayback(rowId, latestTarget);
+
+      if(activeAudioRowPlayback && activeAudioRowPlayback.rowId === rowId && activeAudioRowPlayback.isPaused === true){
+        await playAudioRowFromCurrentSeekState(rowId);
+      }
+
+      updateAudioRowHeaderDom(rowId);
+      updateAudioRowProgressDom(rowId);
+    }
+  }finally{
+    if(activeAudioRowPlayback && activeAudioRowPlayback.rowId === rowId){
+      activeAudioRowPlayback.pendingJumpTargetSec = null;
+    }
+    audioRowJumpLocks.delete(rowId);
+  }
 }
 
 function renderStandardRowEntry(p, e){
