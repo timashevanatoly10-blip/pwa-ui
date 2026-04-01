@@ -3141,6 +3141,57 @@ async function jumpAudioRowBy(rowId, deltaSec){
     return getAudioRowCurrentPositionSec(rowId);
   };
 
+  const syncJumpPreviewUi = (previewSec)=>{
+    const host = document.querySelector(`[data-audio-row-id="${rowId}"]`);
+    if(!host) return;
+
+    const slider = host.querySelector("[data-audio-row-slider]");
+    const currentTimeEl = host.querySelector("[data-audio-row-current-time]");
+    const totalTimeEl = host.querySelector("[data-audio-row-total-time]");
+    const counterEl = host.querySelector("[data-audio-row-counter]");
+
+    const safeTotalSec = getAudioRowTotalDurationSec(rowId);
+    const safeTargetSec = clamp(Number(previewSec || 0), 0, safeTotalSec);
+    const max = Math.max(safeTotalSec, 0.000001);
+    const pct = clamp((safeTargetSec / max) * 100, 0, 100);
+
+    if(currentTimeEl){
+      currentTimeEl.textContent = formatAudioDuration(safeTargetSec);
+    }
+    if(totalTimeEl){
+      totalTimeEl.textContent = formatAudioDuration(safeTotalSec);
+    }
+
+    if(counterEl){
+      const playableItems = getAudioRowPlayableItems(rowId);
+      const totalTiles = playableItems.length;
+      if(totalTiles === 0){
+        counterEl.textContent = "0 / 0";
+      }else{
+        let accumulated = 0;
+        let index = 0;
+        for(let i = 0; i < playableItems.length; i++){
+          const dur = getAudioTotalDurationSec(playableItems[i]);
+          const endSec = accumulated + dur;
+          if(safeTargetSec <= endSec || i === playableItems.length - 1){
+            index = i;
+            break;
+          }
+          accumulated = endSec;
+        }
+        counterEl.textContent = `${Math.min(index + 1, totalTiles)} / ${totalTiles}`;
+      }
+    }
+
+    if(slider && slider.dataset.seeking !== "1"){
+      slider.min = "0";
+      slider.max = String(max);
+      slider.step = "0.01";
+      slider.value = String(safeTargetSec);
+      slider.style.background = `linear-gradient(to right, rgba(84,132,255,.95) 0%, rgba(84,132,255,.95) ${pct}%, rgba(17,19,23,.14) ${pct}%, rgba(17,19,23,.14) 100%)`;
+    }
+  };
+
   if(!isPlayingRow){
     const targetSec = clamp(getBaseSec() + Number(deltaSec || 0), 0, totalSec);
     await seekAudioRowPlayback(rowId, targetSec);
@@ -3151,8 +3202,7 @@ async function jumpAudioRowBy(rowId, deltaSec){
 
   const targetSec = clamp(getBaseSec() + Number(deltaSec || 0), 0, totalSec);
   activeAudioRowPlayback.pendingJumpTargetSec = targetSec;
-  updateAudioRowHeaderDom(rowId);
-  updateAudioRowProgressDom(rowId);
+  syncJumpPreviewUi(targetSec);
 
   if(audioRowJumpLocks.get(rowId)){
     return;
@@ -3160,8 +3210,6 @@ async function jumpAudioRowBy(rowId, deltaSec){
 
   audioRowJumpLocks.set(rowId, true);
   try{
-    let appliedTarget = null;
-
     while(true){
       const state = activeAudioRowPlayback;
       if(!state || state.rowId !== rowId || state.isPaused !== false) break;
@@ -3169,7 +3217,9 @@ async function jumpAudioRowBy(rowId, deltaSec){
       const rawPending = state.pendingJumpTargetSec;
       const latestTarget = rawPending == null ? null : Number(rawPending);
       if(!Number.isFinite(latestTarget)) break;
-      state.pendingJumpTargetSec = null;
+
+      state.pendingJumpTargetSec = latestTarget;
+      syncJumpPreviewUi(latestTarget);
 
       await seekAudioRowPlayback(rowId, latestTarget);
 
@@ -3179,23 +3229,36 @@ async function jumpAudioRowBy(rowId, deltaSec){
         pausedState.rowId === rowId &&
         pausedState.isPaused === true
       ){
+        pausedState.pendingJumpTargetSec = latestTarget;
+        syncJumpPreviewUi(latestTarget);
         await playAudioRowFromCurrentSeekState(rowId);
       }
 
-      updateAudioRowHeaderDom(rowId);
-      updateAudioRowProgressDom(rowId);
-      appliedTarget = latestTarget;
-
       const nextState = activeAudioRowPlayback;
-      if(!nextState || nextState.rowId !== rowId || nextState.isPaused !== false) break;
+      if(!nextState || nextState.rowId !== rowId || nextState.isPaused !== false){
+        break;
+      }
 
       const rawNextPending = nextState.pendingJumpTargetSec;
       const nextPending = rawNextPending == null ? null : Number(rawNextPending);
-      if(!Number.isFinite(nextPending) || nextPending === appliedTarget) break;
+
+      if(!Number.isFinite(nextPending) || nextPending === latestTarget){
+        nextState.pendingJumpTargetSec = null;
+        updateAudioRowHeaderDom(rowId);
+        updateAudioRowProgressDom(rowId);
+        break;
+      }
+
+      nextState.pendingJumpTargetSec = clamp(nextPending, 0, getAudioRowTotalDurationSec(rowId));
+      syncJumpPreviewUi(nextState.pendingJumpTargetSec);
     }
   }finally{
     if(activeAudioRowPlayback && activeAudioRowPlayback.rowId === rowId){
-      activeAudioRowPlayback.pendingJumpTargetSec = null;
+      const rawPending = activeAudioRowPlayback.pendingJumpTargetSec;
+      const pending = rawPending == null ? null : Number(rawPending);
+      if(!Number.isFinite(pending)){
+        activeAudioRowPlayback.pendingJumpTargetSec = null;
+      }
     }
     audioRowJumpLocks.delete(rowId);
   }
