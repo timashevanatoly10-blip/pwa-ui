@@ -3135,8 +3135,9 @@ async function jumpAudioRowBy(rowId, deltaSec){
 
   const totalSec = getAudioRowTotalDurationSec(rowId);
   const getBaseSec = ()=>{
-    const pending = Number(activeAudioRowPlayback?.pendingJumpTargetSec);
-    if(Number.isFinite(pending)) return pending;
+    const rawPending = activeAudioRowPlayback?.pendingJumpTargetSec;
+    const pending = rawPending == null ? null : Number(rawPending);
+    if(rawPending != null && Number.isFinite(pending)) return pending;
     return getAudioRowCurrentPositionSec(rowId);
   };
 
