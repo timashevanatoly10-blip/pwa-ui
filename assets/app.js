@@ -3125,6 +3125,60 @@ function createDefaultTileMenuActions(rowId, itemId){
   ];
 }
 
+function processPendingAudioRowJump(rowId){
+  setTimeout(async ()=>{
+    try{
+      const state = activeAudioRowPlayback;
+      if(!state || state.rowId !== rowId || state.isPaused !== false){
+        audioRowJumpLocks.delete(rowId);
+        return;
+      }
+
+      const rawPending = state.pendingJumpTargetSec;
+      const latestTarget = rawPending == null ? null : Number(rawPending);
+      if(!Number.isFinite(latestTarget)){
+        audioRowJumpLocks.delete(rowId);
+        return;
+      }
+
+      state.pendingJumpTargetSec = null;
+
+      await seekAudioRowPlayback(rowId, latestTarget);
+
+      if(
+        activeAudioRowPlayback &&
+        activeAudioRowPlayback.rowId === rowId &&
+        activeAudioRowPlayback.isPaused === true
+      ){
+        await playAudioRowFromCurrentSeekState(rowId);
+      }
+
+      const nextState = activeAudioRowPlayback;
+      const rawNextPending = nextState?.pendingJumpTargetSec;
+      const nextPending = rawNextPending == null ? null : Number(rawNextPending);
+
+      if(
+        nextState &&
+        nextState.rowId === rowId &&
+        nextState.isPaused === false &&
+        Number.isFinite(nextPending) &&
+        nextPending !== latestTarget
+      ){
+        processPendingAudioRowJump(rowId);
+        return;
+      }
+
+      audioRowJumpLocks.delete(rowId);
+      updateAudioRowHeaderDom(rowId);
+      updateAudioRowProgressDom(rowId);
+    }catch{
+      audioRowJumpLocks.delete(rowId);
+      updateAudioRowHeaderDom(rowId);
+      updateAudioRowProgressDom(rowId);
+    }
+  }, 0);
+}
+
 async function jumpAudioRowBy(rowId, deltaSec){
   if(!rowId || !Number.isFinite(Number(deltaSec || 0))) return;
 
@@ -3140,6 +3194,14 @@ async function jumpAudioRowBy(rowId, deltaSec){
     if(rawPending != null && Number.isFinite(pending)) return pending;
     return getAudioRowCurrentPositionSec(rowId);
   };
+
+  if(!isPlayingRow){
+    const targetSec = clamp(getBaseSec() + Number(deltaSec || 0), 0, totalSec);
+    await seekAudioRowPlayback(rowId, targetSec);
+    updateAudioRowHeaderDom(rowId);
+    updateAudioRowProgressDom(rowId);
+    return;
+  }
 
   const syncJumpPreviewUi = (previewSec)=>{
     const host = document.querySelector(`[data-audio-row-id="${rowId}"]`);
@@ -3192,14 +3254,6 @@ async function jumpAudioRowBy(rowId, deltaSec){
     }
   };
 
-  if(!isPlayingRow){
-    const targetSec = clamp(getBaseSec() + Number(deltaSec || 0), 0, totalSec);
-    await seekAudioRowPlayback(rowId, targetSec);
-    updateAudioRowHeaderDom(rowId);
-    updateAudioRowProgressDom(rowId);
-    return;
-  }
-
   const targetSec = clamp(getBaseSec() + Number(deltaSec || 0), 0, totalSec);
   activeAudioRowPlayback.pendingJumpTargetSec = targetSec;
   syncJumpPreviewUi(targetSec);
@@ -3209,59 +3263,7 @@ async function jumpAudioRowBy(rowId, deltaSec){
   }
 
   audioRowJumpLocks.set(rowId, true);
-  try{
-    while(true){
-      const state = activeAudioRowPlayback;
-      if(!state || state.rowId !== rowId || state.isPaused !== false) break;
-
-      const rawPending = state.pendingJumpTargetSec;
-      const latestTarget = rawPending == null ? null : Number(rawPending);
-      if(!Number.isFinite(latestTarget)) break;
-
-      state.pendingJumpTargetSec = latestTarget;
-      syncJumpPreviewUi(latestTarget);
-
-      await seekAudioRowPlayback(rowId, latestTarget);
-
-      const pausedState = activeAudioRowPlayback;
-      if(
-        pausedState &&
-        pausedState.rowId === rowId &&
-        pausedState.isPaused === true
-      ){
-        pausedState.pendingJumpTargetSec = latestTarget;
-        syncJumpPreviewUi(latestTarget);
-        await playAudioRowFromCurrentSeekState(rowId);
-      }
-
-      const nextState = activeAudioRowPlayback;
-      if(!nextState || nextState.rowId !== rowId || nextState.isPaused !== false){
-        break;
-      }
-
-      const rawNextPending = nextState.pendingJumpTargetSec;
-      const nextPending = rawNextPending == null ? null : Number(rawNextPending);
-
-      if(!Number.isFinite(nextPending) || nextPending === latestTarget){
-        nextState.pendingJumpTargetSec = null;
-        updateAudioRowHeaderDom(rowId);
-        updateAudioRowProgressDom(rowId);
-        break;
-      }
-
-      nextState.pendingJumpTargetSec = clamp(nextPending, 0, getAudioRowTotalDurationSec(rowId));
-      syncJumpPreviewUi(nextState.pendingJumpTargetSec);
-    }
-  }finally{
-    if(activeAudioRowPlayback && activeAudioRowPlayback.rowId === rowId){
-      const rawPending = activeAudioRowPlayback.pendingJumpTargetSec;
-      const pending = rawPending == null ? null : Number(rawPending);
-      if(!Number.isFinite(pending)){
-        activeAudioRowPlayback.pendingJumpTargetSec = null;
-      }
-    }
-    audioRowJumpLocks.delete(rowId);
-  }
+  processPendingAudioRowJump(rowId);
 }
 
 function renderStandardRowEntry(p, e){
