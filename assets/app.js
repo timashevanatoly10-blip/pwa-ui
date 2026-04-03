@@ -3125,60 +3125,6 @@ function createDefaultTileMenuActions(rowId, itemId){
   ];
 }
 
-function processPendingAudioRowJump(rowId){
-  setTimeout(async ()=>{
-    try{
-      const state = activeAudioRowPlayback;
-      if(!state || state.rowId !== rowId || state.isPaused !== false){
-        audioRowJumpLocks.delete(rowId);
-        return;
-      }
-
-      const rawPending = state.pendingJumpTargetSec;
-      const latestTarget = rawPending == null ? null : Number(rawPending);
-      if(!Number.isFinite(latestTarget)){
-        audioRowJumpLocks.delete(rowId);
-        return;
-      }
-
-      state.pendingJumpTargetSec = null;
-
-      await seekAudioRowPlayback(rowId, latestTarget);
-
-      if(
-        activeAudioRowPlayback &&
-        activeAudioRowPlayback.rowId === rowId &&
-        activeAudioRowPlayback.isPaused === true
-      ){
-        await playAudioRowFromCurrentSeekState(rowId);
-      }
-
-      const nextState = activeAudioRowPlayback;
-      const rawNextPending = nextState?.pendingJumpTargetSec;
-      const nextPending = rawNextPending == null ? null : Number(rawNextPending);
-
-      if(
-        nextState &&
-        nextState.rowId === rowId &&
-        nextState.isPaused === false &&
-        Number.isFinite(nextPending) &&
-        nextPending !== latestTarget
-      ){
-        processPendingAudioRowJump(rowId);
-        return;
-      }
-
-      audioRowJumpLocks.delete(rowId);
-      updateAudioRowHeaderDom(rowId);
-      updateAudioRowProgressDom(rowId);
-    }catch{
-      audioRowJumpLocks.delete(rowId);
-      updateAudioRowHeaderDom(rowId);
-      updateAudioRowProgressDom(rowId);
-    }
-  }, 0);
-}
-
 async function jumpAudioRowBy(rowId, deltaSec){
   if(!rowId || !Number.isFinite(Number(deltaSec || 0))) return;
 
@@ -3194,14 +3140,6 @@ async function jumpAudioRowBy(rowId, deltaSec){
     if(rawPending != null && Number.isFinite(pending)) return pending;
     return getAudioRowCurrentPositionSec(rowId);
   };
-
-  if(!isPlayingRow){
-    const targetSec = clamp(getBaseSec() + Number(deltaSec || 0), 0, totalSec);
-    await seekAudioRowPlayback(rowId, targetSec);
-    updateAudioRowHeaderDom(rowId);
-    updateAudioRowProgressDom(rowId);
-    return;
-  }
 
   const syncJumpPreviewUi = (previewSec)=>{
     const host = document.querySelector(`[data-audio-row-id="${rowId}"]`);
@@ -3254,6 +3192,14 @@ async function jumpAudioRowBy(rowId, deltaSec){
     }
   };
 
+  if(!isPlayingRow){
+    const targetSec = clamp(getBaseSec() + Number(deltaSec || 0), 0, totalSec);
+    await seekAudioRowPlayback(rowId, targetSec);
+    updateAudioRowHeaderDom(rowId);
+    updateAudioRowProgressDom(rowId);
+    return;
+  }
+
   const targetSec = clamp(getBaseSec() + Number(deltaSec || 0), 0, totalSec);
   activeAudioRowPlayback.pendingJumpTargetSec = targetSec;
   syncJumpPreviewUi(targetSec);
@@ -3263,7 +3209,59 @@ async function jumpAudioRowBy(rowId, deltaSec){
   }
 
   audioRowJumpLocks.set(rowId, true);
-  processPendingAudioRowJump(rowId);
+  try{
+    while(true){
+      const state = activeAudioRowPlayback;
+      if(!state || state.rowId !== rowId || state.isPaused !== false) break;
+
+      const rawPending = state.pendingJumpTargetSec;
+      const latestTarget = rawPending == null ? null : Number(rawPending);
+      if(!Number.isFinite(latestTarget)) break;
+
+      state.pendingJumpTargetSec = latestTarget;
+      syncJumpPreviewUi(latestTarget);
+
+      await seekAudioRowPlayback(rowId, latestTarget);
+
+      const pausedState = activeAudioRowPlayback;
+      if(
+        pausedState &&
+        pausedState.rowId === rowId &&
+        pausedState.isPaused === true
+      ){
+        pausedState.pendingJumpTargetSec = latestTarget;
+        syncJumpPreviewUi(latestTarget);
+        await playAudioRowFromCurrentSeekState(rowId);
+      }
+
+      const nextState = activeAudioRowPlayback;
+      if(!nextState || nextState.rowId !== rowId || nextState.isPaused !== false){
+        break;
+      }
+
+      const rawNextPending = nextState.pendingJumpTargetSec;
+      const nextPending = rawNextPending == null ? null : Number(rawNextPending);
+
+      if(!Number.isFinite(nextPending) || nextPending === latestTarget){
+        nextState.pendingJumpTargetSec = null;
+        updateAudioRowHeaderDom(rowId);
+        updateAudioRowProgressDom(rowId);
+        break;
+      }
+
+      nextState.pendingJumpTargetSec = clamp(nextPending, 0, getAudioRowTotalDurationSec(rowId));
+      syncJumpPreviewUi(nextState.pendingJumpTargetSec);
+    }
+  }finally{
+    if(activeAudioRowPlayback && activeAudioRowPlayback.rowId === rowId){
+      const rawPending = activeAudioRowPlayback.pendingJumpTargetSec;
+      const pending = rawPending == null ? null : Number(rawPending);
+      if(!Number.isFinite(pending)){
+        activeAudioRowPlayback.pendingJumpTargetSec = null;
+      }
+    }
+    audioRowJumpLocks.delete(rowId);
+  }
 }
 
 function renderStandardRowEntry(p, e){
@@ -3443,13 +3441,31 @@ function renderAudioRow(p, e){
   const expanded = isRowExpanded(e.refId);
 
   header.style.display = "flex";
-  header.style.alignItems = "flex-start";
-  header.style.justifyContent = "space-between";
-  header.style.gap = "12px";
+  header.style.flexDirection = "column";
+  header.style.alignItems = "stretch";
+  header.style.justifyContent = "flex-start";
+  header.style.gap = "8px";
+
+  const audioHeaderTop = document.createElement("div");
+  audioHeaderTop.dataset.audioHeaderTop = "1";
+  audioHeaderTop.style.display = "flex";
+  audioHeaderTop.style.alignItems = "center";
+  audioHeaderTop.style.justifyContent = "space-between";
+  audioHeaderTop.style.gap = "10px";
+  audioHeaderTop.style.minWidth = "0";
+  audioHeaderTop.style.width = "100%";
+
+  const audioHeaderTransport = document.createElement("div");
+  audioHeaderTransport.dataset.audioHeaderTransport = "1";
+  audioHeaderTransport.style.display = expanded ? "flex" : "none";
+  audioHeaderTransport.style.alignItems = "center";
+  audioHeaderTransport.style.gap = "8px";
+  audioHeaderTransport.style.minWidth = "0";
+  audioHeaderTransport.style.width = "100%";
 
   if(left){
     left.style.display = "flex";
-    left.style.alignItems = "flex-start";
+    left.style.alignItems = "center";
     left.style.minWidth = "0";
     left.style.gap = "0";
     left.style.flex = "1 1 auto";
@@ -3462,10 +3478,7 @@ function renderAudioRow(p, e){
     if(textWrap){
       textWrap.style.minWidth = "0";
       textWrap.style.width = "100%";
-      textWrap.style.display = "flex";
-      textWrap.style.flexDirection = "column";
-      textWrap.style.alignItems = "flex-start";
-      textWrap.style.justifyContent = "flex-start";
+      textWrap.style.display = "block";
       textWrap.style.overflow = "hidden";
     }
 
@@ -3480,38 +3493,20 @@ function renderAudioRow(p, e){
 
     const descEl = left.querySelector(".itemDesc");
     if(descEl) descEl.remove();
+
+    audioHeaderTop.appendChild(left);
   }
 
   if(right){
     right.textContent = "";
     right.className = "";
     right.style.display = "flex";
-    right.style.flexDirection = "column";
-    right.style.alignItems = "flex-start";
+    right.style.alignItems = "center";
     right.style.justifyContent = "flex-start";
     right.style.gap = "8px";
-    right.style.minWidth = "0";
     right.style.flex = "0 0 auto";
-    right.style.alignSelf = "flex-start";
-    right.style.width = "auto";
-    right.style.maxWidth = "100%";
-
-    const topRowActions = document.createElement("div");
-    topRowActions.style.display = "flex";
-    topRowActions.style.alignItems = "center";
-    topRowActions.style.justifyContent = "flex-start";
-    topRowActions.style.gap = "8px";
-    topRowActions.style.minWidth = "0";
-    topRowActions.style.flexWrap = "nowrap";
-    topRowActions.style.width = "auto";
-
-    const transportRow = document.createElement("div");
-    transportRow.style.display = expanded ? "flex" : "none";
-    transportRow.style.alignItems = "center";
-    transportRow.style.justifyContent = "flex-start";
-    transportRow.style.gap = "8px";
-    transportRow.style.minWidth = "0";
-    transportRow.style.width = "100%";
+    right.style.minWidth = "0";
+    right.style.flexWrap = "nowrap";
 
     const counterEl = document.createElement("div");
     counterEl.className = "itemDesc";
@@ -3777,19 +3772,22 @@ function renderAudioRow(p, e){
       slider.addEventListener("click", (ev)=> ev.stopPropagation());
     }
 
-    topRowActions.appendChild(playBtn);
-    topRowActions.appendChild(counterEl);
-    topRowActions.appendChild(menuBtn);
+    right.appendChild(playBtn);
+    right.appendChild(counterEl);
+    right.appendChild(menuBtn);
 
-    transportRow.appendChild(backBtn);
-    transportRow.appendChild(currentTimeEl);
-    transportRow.appendChild(progressWrap);
-    transportRow.appendChild(totalTimeEl);
-    transportRow.appendChild(forwardBtn);
+    audioHeaderTransport.appendChild(backBtn);
+    audioHeaderTransport.appendChild(currentTimeEl);
+    audioHeaderTransport.appendChild(progressWrap);
+    audioHeaderTransport.appendChild(totalTimeEl);
+    audioHeaderTransport.appendChild(forwardBtn);
 
-    right.appendChild(topRowActions);
-    right.appendChild(transportRow);
+    audioHeaderTop.appendChild(right);
   }
+
+  header.innerHTML = "";
+  header.appendChild(audioHeaderTop);
+  header.appendChild(audioHeaderTransport);
 
   requestAnimationFrame(()=>{
     updateAudioRowHeaderDom(e.refId);
