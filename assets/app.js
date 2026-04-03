@@ -3987,6 +3987,17 @@ function isAudioFileItem(it){
 function getAudioFileMeta(it){
   return (it?.meta && typeof it.meta === "object" && it.meta.file && typeof it.meta.file === "object") ? it.meta.file : null;
 }
+function getAudioFileMetaSummary(it){
+  const fileMeta = getAudioFileMeta(it);
+  const rawName = (fileMeta?.name || "").toString().trim();
+  const lowerName = rawName.toLowerCase();
+  const dot = lowerName.lastIndexOf(".");
+  const ext = dot >= 0 ? lowerName.slice(dot + 1) : "";
+  const primary = ext || "Аудиофайл";
+  const parts = [primary];
+  if(fileMeta?.size) parts.push(fmtBytes(fileMeta.size));
+  return parts.join(" • ");
+}
 function hasAudioFileBlob(it){
   return !!(it?.r2?.hasBlob || it?.meta?.r2?.hasBlob || (it?.mime || "").startsWith("audio/"));
 }
@@ -4031,14 +4042,14 @@ async function getAudioDurationFromBlob(blob){
 }
 function ensureAudioFilePicker(){
   if(audioFilePicker){
-    audioFilePicker.accept = "audio/*,.mp3,.m4a,.aac,.wav,.ogg,.oga,.flac,.caf,.webm,.mpga,.mp4";
+    audioFilePicker.accept = "audio/*";
     applyHiddenPickerStyles(audioFilePicker);
     return audioFilePicker;
   }
   audioFilePicker = document.createElement("input");
   audioFilePicker.type = "file";
   audioFilePicker.id = "audioFilePicker";
-  audioFilePicker.accept = "audio/*,.mp3,.m4a,.aac,.wav,.ogg,.oga,.flac,.caf,.webm,.mpga,.mp4";
+  audioFilePicker.accept = "audio/*";
   applyHiddenPickerStyles(audioFilePicker);
   document.body.appendChild(audioFilePicker);
   return audioFilePicker;
@@ -4151,11 +4162,7 @@ function updateAudioTileDom(rowId, itemId){
 
   if(segsEl){
     if(isFileKind){
-      const fileMeta = getAudioFileMeta(it);
-      const parts = [];
-      if(fileMeta?.name) parts.push(fileMeta.name);
-      if(fileMeta?.size) parts.push(fmtBytes(fileMeta.size));
-      segsEl.textContent = parts.length ? parts.join(" • ") : "Аудиофайл";
+      segsEl.textContent = getAudioFileMetaSummary(it);
     }else{
       segsEl.textContent = `Сегментов: ${segments.length}`;
     }
@@ -4888,20 +4895,14 @@ function buildAudioTileCard(card, rowId, it){
   const isFileKind = kind === "file";
   const initialTotal = formatAudioDuration(getAudioTotalDurationSec(it));
   const metaInfoText = isFileKind
-    ? (()=>{
-        const fileMeta = getAudioFileMeta(it);
-        const parts = [];
-        if(fileMeta?.name) parts.push(fileMeta.name);
-        if(fileMeta?.size) parts.push(fmtBytes(fileMeta.size));
-        return parts.join(" • ") || "Аудиофайл";
-      })()
+    ? getAudioFileMetaSummary(it)
     : `Сегментов: ${getAudioSegments(it).length}`;
 
   card.innerHTML = `
-    <div style="display:flex;flex-direction:column;gap:10px;">
-      <div style="display:flex;flex-direction:column;gap:2px;min-width:0;padding-right:42px;">
-        <div class="itemTitle" style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHTML(it.title || "Audio Tile")}</div>
-        <div class="itemDesc" data-audio-seg-count>${escapeHTML(metaInfoText)}</div>
+    <div style="display:flex;flex-direction:column;gap:10px;min-width:0;max-width:100%;overflow:hidden;">
+      <div style="display:flex;flex-direction:column;gap:2px;min-width:0;max-width:100%;overflow:hidden;padding-right:42px;">
+        <div class="itemTitle" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;flex:1;">${escapeHTML(it.title || "Audio Tile")}</div>
+        <div class="itemDesc" data-audio-seg-count style="min-width:0;max-width:100%;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;">${escapeHTML(metaInfoText)}</div>
       </div>
 
       ${isFileKind ? "" : `
