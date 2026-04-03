@@ -3994,6 +3994,17 @@ function hasPlayableAudioContent(it){
   if(isAudioFileItem(it)) return hasAudioFileBlob(it);
   return getAudioSegments(it).length > 0;
 }
+function isAcceptedAudioFile(file){
+  if(!file) return false;
+  const mime = (file.type || "").toString().trim().toLowerCase();
+  if(mime.startsWith("audio/")) return true;
+
+  const name = (file.name || "").toString().trim().toLowerCase();
+  const dot = name.lastIndexOf(".");
+  const ext = dot >= 0 ? name.slice(dot + 1) : "";
+  const allowed = new Set(["mp3", "m4a", "aac", "wav", "ogg", "oga", "flac", "caf", "webm", "mpga", "mp4"]);
+  return !!ext && allowed.has(ext);
+}
 async function getAudioDurationFromBlob(blob){
   return await new Promise((resolve)=>{
     if(!blob || !blob.size){
@@ -5548,7 +5559,7 @@ async function createAudioItemInSpecificRow(rowId){
 async function addAudioFileToRow(rowId, file){
   const p = ensureCurrentPuchok();
   if(!p || !rowId || !file) return null;
-  if(!(file.type || "").startsWith("audio/")) return null;
+  if(!isAcceptedAudioFile(file)) return null;
 
   isBusy = true;
   try{
@@ -7129,7 +7140,7 @@ audioFilePicker.addEventListener("change", async () => {
     picker.value = "";
     return;
   }
-  if(!(file.type || "").startsWith("audio/")){
+  if(!isAcceptedAudioFile(file)){
     picker.value = "";
     alert("Нужен аудиофайл.");
     return;
