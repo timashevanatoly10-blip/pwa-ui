@@ -4390,7 +4390,16 @@ async function startAudioTileRecording(rowId, itemId){
     await stopActiveAudioPlayback();
   }
 
-  const stream = await navigator.mediaDevices.getUserMedia({ audio:true });
+  const stream = await navigator.mediaDevices.getUserMedia({
+    audio: {
+      channelCount: 1,
+      sampleRate: 44100,
+      sampleSize: 16,
+      echoCancellation: false,
+      noiseSuppression: false,
+      autoGainControl: false
+    }
+  });
   const recorder = new MediaRecorder(stream);
   const state = {
     rowId,
