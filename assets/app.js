@@ -669,6 +669,9 @@ let audioRowPlaybackToken = 0;
 let audioRowSharedCtx = null;
 let activeTileMenu = null;
 const audioRowJumpLocks = new Map();
+let audioFilePicker = null;
+let activeAudioFileTargetRowId = null;
+let activeAudioFileTargetPuchokId = null;
 
 // In-memory store:
 // - db.puchki: root containers list + cached containers
@@ -2422,7 +2425,7 @@ function startAudioRowPlaybackUiTimer(rowId){
 
 function getAudioRowPlayableItems(rowId){
   const pack = db.rows[rowId] || null;
-  return (pack?.items || []).filter(i => i && i.type === "audio" && getAudioSegments(i).length > 0);
+  return (pack?.items || []).filter(i => i && i.type === "audio" && hasPlayableAudioContent(i) && getAudioTotalDurationSec(i) > 0);
 }
 
 function getAudioRowTotalDurationSec(rowId){
@@ -2605,8 +2608,12 @@ async function continueAudioRowAfterCurrentItem(rowId, currentItemId, token){
 
 async function playAudioTileFromOffsetForRow(rowId, itemId, offsetSec){
   const it = getAudioItemLocalByRow(rowId, itemId);
-  if(!it || !getAudioSegments(it).length) return;
+  if(!it || !hasPlayableAudioContent(it)) return;
   await stopActiveAudioPlayback();
+  if(isAudioFileItem(it)){
+    await startAudioFilePlayback(rowId, itemId, it, offsetSec);
+    return;
+  }
   const merged = await buildMergedAudioBufferFromItem(it);
   if(!merged || !merged.buffer) return;
   await startAudioPlaybackFromOffset(rowId, itemId, merged, offsetSec);
@@ -3135,9 +3142,61 @@ async function jumpAudioRowBy(rowId, deltaSec){
 
   const totalSec = getAudioRowTotalDurationSec(rowId);
   const getBaseSec = ()=>{
-    const pending = Number(activeAudioRowPlayback?.pendingJumpTargetSec);
-    if(Number.isFinite(pending)) return pending;
+    const rawPending = activeAudioRowPlayback?.pendingJumpTargetSec;
+    const pending = rawPending == null ? null : Number(rawPending);
+    if(rawPending != null && Number.isFinite(pending)) return pending;
     return getAudioRowCurrentPositionSec(rowId);
+  };
+
+  const syncJumpPreviewUi = (previewSec)=>{
+    const host = document.querySelector(`[data-audio-row-id="${rowId}"]`);
+    if(!host) return;
+
+    const slider = host.querySelector("[data-audio-row-slider]");
+    const currentTimeEl = host.querySelector("[data-audio-row-current-time]");
+    const totalTimeEl = host.querySelector("[data-audio-row-total-time]");
+    const counterEl = host.querySelector("[data-audio-row-counter]");
+
+    const safeTotalSec = getAudioRowTotalDurationSec(rowId);
+    const safeTargetSec = clamp(Number(previewSec || 0), 0, safeTotalSec);
+    const max = Math.max(safeTotalSec, 0.000001);
+    const pct = clamp((safeTargetSec / max) * 100, 0, 100);
+
+    if(currentTimeEl){
+      currentTimeEl.textContent = formatAudioDuration(safeTargetSec);
+    }
+    if(totalTimeEl){
+      totalTimeEl.textContent = formatAudioDuration(safeTotalSec);
+    }
+
+    if(counterEl){
+      const playableItems = getAudioRowPlayableItems(rowId);
+      const totalTiles = playableItems.length;
+      if(totalTiles === 0){
+        counterEl.textContent = "0 / 0";
+      }else{
+        let accumulated = 0;
+        let index = 0;
+        for(let i = 0; i < playableItems.length; i++){
+          const dur = getAudioTotalDurationSec(playableItems[i]);
+          const endSec = accumulated + dur;
+          if(safeTargetSec <= endSec || i === playableItems.length - 1){
+            index = i;
+            break;
+          }
+          accumulated = endSec;
+        }
+        counterEl.textContent = `${Math.min(index + 1, totalTiles)} / ${totalTiles}`;
+      }
+    }
+
+    if(slider && slider.dataset.seeking !== "1"){
+      slider.min = "0";
+      slider.max = String(max);
+      slider.step = "0.01";
+      slider.value = String(safeTargetSec);
+      slider.style.background = `linear-gradient(to right, rgba(84,132,255,.95) 0%, rgba(84,132,255,.95) ${pct}%, rgba(17,19,23,.14) ${pct}%, rgba(17,19,23,.14) 100%)`;
+    }
   };
 
   if(!isPlayingRow){
@@ -3150,10 +3209,9 @@ async function jumpAudioRowBy(rowId, deltaSec){
 
   const targetSec = clamp(getBaseSec() + Number(deltaSec || 0), 0, totalSec);
   activeAudioRowPlayback.pendingJumpTargetSec = targetSec;
+  syncJumpPreviewUi(targetSec);
 
   if(audioRowJumpLocks.get(rowId)){
-    updateAudioRowHeaderDom(rowId);
-    updateAudioRowProgressDom(rowId);
     return;
   }
 
@@ -3163,22 +3221,51 @@ async function jumpAudioRowBy(rowId, deltaSec){
       const state = activeAudioRowPlayback;
       if(!state || state.rowId !== rowId || state.isPaused !== false) break;
 
-      const latestTarget = Number(state.pendingJumpTargetSec);
+      const rawPending = state.pendingJumpTargetSec;
+      const latestTarget = rawPending == null ? null : Number(rawPending);
       if(!Number.isFinite(latestTarget)) break;
-      state.pendingJumpTargetSec = null;
+
+      state.pendingJumpTargetSec = latestTarget;
+      syncJumpPreviewUi(latestTarget);
 
       await seekAudioRowPlayback(rowId, latestTarget);
 
-      if(activeAudioRowPlayback && activeAudioRowPlayback.rowId === rowId && activeAudioRowPlayback.isPaused === true){
+      const pausedState = activeAudioRowPlayback;
+      if(
+        pausedState &&
+        pausedState.rowId === rowId &&
+        pausedState.isPaused === true
+      ){
+        pausedState.pendingJumpTargetSec = latestTarget;
+        syncJumpPreviewUi(latestTarget);
         await playAudioRowFromCurrentSeekState(rowId);
       }
 
-      updateAudioRowHeaderDom(rowId);
-      updateAudioRowProgressDom(rowId);
+      const nextState = activeAudioRowPlayback;
+      if(!nextState || nextState.rowId !== rowId || nextState.isPaused !== false){
+        break;
+      }
+
+      const rawNextPending = nextState.pendingJumpTargetSec;
+      const nextPending = rawNextPending == null ? null : Number(rawNextPending);
+
+      if(!Number.isFinite(nextPending) || nextPending === latestTarget){
+        nextState.pendingJumpTargetSec = null;
+        updateAudioRowHeaderDom(rowId);
+        updateAudioRowProgressDom(rowId);
+        break;
+      }
+
+      nextState.pendingJumpTargetSec = clamp(nextPending, 0, getAudioRowTotalDurationSec(rowId));
+      syncJumpPreviewUi(nextState.pendingJumpTargetSec);
     }
   }finally{
     if(activeAudioRowPlayback && activeAudioRowPlayback.rowId === rowId){
-      activeAudioRowPlayback.pendingJumpTargetSec = null;
+      const rawPending = activeAudioRowPlayback.pendingJumpTargetSec;
+      const pending = rawPending == null ? null : Number(rawPending);
+      if(!Number.isFinite(pending)){
+        activeAudioRowPlayback.pendingJumpTargetSec = null;
+      }
     }
     audioRowJumpLocks.delete(rowId);
   }
@@ -3361,13 +3448,31 @@ function renderAudioRow(p, e){
   const expanded = isRowExpanded(e.refId);
 
   header.style.display = "flex";
-  header.style.alignItems = "flex-start";
-  header.style.justifyContent = "space-between";
-  header.style.gap = "12px";
+  header.style.flexDirection = "column";
+  header.style.alignItems = "stretch";
+  header.style.justifyContent = "flex-start";
+  header.style.gap = "8px";
+
+  const audioHeaderTop = document.createElement("div");
+  audioHeaderTop.dataset.audioHeaderTop = "1";
+  audioHeaderTop.style.display = "flex";
+  audioHeaderTop.style.alignItems = "center";
+  audioHeaderTop.style.justifyContent = "space-between";
+  audioHeaderTop.style.gap = "10px";
+  audioHeaderTop.style.minWidth = "0";
+  audioHeaderTop.style.width = "100%";
+
+  const audioHeaderTransport = document.createElement("div");
+  audioHeaderTransport.dataset.audioHeaderTransport = "1";
+  audioHeaderTransport.style.display = expanded ? "flex" : "none";
+  audioHeaderTransport.style.alignItems = "center";
+  audioHeaderTransport.style.gap = "8px";
+  audioHeaderTransport.style.minWidth = "0";
+  audioHeaderTransport.style.width = "100%";
 
   if(left){
     left.style.display = "flex";
-    left.style.alignItems = "flex-start";
+    left.style.alignItems = "center";
     left.style.minWidth = "0";
     left.style.gap = "0";
     left.style.flex = "1 1 auto";
@@ -3380,10 +3485,7 @@ function renderAudioRow(p, e){
     if(textWrap){
       textWrap.style.minWidth = "0";
       textWrap.style.width = "100%";
-      textWrap.style.display = "flex";
-      textWrap.style.flexDirection = "column";
-      textWrap.style.alignItems = "flex-start";
-      textWrap.style.justifyContent = "flex-start";
+      textWrap.style.display = "block";
       textWrap.style.overflow = "hidden";
     }
 
@@ -3398,38 +3500,20 @@ function renderAudioRow(p, e){
 
     const descEl = left.querySelector(".itemDesc");
     if(descEl) descEl.remove();
+
+    audioHeaderTop.appendChild(left);
   }
 
   if(right){
     right.textContent = "";
     right.className = "";
     right.style.display = "flex";
-    right.style.flexDirection = "column";
-    right.style.alignItems = "flex-start";
+    right.style.alignItems = "center";
     right.style.justifyContent = "flex-start";
     right.style.gap = "8px";
-    right.style.minWidth = "0";
     right.style.flex = "0 0 auto";
-    right.style.alignSelf = "flex-start";
-    right.style.width = "auto";
-    right.style.maxWidth = "100%";
-
-    const topRowActions = document.createElement("div");
-    topRowActions.style.display = "flex";
-    topRowActions.style.alignItems = "center";
-    topRowActions.style.justifyContent = "flex-start";
-    topRowActions.style.gap = "8px";
-    topRowActions.style.minWidth = "0";
-    topRowActions.style.flexWrap = "nowrap";
-    topRowActions.style.width = "auto";
-
-    const transportRow = document.createElement("div");
-    transportRow.style.display = expanded ? "flex" : "none";
-    transportRow.style.alignItems = "center";
-    transportRow.style.justifyContent = "flex-start";
-    transportRow.style.gap = "8px";
-    transportRow.style.minWidth = "0";
-    transportRow.style.width = "100%";
+    right.style.minWidth = "0";
+    right.style.flexWrap = "nowrap";
 
     const counterEl = document.createElement("div");
     counterEl.className = "itemDesc";
@@ -3695,19 +3779,22 @@ function renderAudioRow(p, e){
       slider.addEventListener("click", (ev)=> ev.stopPropagation());
     }
 
-    topRowActions.appendChild(playBtn);
-    topRowActions.appendChild(counterEl);
-    topRowActions.appendChild(menuBtn);
+    right.appendChild(playBtn);
+    right.appendChild(counterEl);
+    right.appendChild(menuBtn);
 
-    transportRow.appendChild(backBtn);
-    transportRow.appendChild(currentTimeEl);
-    transportRow.appendChild(progressWrap);
-    transportRow.appendChild(totalTimeEl);
-    transportRow.appendChild(forwardBtn);
+    audioHeaderTransport.appendChild(backBtn);
+    audioHeaderTransport.appendChild(currentTimeEl);
+    audioHeaderTransport.appendChild(progressWrap);
+    audioHeaderTransport.appendChild(totalTimeEl);
+    audioHeaderTransport.appendChild(forwardBtn);
 
-    right.appendChild(topRowActions);
-    right.appendChild(transportRow);
+    audioHeaderTop.appendChild(right);
   }
+
+  header.innerHTML = "";
+  header.appendChild(audioHeaderTop);
+  header.appendChild(audioHeaderTransport);
 
   requestAnimationFrame(()=>{
     updateAudioRowHeaderDom(e.refId);
@@ -3890,6 +3977,99 @@ function getAudioItemLocalByRow(rowId, itemId){
   if(!pack) return null;
   return (pack.items || []).find(x => x.id === itemId) || null;
 }
+function getAudioItemKind(it){
+  const raw = (it?.meta?.kind || "voice").toString().trim().toLowerCase();
+  return raw === "file" ? "file" : "voice";
+}
+function isAudioFileItem(it){
+  return getAudioItemKind(it) === "file";
+}
+function getAudioFileMeta(it){
+  return (it?.meta && typeof it.meta === "object" && it.meta.file && typeof it.meta.file === "object") ? it.meta.file : null;
+}
+function getAudioFileMetaSummary(it){
+  const fileMeta = getAudioFileMeta(it);
+  const rawName = (fileMeta?.name || "").toString().trim();
+  const lowerName = rawName.toLowerCase();
+  const dot = lowerName.lastIndexOf(".");
+  const ext = dot >= 0 ? lowerName.slice(dot + 1) : "";
+  const primary = ext || "Аудиофайл";
+  const parts = [primary];
+  if(fileMeta?.size) parts.push(fmtBytes(fileMeta.size));
+  return parts.join(" • ");
+}
+function hasAudioFileBlob(it){
+  return !!(it?.r2?.hasBlob || it?.meta?.r2?.hasBlob || (it?.mime || "").startsWith("audio/"));
+}
+function hasPlayableAudioContent(it){
+  if(isAudioFileItem(it)) return hasAudioFileBlob(it);
+  return getAudioSegments(it).length > 0;
+}
+function isAcceptedAudioFile(file){
+  if(!file) return false;
+  const mime = (file.type || "").toString().trim().toLowerCase();
+  if(mime.startsWith("audio/")) return true;
+
+  const name = (file.name || "").toString().trim().toLowerCase();
+  const dot = name.lastIndexOf(".");
+  const ext = dot >= 0 ? name.slice(dot + 1) : "";
+  const allowed = new Set(["mp3", "m4a", "aac", "wav", "ogg", "oga", "flac", "caf", "webm", "mpga", "mp4"]);
+  return !!ext && allowed.has(ext);
+}
+async function getAudioDurationFromBlob(blob){
+  return await new Promise((resolve)=>{
+    if(!blob || !blob.size){
+      resolve(0);
+      return;
+    }
+    const url = URL.createObjectURL(blob);
+    const audio = document.createElement("audio");
+    let done = false;
+    const finish = (value)=>{
+      if(done) return;
+      done = true;
+      try{ audio.pause(); }catch{}
+      try{ audio.removeAttribute("src"); }catch{}
+      try{ audio.load(); }catch{}
+      try{ URL.revokeObjectURL(url); }catch{}
+      resolve(Number.isFinite(Number(value)) ? Math.max(0, Number(value)) : 0);
+    };
+    audio.preload = "metadata";
+    audio.onloadedmetadata = ()=> finish(audio.duration || 0);
+    audio.onerror = ()=> finish(0);
+    audio.src = url;
+  });
+}
+function ensureAudioFilePicker(){
+  if(audioFilePicker){
+    audioFilePicker.accept = "audio/*";
+    applyHiddenPickerStyles(audioFilePicker);
+    return audioFilePicker;
+  }
+  audioFilePicker = document.createElement("input");
+  audioFilePicker.type = "file";
+  audioFilePicker.id = "audioFilePicker";
+  audioFilePicker.accept = "audio/*";
+  applyHiddenPickerStyles(audioFilePicker);
+  document.body.appendChild(audioFilePicker);
+  return audioFilePicker;
+}
+function openAudioFilePickerForRow(rowId){
+  if(!rowId) return;
+  const p = ensureCurrentPuchok();
+  if(!p) return;
+  const picker = ensureAudioFilePicker();
+  activeAudioFileTargetRowId = rowId;
+  activeAudioFileTargetPuchokId = p.id;
+  picker.value = "";
+  if(typeof picker.showPicker === "function"){
+    try{
+      picker.showPicker();
+      return;
+    }catch{}
+  }
+  picker.click();
+}
 function getAudioSegments(it){
   const fromItem = Array.isArray(it?.segments) ? it.segments : [];
   if(fromItem.length) return fromItem;
@@ -3897,6 +4077,11 @@ function getAudioSegments(it){
   return fromMeta;
 }
 function getAudioTotalDurationSec(it){
+  if(isAudioFileItem(it)){
+    const fileMeta = getAudioFileMeta(it);
+    const fromFileMeta = Number(fileMeta?.duration || 0);
+    if(fromFileMeta > 0) return fromFileMeta;
+  }
   const fromMeta = Number(it?.durationSec || 0);
   if(fromMeta > 0) return fromMeta;
   return getAudioSegments(it).reduce((sum, seg)=> sum + Number(seg?.durationSec || 0), 0);
@@ -3912,6 +4097,10 @@ function getActiveAudioPlaybackPositionSec(rowId, itemId){
     return 0;
   }
   const totalSec = Math.max(0, Number(activeAudioPlayback.totalSec || 0));
+  if(activeAudioPlayback.mode === "file"){
+    const currentTime = Number(activeAudioPlayback.audioEl?.currentTime ?? activeAudioPlayback.offsetSec ?? 0);
+    return clamp(currentTime, 0, totalSec);
+  }
   if(activeAudioPlayback.isPaused || !activeAudioPlayback.ctx || activeAudioPlayback.startedAt == null){
     return clamp(Number(activeAudioPlayback.offsetSec || 0), 0, totalSec);
   }
@@ -3936,9 +4125,12 @@ function updateAudioTileDom(rowId, itemId){
   const it = getAudioItemLocalByRow(rowId, itemId);
   if(!card || !it) return;
 
-  const state = audioTileRecorderStates.get(itemId);
+  const kind = getAudioItemKind(it);
+  const isFileKind = kind === "file";
+  const state = isFileKind ? null : audioTileRecorderStates.get(itemId);
   const segments = getAudioSegments(it);
   const hasSegments = segments.length > 0;
+  const hasPlayable = hasPlayableAudioContent(it);
   const recordingExtraSec = state && state.status === "recording" ? (Date.now() - state.segmentStartedAt) / 1000 : 0;
   const totalSec = Math.max(0, getAudioTotalDurationSec(it) + recordingExtraSec);
 
@@ -3968,7 +4160,13 @@ function updateAudioTileDom(rowId, itemId){
     currentSec = clamp(Number(card.dataset.audioSeek || 0), 0, Math.max(totalSec, 0));
   }
 
-  if(segsEl) segsEl.textContent = `Сегментов: ${segments.length}`;
+  if(segsEl){
+    if(isFileKind){
+      segsEl.textContent = getAudioFileMetaSummary(it);
+    }else{
+      segsEl.textContent = `Сегментов: ${segments.length}`;
+    }
+  }
 
   if(recordBtn){
     if(isRecording){
@@ -3986,12 +4184,12 @@ function updateAudioTileDom(rowId, itemId){
   if(playToggleBtn){
     playToggleBtn.textContent = isPlaybackPlaying ? "❚❚" : "▶";
     playToggleBtn.title = isPlaybackPlaying ? "Pause playback" : "Play";
-    playToggleBtn.disabled = isRecording || !hasSegments;
+    playToggleBtn.disabled = isRecording || !hasPlayable;
   }
   if(saveBtn){
     saveBtn.textContent = "⬇";
     saveBtn.title = "Скачать";
-    saveBtn.disabled = isRecording || isPlaybackPlaying || !hasSegments;
+    saveBtn.disabled = isRecording || isPlaybackPlaying || !hasPlayable;
   }
   if(deleteBtn){
     deleteBtn.textContent = "🗑";
@@ -4265,14 +4463,30 @@ async function deleteAudioTile(rowId, itemId){
 async function stopActiveAudioPlayback(){
   if(!activeAudioPlayback) return;
   stopAudioPlaybackUiTimer();
-  if(activeAudioPlayback.source){
-    try{ activeAudioPlayback.source.onended = null; }catch{}
-    try{ activeAudioPlayback.source.stop(0); }catch{}
-  }
-  if(activeAudioPlayback.ctx && activeAudioPlayback.ctx !== audioRowSharedCtx){
-    try{ await activeAudioPlayback.ctx.close(); }catch{}
-  }
   const prev = activeAudioPlayback;
+
+  if(prev.mode === "file"){
+    const audioEl = prev.audioEl || prev.source || null;
+    if(audioEl){
+      try{ audioEl.onended = null; }catch{}
+      try{ audioEl.ontimeupdate = null; }catch{}
+      try{ audioEl.pause(); }catch{}
+      try{ audioEl.removeAttribute("src"); }catch{}
+      try{ audioEl.load(); }catch{}
+    }
+    if(prev.objectUrl){
+      try{ URL.revokeObjectURL(prev.objectUrl); }catch{}
+    }
+  }else{
+    if(prev.source){
+      try{ prev.source.onended = null; }catch{}
+      try{ prev.source.stop(0); }catch{}
+    }
+    if(prev.ctx && prev.ctx !== audioRowSharedCtx){
+      try{ await prev.ctx.close(); }catch{}
+    }
+  }
+
   activeAudioPlayback = null;
   if(prev?.rowId && prev?.itemId){
     updateAudioTileDom(prev.rowId, prev.itemId);
@@ -4293,11 +4507,14 @@ async function startAudioPlaybackFromOffset(rowId, itemId, merged, offsetSec){
   const safeOffset = clamp(Number(offsetSec || 0), 0, totalSec);
 
   activeAudioPlayback = {
+    mode: "voice",
     rowId,
     itemId,
     ctx,
     source,
     buffer: merged.buffer,
+    audioEl: null,
+    objectUrl: "",
     totalSec,
     offsetSec: safeOffset,
     startedAt: ctx.currentTime,
@@ -4335,15 +4552,84 @@ async function startAudioPlaybackFromOffset(rowId, itemId, merged, offsetSec){
   updateAudioTileDom(rowId, itemId);
   updateAudioRowHeaderDom(rowId);
 }
+async function startAudioFilePlayback(rowId, itemId, it, offsetSec){
+  if(!it || !hasAudioFileBlob(it)) return;
+  const blob = await downloadItemBlobFromR2(it.id, it.mime || "audio/*", "audio", { showProgress:false });
+  if(!blob) throw new Error("Blob аудиофайла не найден");
+
+  const finalMime = chooseBlobMimeType(blob?.type || "", it.mime || "audio/*", "audio");
+  const typedBlob = (blob && sanitizeMimeType(blob.type || "", "") === finalMime)
+    ? blob
+    : new Blob([blob], { type: finalMime });
+
+  const url = URL.createObjectURL(typedBlob);
+  const audioEl = new Audio();
+  audioEl.preload = "auto";
+  audioEl.src = url;
+  audioEl.playsInline = true;
+
+  const totalSec = await new Promise((resolve)=>{
+    const finish = ()=> resolve(Math.max(0, Number(audioEl.duration || getAudioTotalDurationSec(it) || 0)));
+    audioEl.onloadedmetadata = finish;
+    audioEl.onerror = finish;
+  });
+
+  const safeOffset = clamp(Number(offsetSec || 0), 0, totalSec || Number(audioEl.duration || 0) || 0);
+  try{ audioEl.currentTime = safeOffset; }catch{}
+
+  activeAudioPlayback = {
+    mode: "file",
+    rowId,
+    itemId,
+    ctx: null,
+    source: audioEl,
+    buffer: null,
+    audioEl,
+    objectUrl: url,
+    totalSec: Math.max(0, Number(audioEl.duration || totalSec || 0)),
+    offsetSec: safeOffset,
+    startedAt: 0,
+    isPaused: false,
+    timerId: null,
+  };
+
+  audioEl.onended = ()=>{
+    const current = activeAudioPlayback;
+    if(!current || current.itemId !== itemId || current.rowId !== rowId) return;
+    const objectUrl = current.objectUrl || "";
+    stopAudioPlaybackUiTimer();
+    activeAudioPlayback = null;
+    if(objectUrl){
+      try{ URL.revokeObjectURL(objectUrl); }catch{}
+    }
+    updateAudioTileDom(rowId, itemId);
+    updateAudioRowHeaderDom(rowId);
+  };
+
+  await audioEl.play();
+  startAudioPlaybackUiTimer(rowId, itemId);
+  updateAudioTileDom(rowId, itemId);
+  updateAudioRowHeaderDom(rowId);
+}
 async function playAudioTile(rowId, itemId){
   const it = getAudioItemLocalByRow(rowId, itemId);
-  if(!it || !getAudioSegments(it).length) return;
+  if(!it || !hasPlayableAudioContent(it)) return;
 
   if(activeAudioRowPlayback && (activeAudioRowPlayback.rowId !== rowId || activeAudioRowPlayback.itemIds[activeAudioRowPlayback.index] !== itemId)){
     await stopActiveAudioRowPlayback({ keepTilePlayback:true });
   }
 
   if(activeAudioPlayback && activeAudioPlayback.itemId === itemId && activeAudioPlayback.rowId === rowId){
+    if(activeAudioPlayback.mode === "file"){
+      if(activeAudioPlayback.isPaused && activeAudioPlayback.audioEl){
+        try{ await activeAudioPlayback.audioEl.play(); }catch{}
+        activeAudioPlayback.isPaused = false;
+        startAudioPlaybackUiTimer(rowId, itemId);
+        updateAudioTileDom(rowId, itemId);
+        updateAudioRowHeaderDom(rowId);
+      }
+      return;
+    }
     if(activeAudioPlayback.isPaused && activeAudioPlayback.buffer){
       const merged = { buffer: activeAudioPlayback.buffer };
       const resumeOffset = Number(activeAudioPlayback.offsetSec || 0);
@@ -4355,6 +4641,10 @@ async function playAudioTile(rowId, itemId){
 
   await stopActiveAudioPlayback();
   try{
+    if(isAudioFileItem(it)){
+      await startAudioFilePlayback(rowId, itemId, it, 0);
+      return;
+    }
     const merged = await buildMergedAudioBufferFromItem(it);
     if(!merged || !merged.buffer) return;
     await startAudioPlaybackFromOffset(rowId, itemId, merged, 0);
@@ -4365,6 +4655,18 @@ async function playAudioTile(rowId, itemId){
 async function pauseAudioTilePlayback(rowId, itemId){
   if(!activeAudioPlayback || activeAudioPlayback.itemId !== itemId || activeAudioPlayback.rowId !== rowId || activeAudioPlayback.isPaused) return;
   const currentPos = getActiveAudioPlaybackPositionSec(rowId, itemId);
+
+  if(activeAudioPlayback.mode === "file"){
+    stopAudioPlaybackUiTimer();
+    try{ activeAudioPlayback.audioEl?.pause(); }catch{}
+    activeAudioPlayback.isPaused = true;
+    activeAudioPlayback.offsetSec = currentPos;
+    activeAudioPlayback.totalSec = Math.max(0, Number(activeAudioPlayback.audioEl?.duration || activeAudioPlayback.totalSec || 0));
+    updateAudioTileDom(rowId, itemId);
+    updateAudioRowHeaderDom(rowId);
+    return;
+  }
+
   const buffer = activeAudioPlayback.buffer;
   const totalSec = Number(activeAudioPlayback.totalSec || buffer?.duration || 0);
   stopAudioPlaybackUiTimer();
@@ -4376,11 +4678,14 @@ async function pauseAudioTilePlayback(rowId, itemId){
     try{ await activeAudioPlayback.ctx.close(); }catch{}
   }
   activeAudioPlayback = {
+    mode: "voice",
     rowId,
     itemId,
     ctx: null,
     source: null,
     buffer,
+    audioEl: null,
+    objectUrl: "",
     totalSec,
     offsetSec: currentPos,
     startedAt: 0,
@@ -4396,6 +4701,16 @@ async function seekAudioTilePlayback(rowId, itemId, valueSec){
   const safeValue = clamp(Number(valueSec || 0), 0, totalSec);
 
   if(activeAudioPlayback && activeAudioPlayback.itemId === itemId && activeAudioPlayback.rowId === rowId){
+    if(activeAudioPlayback.mode === "file"){
+      activeAudioPlayback.offsetSec = safeValue;
+      if(activeAudioPlayback.audioEl){
+        try{ activeAudioPlayback.audioEl.currentTime = safeValue; }catch{}
+        activeAudioPlayback.totalSec = Math.max(0, Number(activeAudioPlayback.audioEl.duration || activeAudioPlayback.totalSec || totalSec || 0));
+      }
+      updateAudioTileDom(rowId, itemId);
+      return;
+    }
+
     const buffer = activeAudioPlayback.buffer;
     const wasPaused = !!activeAudioPlayback.isPaused;
     if(wasPaused){
@@ -4425,8 +4740,22 @@ async function seekAudioTilePlayback(rowId, itemId, valueSec){
 }
 async function saveAudioTileWav(rowId, itemId){
   const it = getAudioItemLocalByRow(rowId, itemId);
-  if(!it || !getAudioSegments(it).length) return;
+  if(!it || !hasPlayableAudioContent(it)) return;
   try{
+    if(isAudioFileItem(it)){
+      const blob = await downloadItemBlobFromR2(it.id, it.mime || "audio/*", "audio");
+      if(!blob) return;
+      const fileMeta = getAudioFileMeta(it);
+      let filename = sanitizeDownloadName(fileMeta?.name || it.title || "audio_file", "audio_file");
+      if(!/\.[a-z0-9]{2,6}$/i.test(filename)){
+        const mime = sanitizeMimeType(blob.type || it.mime || "", "");
+        let ext = "";
+        if(mime.includes("/")) ext = mime.split("/")[1].toLowerCase().replace(/[^a-z0-9]+/g, "");
+        if(ext) filename += `.${ext}`;
+      }
+      triggerBlobDownload(blob, filename);
+      return;
+    }
     const merged = await buildMergedAudioBufferFromItem(it);
     if(!merged || !merged.buffer) return;
     const wavBlob = audioBufferToWavBlob(merged.buffer);
@@ -4562,17 +4891,25 @@ function ensureAudioRangeStyles(){
 function buildAudioTileCard(card, rowId, it){
   ensureAudioRangeStyles();
   card.style.cursor = "default";
+  const kind = getAudioItemKind(it);
+  const isFileKind = kind === "file";
   const initialTotal = formatAudioDuration(getAudioTotalDurationSec(it));
+  const metaInfoText = isFileKind
+    ? getAudioFileMetaSummary(it)
+    : `Сегментов: ${getAudioSegments(it).length}`;
+
   card.innerHTML = `
-    <div style="display:flex;flex-direction:column;gap:10px;">
-      <div style="display:flex;flex-direction:column;gap:2px;min-width:0;padding-right:42px;">
-        <div class="itemTitle" style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHTML(it.title || "Audio Tile")}</div>
-        <div class="itemDesc" data-audio-seg-count>Сегментов: ${getAudioSegments(it).length}</div>
+    <div style="display:flex;flex-direction:column;gap:10px;min-width:0;max-width:100%;overflow:hidden;">
+      <div style="display:flex;flex-direction:column;gap:2px;min-width:0;max-width:100%;overflow:hidden;padding-right:42px;">
+        <div class="itemTitle" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;flex:1;">${escapeHTML(it.title || "Audio Tile")}</div>
+        <div class="itemDesc" data-audio-seg-count style="min-width:0;max-width:100%;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;">${escapeHTML(metaInfoText)}</div>
       </div>
 
+      ${isFileKind ? "" : `
       <div style="display:flex;justify-content:center;align-items:center;">
         <button type="button" class="btnGhost" data-audio-record>⏺</button>
       </div>
+      `}
 
       <div style="display:grid;grid-template-columns:minmax(0,1fr) auto;grid-template-rows:auto auto;column-gap:10px;row-gap:6px;align-items:center;">
         <div data-audio-progress-wrap style="grid-column:1 / span 2;grid-row:1 / span 2;position:relative;height:18px;display:flex;align-items:center;background:transparent;border:none;outline:none;box-shadow:none;padding:0;">
@@ -4709,6 +5046,7 @@ function buildAudioTileCard(card, rowId, it){
   updateAudioTileDom(rowId, it.id);
 }
 
+
 function buildInlineRowContent(p, cached){
   const row = cached.row;
   const items = cached.items || [];
@@ -4822,18 +5160,9 @@ function buildInlineRowContent(p, cached){
   addCard.style.alignItems = "center";
   addCard.style.justifyContent = "center";
   addCard.style.gap = "14px";
-  addCard.style.cursor = "pointer";
   addCard.style.minHeight = "180px";
   addCard.style.textAlign = "center";
-  addCard.setAttribute("role", "button");
-  addCard.setAttribute("tabindex", "0");
-  addCard.innerHTML = `
-    <div style="width:56px;height:56px;border-radius:16px;display:flex;align-items:center;justify-content:center;background:rgba(17,19,23,.08);font-size:34px;line-height:1;">+</div>
-    <div class="itemText" style="align-items:center;text-align:center;">
-      <div class="itemTitle">Добавить</div>
-      <div class="itemDesc">${escapeHTML(row.type === "audio" ? "Audio Tile" : rowTypeLabel(row.type).text.replace("-ряд",""))}</div>
-    </div>
-  `;
+
   const triggerAdd = async (e)=>{
     if(e){
       e.preventDefault();
@@ -4841,12 +5170,53 @@ function buildInlineRowContent(p, cached){
     }
     await addItemViaRowTile(row.id);
   };
-  addCard.addEventListener("click", triggerAdd);
-  addCard.addEventListener("keydown", async (e)=>{
-    if(e.key === "Enter" || e.key === " "){
-      await triggerAdd(e);
+
+  if((row.type || "").toLowerCase() === "audio"){
+    addCard.style.cursor = "default";
+    addCard.innerHTML = `
+      <div class="itemText" style="align-items:center;text-align:center;">
+        <div class="itemTitle">Добавить аудио</div>
+        <div class="itemDesc">Voice или файл</div>
+      </div>
+      <div style="display:flex;align-items:center;justify-content:center;gap:12px;flex-wrap:wrap;">
+        <button type="button" class="btnGhost" data-add-audio-voice style="min-width:56px;font-size:22px;line-height:1;">🎤</button>
+        <button type="button" class="btnGhost" data-add-audio-file style="min-width:56px;font-size:22px;line-height:1;">🎵</button>
+      </div>
+    `;
+    const addVoiceBtn = addCard.querySelector("[data-add-audio-voice]");
+    const addFileBtn = addCard.querySelector("[data-add-audio-file]");
+    if(addVoiceBtn){
+      addVoiceBtn.addEventListener("click", async (e)=>{
+        e.preventDefault();
+        e.stopPropagation();
+        await addItemViaRowTile(row.id);
+      });
     }
-  });
+    if(addFileBtn){
+      addFileBtn.addEventListener("click", async (e)=>{
+        e.preventDefault();
+        e.stopPropagation();
+        openAudioFilePickerForRow(row.id);
+      });
+    }
+  }else{
+    addCard.style.cursor = "pointer";
+    addCard.setAttribute("role", "button");
+    addCard.setAttribute("tabindex", "0");
+    addCard.innerHTML = `
+      <div style="width:56px;height:56px;border-radius:16px;display:flex;align-items:center;justify-content:center;background:rgba(17,19,23,.08);font-size:34px;line-height:1;">+</div>
+      <div class="itemText" style="align-items:center;text-align:center;">
+        <div class="itemTitle">Добавить</div>
+        <div class="itemDesc">${escapeHTML(row.type === "audio" ? "Audio Tile" : rowTypeLabel(row.type).text.replace("-ряд",""))}</div>
+      </div>
+    `;
+    addCard.addEventListener("click", triggerAdd);
+    addCard.addEventListener("keydown", async (e)=>{
+      if(e.key === "Enter" || e.key === " "){
+        await triggerAdd(e);
+      }
+    });
+  }
   rail.appendChild(addCard);
 
   holder.appendChild(rail);
@@ -5162,13 +5532,86 @@ async function createAudioItemInSpecificRow(rowId){
   isBusy = true;
   try{
     const title = `Голос ${new Date().toLocaleDateString()}`;
-    const meta = { segments: [], durationSec: 0, localOnly: true, _rowId: rowId };
+    const meta = { kind: "voice", segments: [], durationSec: 0, localOnly: true, _rowId: rowId };
     const created = await createItemInRow(rowId, { type:"audio", title, meta });
     const it = mapItemRow(created);
     it.type = "audio";
     it.segments = [];
     it.durationSec = 0;
     it._rowId = rowId;
+
+    const pLocal = getPuchokLocal(p.id);
+    if(pLocal){
+      pLocal.items = pLocal.items || [];
+      pLocal.items.unshift(it);
+      pLocal.updatedAt = it.updatedAt || nowISO();
+      pLocal.audioRowId = rowId;
+    }
+
+    expandRowInline(rowId);
+    viewMode = "puchok";
+    await refreshRowAndKeepUI(rowId);
+    return (db.rows[rowId]?.items || []).find(x => x.id === it.id) || it;
+  }finally{
+    isBusy = false;
+  }
+}
+
+async function addAudioFileToRow(rowId, file){
+  const p = ensureCurrentPuchok();
+  if(!p || !rowId || !file) return null;
+  if(!isAcceptedAudioFile(file)) return null;
+
+  isBusy = true;
+  try{
+    const mime = sanitizeMimeType(file.type || "audio/*", "audio/*");
+    const durationSec = await getAudioDurationFromBlob(file);
+    const title = sanitizeDownloadName((file.name || "audio file").replace(/\.[^.]+$/, ""), "audio file");
+    const meta = {
+      kind: "file",
+      file: {
+        name: file.name || "audio file",
+        size: Number(file.size || 0),
+        mime,
+        duration: durationSec > 0 ? durationSec : null,
+      },
+      r2: { hasBlob: false, name: file.name || "audio file", mime },
+      _rowId: rowId,
+    };
+
+    const created = await createItemInRow(rowId, {
+      type: "audio",
+      title,
+      mime,
+      size: Number(file.size || 0),
+      meta,
+    });
+
+    const it = mapItemRow(created);
+    it.type = "audio";
+    it.meta = it.meta && typeof it.meta === "object" ? it.meta : {};
+    it.meta.kind = "file";
+    it.meta.file = Object.assign({}, meta.file);
+    it.meta.r2 = Object.assign({}, meta.r2);
+    it.meta._rowId = rowId;
+    it.durationSec = durationSec > 0 ? durationSec : 0;
+    it.mime = mime;
+    it.size = Number(file.size || 0);
+    it.r2 = { hasBlob: false, name: file.name || "audio file", mime };
+    it._rowId = rowId;
+
+    if((file.size || 0) <= WORKER_UPLOAD_LIMIT_BYTES){
+      await uploadItemBlobToR2(it.id, file, { enforceLimit:true });
+    }else{
+      await directUploadLargeFileToR2({ itemId: it.id, puchokId: p.id, file });
+    }
+
+    it.r2 = { hasBlob:true, name: file.name || "audio file", mime };
+    it.meta.r2 = Object.assign({}, it.r2);
+    await apiJson(`/items/${encodeURIComponent(it.id)}`, {
+      method:"PATCH",
+      json: itemToPatchPayload(it),
+    });
 
     const pLocal = getPuchokLocal(p.id);
     if(pLocal){
@@ -6010,7 +6453,7 @@ async function createAudioItemCloud(){
     if(pp) pp.audioRowId = rowId;
 
     const title = `Голос ${new Date().toLocaleDateString()}`;
-    const meta = { segments: [], durationSec: 0, localOnly: true, _rowId: rowId };
+    const meta = { kind: "voice", segments: [], durationSec: 0, localOnly: true, _rowId: rowId };
 
     const created = await createItemInRow(rowId, { type:"audio", title, meta });
     const it = mapItemRow(created);
@@ -6601,6 +7044,7 @@ filePicker.addEventListener("change", async () => {
 
 ensurePhotoPicker();
 ensureVideoPicker();
+ensureAudioFilePicker();
 photoPicker.addEventListener("change", async () => {
   const picker = configurePhotoPickerForCurrentDevice(ensurePhotoPicker());
   const files = Array.from(picker.files || []).filter(Boolean);
@@ -6685,6 +7129,34 @@ videoPicker.addEventListener("change", async () => {
     addMsg("Ошибка добавления видео: " + (e?.message || e), "err");
   }finally{
     isBusy = false;
+    picker.value = "";
+  }
+});
+
+ensureAudioFilePicker();
+audioFilePicker.addEventListener("change", async () => {
+  const picker = ensureAudioFilePicker();
+  const file = Array.from(picker.files || []).find(Boolean) || null;
+  if(!file){
+    picker.value = "";
+    return;
+  }
+  if(!isAcceptedAudioFile(file)){
+    picker.value = "";
+    alert("Нужен аудиофайл.");
+    return;
+  }
+  const rowId = activeAudioFileTargetRowId;
+  const puchokId = activeAudioFileTargetPuchokId;
+  if(!rowId || puchokId !== currentPuchokId){
+    picker.value = "";
+    return;
+  }
+  try{
+    await addAudioFileToRow(rowId, file);
+  }catch(e){
+    addMsg("Ошибка добавления аудиофайла: " + (e?.message || e), "err");
+  }finally{
     picker.value = "";
   }
 });
