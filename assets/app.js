@@ -4396,7 +4396,7 @@ async function startAudioTileRecording(rowId, itemId){
       sampleRate: 44100,
       sampleSize: 16,
       echoCancellation: false,
-      noiseSuppression: false,
+      noiseSuppression: true,
       autoGainControl: false
     }
   });
