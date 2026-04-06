@@ -2337,6 +2337,142 @@ function render(){
 }
 window.render = render;
 
+let activePuchokListMenu = null;
+
+function closePuchokListMenu(){
+  if(activePuchokListMenu?.menu){
+    try{ activePuchokListMenu.menu.remove(); }catch{}
+  }
+  if(activePuchokListMenu?.button){
+    activePuchokListMenu.button.setAttribute("aria-expanded", "false");
+  }
+  if(activePuchokListMenu?.cleanup){
+    try{ activePuchokListMenu.cleanup(); }catch{}
+  }
+  activePuchokListMenu = null;
+}
+
+async function renamePuchokFromList(puchokId){
+  const p = getPuchokLocal(puchokId);
+  if(!puchokId) return;
+  const currentTitle = p?.title || "";
+  const name = prompt("Новое название пучка:", currentTitle);
+  if(name === null) return;
+  const title = (name || "").trim() || "Без названия";
+  await apiJson(`/puchki/${encodeURIComponent(puchokId)}`, {
+    method:"PATCH",
+    json:{ title }
+  });
+  await loadPuchkiList();
+  render();
+}
+
+async function deletePuchokFromList(puchokId){
+  if(!puchokId) return;
+  const ok = confirm("Удалить пучок и всё содержимое?");
+  if(!ok) return;
+
+  await apiJson(`/puchki/${encodeURIComponent(puchokId)}`, { method:"DELETE" });
+
+  if(currentPuchokId === puchokId){
+    viewMode = "list";
+    currentPuchokId = null;
+    currentRowId = null;
+    expandedRowIds.clear();
+  }
+
+  await loadPuchkiList();
+  render();
+}
+
+function openPuchokListMenu(button, puchokId){
+  if(!button || !puchokId) return;
+  if(activePuchokListMenu?.button === button){
+    closePuchokListMenu();
+    return;
+  }
+
+  closePuchokListMenu();
+
+  const menu = document.createElement("div");
+  menu.dataset.puchokListMenu = "1";
+  menu.style.position = "fixed";
+  menu.style.minWidth = "148px";
+  menu.style.padding = "6px";
+  menu.style.borderRadius = "14px";
+  menu.style.background = "#f7f8fb";
+  menu.style.border = "1px solid rgba(17,19,23,.08)";
+  menu.style.boxShadow = "0 16px 36px rgba(17,19,23,.12)";
+  menu.style.zIndex = "140000";
+  menu.style.display = "flex";
+  menu.style.flexDirection = "column";
+  menu.style.gap = "4px";
+
+  const actions = [
+    { label: "Rename", onClick: async ()=>{ await renamePuchokFromList(puchokId); } },
+    { label: "Delete", onClick: async ()=>{ await deletePuchokFromList(puchokId); } },
+  ];
+
+  actions.forEach((action)=>{
+    const itemBtn = document.createElement("button");
+    itemBtn.type = "button";
+    itemBtn.textContent = action.label;
+    itemBtn.style.appearance = "none";
+    itemBtn.style.border = "0";
+    itemBtn.style.borderRadius = "10px";
+    itemBtn.style.padding = "10px 12px";
+    itemBtn.style.background = "transparent";
+    itemBtn.style.color = "#111317";
+    itemBtn.style.fontSize = "13px";
+    itemBtn.style.lineHeight = "1.2";
+    itemBtn.style.textAlign = "left";
+    itemBtn.style.cursor = "pointer";
+    itemBtn.addEventListener("mouseenter", ()=>{ itemBtn.style.background = "rgba(17,19,23,.06)"; });
+    itemBtn.addEventListener("mouseleave", ()=>{ itemBtn.style.background = "transparent"; });
+    itemBtn.addEventListener("click", async (e)=>{
+      e.preventDefault();
+      e.stopPropagation();
+      closePuchokListMenu();
+      await action.onClick();
+    });
+    menu.appendChild(itemBtn);
+  });
+
+  document.body.appendChild(menu);
+
+  const rect = button.getBoundingClientRect();
+  const menuRect = menu.getBoundingClientRect();
+  const gap = 6;
+  let left = rect.right - menuRect.width;
+  let top = rect.bottom + gap;
+  if(left < 8) left = 8;
+  if(left + menuRect.width > window.innerWidth - 8) left = window.innerWidth - menuRect.width - 8;
+  if(top + menuRect.height > window.innerHeight - 8) top = Math.max(8, rect.top - menuRect.height - gap);
+  menu.style.left = `${Math.round(left)}px`;
+  menu.style.top = `${Math.round(top)}px`;
+
+  button.setAttribute("aria-expanded", "true");
+
+  const handlePointerDown = (e)=>{
+    if(menu.contains(e.target) || button.contains(e.target)) return;
+    closePuchokListMenu();
+  };
+  const handleKeyDown = (e)=>{
+    if(e.key === "Escape") closePuchokListMenu();
+  };
+  window.addEventListener("pointerdown", handlePointerDown, true);
+  window.addEventListener("keydown", handleKeyDown, true);
+
+  activePuchokListMenu = {
+    button,
+    menu,
+    cleanup(){
+      window.removeEventListener("pointerdown", handlePointerDown, true);
+      window.removeEventListener("keydown", handleKeyDown, true);
+    }
+  };
+}
+
 function renderPuchokList(){
   const wrap = document.createElement("div");
   wrap.className = "list";
@@ -2351,38 +2487,59 @@ function renderPuchokList(){
     for(const p of sorted){
       const card = document.createElement("div");
       card.className = "card";
+      card.style.cursor = "pointer";
+      card.style.position = "relative";
+      card.addEventListener("click", ()=> openPuchok(p.id));
 
       const meta = document.createElement("div");
       meta.className = "meta";
+      meta.style.paddingRight = "44px";
+      meta.style.minWidth = "0";
 
       const name = document.createElement("div");
       name.className = "name";
       name.textContent = p.title || "Без названия";
+      name.style.minWidth = "0";
+      name.style.whiteSpace = "nowrap";
+      name.style.overflow = "hidden";
+      name.style.textOverflow = "ellipsis";
 
-      const sub = document.createElement("div");
-      sub.className = "sub";
-
-      const pill1 = document.createElement("span");
-      pill1.className = "pill";
-      pill1.textContent = `Контент: —`;
-
-      const pill2 = document.createElement("span");
-      pill2.className = "pill";
-      pill2.textContent = `Обновлён: ${fmtDate(p.updatedAt || p.createdAt || nowISO())}`;
-
-      sub.appendChild(pill1);
-      sub.appendChild(pill2);
+      const menuBtn = document.createElement("button");
+      menuBtn.type = "button";
+      menuBtn.textContent = "⋮";
+      menuBtn.title = "Меню";
+      menuBtn.setAttribute("aria-haspopup", "menu");
+      menuBtn.setAttribute("aria-expanded", "false");
+      menuBtn.style.position = "absolute";
+      menuBtn.style.top = "50%";
+      menuBtn.style.right = "12px";
+      menuBtn.style.transform = "translateY(-50%)";
+      menuBtn.style.width = "30px";
+      menuBtn.style.height = "30px";
+      menuBtn.style.borderRadius = "999px";
+      menuBtn.style.border = "1px solid rgba(17,19,23,.08)";
+      menuBtn.style.background = "#f7f8fb";
+      menuBtn.style.color = "#111317";
+      menuBtn.style.boxShadow = "0 4px 12px rgba(17,19,23,.08)";
+      menuBtn.style.display = "inline-flex";
+      menuBtn.style.alignItems = "center";
+      menuBtn.style.justifyContent = "center";
+      menuBtn.style.cursor = "pointer";
+      menuBtn.style.fontSize = "16px";
+      menuBtn.style.fontWeight = "700";
+      menuBtn.style.lineHeight = "1";
+      menuBtn.style.padding = "0";
+      menuBtn.style.appearance = "none";
+      menuBtn.style.zIndex = "2";
+      menuBtn.addEventListener("click", (e)=>{
+        e.preventDefault();
+        e.stopPropagation();
+        openPuchokListMenu(menuBtn, p.id);
+      });
 
       meta.appendChild(name);
-      meta.appendChild(sub);
-
-      const btn = document.createElement("button");
-      btn.className = "btnGhost";
-      btn.textContent = "Открыть";
-      btn.addEventListener("click", () => openPuchok(p.id));
-
       card.appendChild(meta);
-      card.appendChild(btn);
+      card.appendChild(menuBtn);
       wrap.appendChild(card);
     }
   }
@@ -4390,7 +4547,16 @@ async function startAudioTileRecording(rowId, itemId){
     await stopActiveAudioPlayback();
   }
 
-  const stream = await navigator.mediaDevices.getUserMedia({ audio:true });
+  const stream = await navigator.mediaDevices.getUserMedia({
+    audio: {
+      channelCount: 1,
+      sampleRate: 44100,
+      sampleSize: 16,
+      echoCancellation: false,
+      noiseSuppression: true,
+      autoGainControl: false
+    }
+  });
   const recorder = new MediaRecorder(stream);
   const state = {
     rowId,
@@ -4898,18 +5064,56 @@ function buildAudioTileCard(card, rowId, it){
     ? getAudioFileMetaSummary(it)
     : `Сегментов: ${getAudioSegments(it).length}`;
 
-  card.innerHTML = `
+  card.innerHTML = isFileKind ? `
+    <div style="display:flex;flex-direction:column;gap:10px;width:100%;min-width:0;max-width:100%;box-sizing:border-box;overflow:hidden;">
+      <div style="display:flex;flex-direction:column;gap:2px;width:100%;min-width:0;max-width:100%;box-sizing:border-box;overflow:hidden;padding-right:42px;">
+        <div class="itemTitle" style="display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;max-width:100%;">${escapeHTML(it.title || "Audio Tile")}</div>
+        <div class="itemDesc" data-audio-seg-count style="display:block;min-width:0;max-width:100%;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;">${escapeHTML(metaInfoText)}</div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:minmax(0,1fr) auto;grid-template-rows:auto auto;column-gap:10px;row-gap:6px;align-items:center;width:100%;min-width:0;max-width:100%;box-sizing:border-box;">
+        <div data-audio-progress-wrap style="grid-column:1 / span 2;grid-row:1 / span 2;position:relative;height:18px;display:flex;align-items:center;width:100%;min-width:0;max-width:100%;box-sizing:border-box;background:transparent;border:none;outline:none;box-shadow:none;padding:0;">
+          <div data-audio-progress-bg
+               style="position:absolute;left:0;right:0;top:50%;transform:translateY(-50%);
+                      height:4px;border-radius:999px;background:rgba(17,19,23,.14);overflow:hidden;">
+            <div data-audio-progress-fill
+                 style="height:100%;width:0%;border-radius:999px;background:rgba(84,132,255,.95);"></div>
+          </div>
+          <div data-audio-progress-thumb
+               style="position:absolute;top:50%;left:0;width:14px;height:14px;border-radius:999px;
+                      background:#fff;border:2px solid rgba(84,132,255,.95);
+                      box-shadow:0 1px 4px rgba(0,0,0,.18);
+                      transform:translate(0,-50%);
+                      pointer-events:none;
+                      z-index:3;"></div>
+          <input type="range"
+                 min="0"
+                 max="1"
+                 step="0.01"
+                 value="0"
+                 data-audio-slider
+                 style="position:relative;z-index:2;display:block;width:100%;min-width:0;max-width:100%;margin:0;background:transparent;touch-action:none;-webkit-appearance:none;appearance:none;border:none;outline:none;box-shadow:none;padding:0;" />
+        </div>
+        <div class="itemDesc" data-audio-recording-total
+             style="grid-column:2;grid-row:1;justify-self:end;align-self:start;">${initialTotal}</div>
+        <div class="itemDesc" data-audio-current-time
+             style="grid-column:1;grid-row:2;justify-self:start;align-self:end;">0:00</div>
+      </div>
+
+      <div style="display:flex;justify-content:center;align-items:center;">
+        <button type="button" class="btnGhost" data-audio-play-toggle>▶</button>
+      </div>
+    </div>
+  ` : `
     <div style="display:flex;flex-direction:column;gap:10px;min-width:0;max-width:100%;overflow:hidden;">
       <div style="display:flex;flex-direction:column;gap:2px;min-width:0;max-width:100%;overflow:hidden;padding-right:42px;">
         <div class="itemTitle" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;flex:1;">${escapeHTML(it.title || "Audio Tile")}</div>
         <div class="itemDesc" data-audio-seg-count style="min-width:0;max-width:100%;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;">${escapeHTML(metaInfoText)}</div>
       </div>
 
-      ${isFileKind ? "" : `
       <div style="display:flex;justify-content:center;align-items:center;">
         <button type="button" class="btnGhost" data-audio-record>⏺</button>
       </div>
-      `}
 
       <div style="display:grid;grid-template-columns:minmax(0,1fr) auto;grid-template-rows:auto auto;column-gap:10px;row-gap:6px;align-items:center;">
         <div data-audio-progress-wrap style="grid-column:1 / span 2;grid-row:1 / span 2;position:relative;height:18px;display:flex;align-items:center;background:transparent;border:none;outline:none;box-shadow:none;padding:0;">
