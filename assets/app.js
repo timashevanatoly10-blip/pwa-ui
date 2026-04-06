@@ -2351,6 +2351,8 @@ function renderPuchokList(){
     for(const p of sorted){
       const card = document.createElement("div");
       card.className = "card";
+      card.style.cursor = "pointer";
+      card.addEventListener("click", ()=> openPuchok(p.id));
 
       const meta = document.createElement("div");
       meta.className = "meta";
@@ -2359,30 +2361,8 @@ function renderPuchokList(){
       name.className = "name";
       name.textContent = p.title || "Без названия";
 
-      const sub = document.createElement("div");
-      sub.className = "sub";
-
-      const pill1 = document.createElement("span");
-      pill1.className = "pill";
-      pill1.textContent = `Контент: —`;
-
-      const pill2 = document.createElement("span");
-      pill2.className = "pill";
-      pill2.textContent = `Обновлён: ${fmtDate(p.updatedAt || p.createdAt || nowISO())}`;
-
-      sub.appendChild(pill1);
-      sub.appendChild(pill2);
-
       meta.appendChild(name);
-      meta.appendChild(sub);
-
-      const btn = document.createElement("button");
-      btn.className = "btnGhost";
-      btn.textContent = "Открыть";
-      btn.addEventListener("click", () => openPuchok(p.id));
-
       card.appendChild(meta);
-      card.appendChild(btn);
       wrap.appendChild(card);
     }
   }
