@@ -2351,8 +2351,6 @@ function renderPuchokList(){
     for(const p of sorted){
       const card = document.createElement("div");
       card.className = "card";
-      card.style.cursor = "pointer";
-      card.addEventListener("click", ()=> openPuchok(p.id));
 
       const meta = document.createElement("div");
       meta.className = "meta";
@@ -2361,8 +2359,30 @@ function renderPuchokList(){
       name.className = "name";
       name.textContent = p.title || "Без названия";
 
+      const sub = document.createElement("div");
+      sub.className = "sub";
+
+      const pill1 = document.createElement("span");
+      pill1.className = "pill";
+      pill1.textContent = `Контент: —`;
+
+      const pill2 = document.createElement("span");
+      pill2.className = "pill";
+      pill2.textContent = `Обновлён: ${fmtDate(p.updatedAt || p.createdAt || nowISO())}`;
+
+      sub.appendChild(pill1);
+      sub.appendChild(pill2);
+
       meta.appendChild(name);
+      meta.appendChild(sub);
+
+      const btn = document.createElement("button");
+      btn.className = "btnGhost";
+      btn.textContent = "Открыть";
+      btn.addEventListener("click", () => openPuchok(p.id));
+
       card.appendChild(meta);
+      card.appendChild(btn);
       wrap.appendChild(card);
     }
   }
@@ -4370,16 +4390,7 @@ async function startAudioTileRecording(rowId, itemId){
     await stopActiveAudioPlayback();
   }
 
-  const stream = await navigator.mediaDevices.getUserMedia({
-    audio: {
-      channelCount: 1,
-      sampleRate: 44100,
-      sampleSize: 16,
-      echoCancellation: false,
-      noiseSuppression: true,
-      autoGainControl: false
-    }
-  });
+  const stream = await navigator.mediaDevices.getUserMedia({ audio:true });
   const recorder = new MediaRecorder(stream);
   const state = {
     rowId,
@@ -4887,56 +4898,18 @@ function buildAudioTileCard(card, rowId, it){
     ? getAudioFileMetaSummary(it)
     : `Сегментов: ${getAudioSegments(it).length}`;
 
-  card.innerHTML = isFileKind ? `
-    <div style="display:flex;flex-direction:column;gap:10px;width:100%;min-width:0;max-width:100%;box-sizing:border-box;overflow:hidden;">
-      <div style="display:flex;flex-direction:column;gap:2px;width:100%;min-width:0;max-width:100%;box-sizing:border-box;overflow:hidden;padding-right:42px;">
-        <div class="itemTitle" style="display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;max-width:100%;">${escapeHTML(it.title || "Audio Tile")}</div>
-        <div class="itemDesc" data-audio-seg-count style="display:block;min-width:0;max-width:100%;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;">${escapeHTML(metaInfoText)}</div>
-      </div>
-
-      <div style="display:grid;grid-template-columns:minmax(0,1fr) auto;grid-template-rows:auto auto;column-gap:10px;row-gap:6px;align-items:center;width:100%;min-width:0;max-width:100%;box-sizing:border-box;">
-        <div data-audio-progress-wrap style="grid-column:1 / span 2;grid-row:1 / span 2;position:relative;height:18px;display:flex;align-items:center;width:100%;min-width:0;max-width:100%;box-sizing:border-box;background:transparent;border:none;outline:none;box-shadow:none;padding:0;">
-          <div data-audio-progress-bg
-               style="position:absolute;left:0;right:0;top:50%;transform:translateY(-50%);
-                      height:4px;border-radius:999px;background:rgba(17,19,23,.14);overflow:hidden;">
-            <div data-audio-progress-fill
-                 style="height:100%;width:0%;border-radius:999px;background:rgba(84,132,255,.95);"></div>
-          </div>
-          <div data-audio-progress-thumb
-               style="position:absolute;top:50%;left:0;width:14px;height:14px;border-radius:999px;
-                      background:#fff;border:2px solid rgba(84,132,255,.95);
-                      box-shadow:0 1px 4px rgba(0,0,0,.18);
-                      transform:translate(0,-50%);
-                      pointer-events:none;
-                      z-index:3;"></div>
-          <input type="range"
-                 min="0"
-                 max="1"
-                 step="0.01"
-                 value="0"
-                 data-audio-slider
-                 style="position:relative;z-index:2;display:block;width:100%;min-width:0;max-width:100%;margin:0;background:transparent;touch-action:none;-webkit-appearance:none;appearance:none;border:none;outline:none;box-shadow:none;padding:0;" />
-        </div>
-        <div class="itemDesc" data-audio-recording-total
-             style="grid-column:2;grid-row:1;justify-self:end;align-self:start;">${initialTotal}</div>
-        <div class="itemDesc" data-audio-current-time
-             style="grid-column:1;grid-row:2;justify-self:start;align-self:end;">0:00</div>
-      </div>
-
-      <div style="display:flex;justify-content:center;align-items:center;">
-        <button type="button" class="btnGhost" data-audio-play-toggle>▶</button>
-      </div>
-    </div>
-  ` : `
+  card.innerHTML = `
     <div style="display:flex;flex-direction:column;gap:10px;min-width:0;max-width:100%;overflow:hidden;">
       <div style="display:flex;flex-direction:column;gap:2px;min-width:0;max-width:100%;overflow:hidden;padding-right:42px;">
         <div class="itemTitle" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;flex:1;">${escapeHTML(it.title || "Audio Tile")}</div>
         <div class="itemDesc" data-audio-seg-count style="min-width:0;max-width:100%;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;">${escapeHTML(metaInfoText)}</div>
       </div>
 
+      ${isFileKind ? "" : `
       <div style="display:flex;justify-content:center;align-items:center;">
         <button type="button" class="btnGhost" data-audio-record>⏺</button>
       </div>
+      `}
 
       <div style="display:grid;grid-template-columns:minmax(0,1fr) auto;grid-template-rows:auto auto;column-gap:10px;row-gap:6px;align-items:center;">
         <div data-audio-progress-wrap style="grid-column:1 / span 2;grid-row:1 / span 2;position:relative;height:18px;display:flex;align-items:center;background:transparent;border:none;outline:none;box-shadow:none;padding:0;">
