@@ -41,6 +41,9 @@ function audioSegmentBlobPath(segmentId, qs = "") {
 }
 function r2PresignPath(){ return `/r2/presign`; }
 function itemBlobCompletePath(itemId){ return `/items/${encodeURIComponent(itemId)}/blob/complete`; }
+function geoParsePath(){
+  return `/geo/parse`;
+}
 
 /** ===========================
  *  TOKEN HELPERS
@@ -1720,6 +1723,17 @@ async function apiJson(path, opts){
   }
   return data;
 }
+async function geoParse(url){
+  const cleanUrl = (url || "").toString().trim();
+  if(!cleanUrl) throw new Error("GEO_URL_REQUIRED");
+
+  const data = await apiJson(geoParsePath(), {
+    method: "POST",
+    json: { url: cleanUrl }
+  });
+
+  return data;
+}
 
 /** ===========================
  *  R2 (via Worker) — FILE/IMAGE blobs
@@ -2337,83 +2351,44 @@ function render(){
 }
 window.render = render;
 
-let activePuchokListMenu = null;
-
-function closePuchokListMenu(){
-  if(activePuchokListMenu?.menu){
-    try{ activePuchokListMenu.menu.remove(); }catch{}
-  }
-  if(activePuchokListMenu?.button){
-    activePuchokListMenu.button.setAttribute("aria-expanded", "false");
-  }
-  if(activePuchokListMenu?.cleanup){
-    try{ activePuchokListMenu.cleanup(); }catch{}
-  }
-  activePuchokListMenu = null;
-}
-
-async function renamePuchokFromList(puchokId){
-  const p = getPuchokLocal(puchokId);
-  if(!puchokId) return;
-  const currentTitle = p?.title || "";
-  const name = prompt("Новое название пучка:", currentTitle);
-  if(name === null) return;
-  const title = (name || "").trim() || "Без названия";
-  await apiJson(`/puchki/${encodeURIComponent(puchokId)}`, {
-    method:"PATCH",
-    json:{ title }
-  });
-  await loadPuchkiList();
-  render();
-}
-
-async function deletePuchokFromList(puchokId){
-  if(!puchokId) return;
-  const ok = confirm("Удалить пучок и всё содержимое?");
-  if(!ok) return;
-
-  await apiJson(`/puchki/${encodeURIComponent(puchokId)}`, { method:"DELETE" });
-
-  if(currentPuchokId === puchokId){
-    viewMode = "list";
-    currentPuchokId = null;
-    currentRowId = null;
-    expandedRowIds.clear();
-  }
-
-  await loadPuchkiList();
-  render();
-}
-
-function openPuchokListMenu(button, puchokId){
-  if(!button || !puchokId) return;
-  if(activePuchokListMenu?.button === button){
-    closePuchokListMenu();
+function openPuchokListMenu(button, puchok){
+  if(!button || !puchok?.id) return;
+  if(activeTileMenu?.button === button){
+    closeActiveTileMenu();
     return;
   }
 
-  closePuchokListMenu();
+  closeActiveTileMenu();
 
   const menu = document.createElement("div");
-  menu.dataset.puchokListMenu = "1";
   menu.style.position = "fixed";
-  menu.style.minWidth = "148px";
+  menu.style.minWidth = "144px";
   menu.style.padding = "6px";
   menu.style.borderRadius = "14px";
-  menu.style.background = "#f7f8fb";
-  menu.style.border = "1px solid rgba(17,19,23,.08)";
-  menu.style.boxShadow = "0 16px 36px rgba(17,19,23,.12)";
+  menu.style.background = "#fff";
+  menu.style.border = "1px solid rgba(17,19,23,.10)";
+  menu.style.boxShadow = "0 16px 40px rgba(17,19,23,.14)";
   menu.style.zIndex = "140000";
   menu.style.display = "flex";
   menu.style.flexDirection = "column";
   menu.style.gap = "4px";
 
   const actions = [
-    { label: "Rename", onClick: async ()=>{ await renamePuchokFromList(puchokId); } },
-    { label: "Delete", onClick: async ()=>{ await deletePuchokFromList(puchokId); } },
+    {
+      label: "Rename",
+      onClick: async ()=>{
+        await renamePuchokFromList(puchok);
+      }
+    },
+    {
+      label: "Delete",
+      onClick: async ()=>{
+        await deletePuchokFromList(puchok);
+      }
+    }
   ];
 
-  actions.forEach((action)=>{
+  for(const action of actions){
     const itemBtn = document.createElement("button");
     itemBtn.type = "button";
     itemBtn.textContent = action.label;
@@ -2427,50 +2402,55 @@ function openPuchokListMenu(button, puchokId){
     itemBtn.style.lineHeight = "1.2";
     itemBtn.style.textAlign = "left";
     itemBtn.style.cursor = "pointer";
-    itemBtn.addEventListener("mouseenter", ()=>{ itemBtn.style.background = "rgba(17,19,23,.06)"; });
-    itemBtn.addEventListener("mouseleave", ()=>{ itemBtn.style.background = "transparent"; });
     itemBtn.addEventListener("click", async (e)=>{
       e.preventDefault();
       e.stopPropagation();
-      closePuchokListMenu();
-      await action.onClick();
+      closeActiveTileMenu();
+      if(typeof action.onClick === "function"){
+        await action.onClick();
+      }
     });
     menu.appendChild(itemBtn);
-  });
+  }
 
   document.body.appendChild(menu);
-
-  const rect = button.getBoundingClientRect();
-  const menuRect = menu.getBoundingClientRect();
-  const gap = 6;
-  let left = rect.right - menuRect.width;
-  let top = rect.bottom + gap;
-  if(left < 8) left = 8;
-  if(left + menuRect.width > window.innerWidth - 8) left = window.innerWidth - menuRect.width - 8;
-  if(top + menuRect.height > window.innerHeight - 8) top = Math.max(8, rect.top - menuRect.height - gap);
-  menu.style.left = `${Math.round(left)}px`;
-  menu.style.top = `${Math.round(top)}px`;
-
+  positionTileMenu(menu, button);
   button.setAttribute("aria-expanded", "true");
+  activeTileMenu = { button, menu };
+}
 
-  const handlePointerDown = (e)=>{
-    if(menu.contains(e.target) || button.contains(e.target)) return;
-    closePuchokListMenu();
-  };
-  const handleKeyDown = (e)=>{
-    if(e.key === "Escape") closePuchokListMenu();
-  };
-  window.addEventListener("pointerdown", handlePointerDown, true);
-  window.addEventListener("keydown", handleKeyDown, true);
+async function renamePuchokFromList(puchok){
+  if(!puchok?.id) return;
+  const nextTitle = prompt("Переименовать пучок:", puchok.title || "");
+  if(nextTitle === null) return;
 
-  activePuchokListMenu = {
-    button,
-    menu,
-    cleanup(){
-      window.removeEventListener("pointerdown", handlePointerDown, true);
-      window.removeEventListener("keydown", handleKeyDown, true);
-    }
-  };
+  const title = (nextTitle || "").trim() || "Без названия";
+  await apiJson(`/puchki/${encodeURIComponent(puchok.id)}`, {
+    method:"PATCH",
+    json:{ title }
+  });
+
+  await loadPuchkiList();
+  render();
+}
+
+async function deletePuchokFromList(puchok){
+  if(!puchok?.id) return;
+  if(!confirm("Удалить пучок и всё содержимое?")) return;
+
+  await apiJson(`/puchki/${encodeURIComponent(puchok.id)}`, {
+    method:"DELETE"
+  });
+
+  if(currentPuchokId === puchok.id){
+    currentPuchokId = null;
+    currentRowId = null;
+    expandedRowIds.clear();
+    viewMode = "list";
+  }
+
+  await loadPuchkiList();
+  render();
 }
 
 function renderPuchokList(){
@@ -2487,22 +2467,14 @@ function renderPuchokList(){
     for(const p of sorted){
       const card = document.createElement("div");
       card.className = "card";
-      card.style.cursor = "pointer";
       card.style.position = "relative";
+      card.style.cursor = "pointer";
+      card.style.paddingRight = "52px";
       card.addEventListener("click", ()=> openPuchok(p.id));
-
-      const meta = document.createElement("div");
-      meta.className = "meta";
-      meta.style.paddingRight = "44px";
-      meta.style.minWidth = "0";
 
       const name = document.createElement("div");
       name.className = "name";
       name.textContent = p.title || "Без названия";
-      name.style.minWidth = "0";
-      name.style.whiteSpace = "nowrap";
-      name.style.overflow = "hidden";
-      name.style.textOverflow = "ellipsis";
 
       const menuBtn = document.createElement("button");
       menuBtn.type = "button";
@@ -2517,8 +2489,8 @@ function renderPuchokList(){
       menuBtn.style.width = "30px";
       menuBtn.style.height = "30px";
       menuBtn.style.borderRadius = "999px";
-      menuBtn.style.border = "1px solid rgba(17,19,23,.08)";
-      menuBtn.style.background = "#f7f8fb";
+      menuBtn.style.border = "1px solid rgba(17,19,23,.10)";
+      menuBtn.style.background = "#fff";
       menuBtn.style.color = "#111317";
       menuBtn.style.boxShadow = "0 4px 12px rgba(17,19,23,.08)";
       menuBtn.style.display = "inline-flex";
@@ -2526,19 +2498,16 @@ function renderPuchokList(){
       menuBtn.style.justifyContent = "center";
       menuBtn.style.cursor = "pointer";
       menuBtn.style.fontSize = "16px";
-      menuBtn.style.fontWeight = "700";
       menuBtn.style.lineHeight = "1";
       menuBtn.style.padding = "0";
-      menuBtn.style.appearance = "none";
-      menuBtn.style.zIndex = "2";
+
       menuBtn.addEventListener("click", (e)=>{
         e.preventDefault();
         e.stopPropagation();
-        openPuchokListMenu(menuBtn, p.id);
+        openPuchokListMenu(menuBtn, p);
       });
 
-      meta.appendChild(name);
-      card.appendChild(meta);
+      card.appendChild(name);
       card.appendChild(menuBtn);
       wrap.appendChild(card);
     }
