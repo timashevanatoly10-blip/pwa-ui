@@ -2350,6 +2350,7 @@ function render(){
   renderPuchokInside(p);
 }
 window.render = render;
+window.handleAddGeoPrompt = handleAddGeoPrompt;
 
 function openPuchokListMenu(button, puchok){
   if(!button || !puchok?.id) return;
@@ -6072,6 +6073,34 @@ async function addLinkItemsToCurrent(rawInput){
     isBusy = false;
   }
 }
+
+async function handleAddGeoPrompt(){
+  const url = prompt("Вставь ссылку Google Maps");
+  if(!url) return;
+
+  try{
+    const p = ensureCurrentPuchok();
+    if(!p) return;
+
+    const data = await geoParse(url);
+    const rowId = await resolveTargetRowForCreate(p, "link");
+
+    await createItemInRow(rowId, {
+      type: "geo",
+      title: "",
+      content: "",
+      meta: JSON.stringify({
+        embedUrl: data.embedUrl,
+        originalUrl: url
+      })
+    });
+
+    await loadPuchokWithEntries(currentPuchokId);
+  }catch(e){
+    alert("GEO ERROR: " + e.message);
+  }
+}
+
 
 
 async function addFileItemToSpecificRow(p, rowId, file){
