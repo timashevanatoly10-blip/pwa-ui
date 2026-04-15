@@ -5339,16 +5339,16 @@ function buildInlineRowContent(p, cached){
       const embedUrl = (it.meta && typeof it.meta === "object" ? (it.meta.embedUrl || "") : "").toString().trim();
       const originalUrl = (it.meta && typeof it.meta === "object" ? (it.meta.originalUrl || "") : "").toString().trim();
       const geoPreview = embedUrl
-        ? `<div style="height:168px;border-radius:14px;overflow:hidden;background:rgba(17,19,23,.06);">
+        ? `<div style="position:relative;overflow:hidden;border-radius:14px;min-height:240px;height:240px;background:rgba(17,19,23,.06);">
              <iframe
                src="${escapeHTML(embedUrl)}"
                loading="lazy"
                referrerpolicy="no-referrer-when-downgrade"
-               style="display:block;width:100%;height:100%;border:0;background:#f3f4f6;"
-               allowfullscreen>
+               allowfullscreen
+               style="width:100%;height:100%;display:block;border:0;pointer-events:auto;position:relative;z-index:1;background:#f3f4f6;">
              </iframe>
            </div>`
-        : `<div style="height:168px;border-radius:14px;overflow:hidden;background:rgba(17,19,23,.06);display:flex;align-items:center;justify-content:center;padding:12px;">
+        : `<div style="position:relative;overflow:hidden;border-radius:14px;min-height:240px;height:240px;background:rgba(17,19,23,.06);display:flex;align-items:center;justify-content:center;padding:12px;">
              <div class="itemDesc">Geo preview unavailable</div>
            </div>`;
       const openLinkHtml = originalUrl
@@ -5362,14 +5362,16 @@ function buildInlineRowContent(p, cached){
         <div class="itemText" style="min-width:0;padding-right:42px;">
           <div class="itemTitle">${escapeHTML(it.title || "Карта")}</div>
         </div>
-        <div class="rowTilePreviewHost" style="min-height:204px;display:flex;flex-direction:column;gap:10px;">
+        <div class="rowTilePreviewHost" style="min-height:276px;display:flex;flex-direction:column;gap:10px;">
           ${geoPreview}
           ${openLinkHtml}
         </div>
       `;
       const geoLink = card.querySelector('a[target="_blank"]');
       if(geoLink){
-        geoLink.addEventListener("click", (e)=> e.stopPropagation());
+        geoLink.addEventListener("click", (e)=>{
+          e.stopPropagation();
+        });
       }
     }else if(isPhotoTile){
       card.innerHTML = `
