@@ -99,6 +99,7 @@ const menuAddFile = document.getElementById("menuAddFile");
 const menuAddAudio = document.getElementById("menuAddAudio");
 const menuAddCode = document.getElementById("menuAddCode");
 const menuAddLink = document.getElementById("menuAddLink");
+let menuAddGeo = document.getElementById("menuAddGeo");
 let menuAddSubpuchok = document.getElementById("menuAddSubpuchok");
 const menuDeletePuchok = document.getElementById("menuDeletePuchok");
 
@@ -435,6 +436,32 @@ function bindMenuAddVideoButton(btn){
   });
 }
 
+function bindMenuAddGeoButton(btn){
+  if(!btn || btn.dataset.geoBound === "1") return;
+  btn.dataset.geoBound = "1";
+  btn.addEventListener("click", async (e)=>{
+    e.preventDefault();
+    e.stopPropagation();
+    closeAddMenu();
+    if(viewMode === "list"){
+      alert("Сначала открой пучок.");
+      return;
+    }
+    if(viewMode !== "puchok") return;
+    try{
+      const p = ensureCurrentPuchok();
+      if(!p) return;
+      const rowId = await createNewRowForType(p, "geo");
+      currentRowId = rowId;
+      expandRowInline(rowId);
+      await refreshRowAndKeepUI(rowId);
+    }catch(err){
+      addMsg("Ошибка создания geo row: " + (err?.message || err), "err");
+    }
+  });
+}
+
+
 function ensureAddMenuExtras(){
   if(!addMenu) return;
 
@@ -471,6 +498,24 @@ function ensureAddMenuExtras(){
   photoBtn.style.visibility = "visible";
   photoBtn.style.opacity = "1";
   bindMenuAddPhotoButton(photoBtn);
+
+  let geoBtn = document.getElementById("menuAddGeo");
+  if(!geoBtn){
+    geoBtn = document.createElement("button");
+    geoBtn.id = "menuAddGeo";
+    geoBtn.type = "button";
+    geoBtn.textContent = "Гео";
+    if(menuAddLink && menuAddLink.parentElement === addMenu) addMenu.insertBefore(geoBtn, menuAddLink);
+    else if(menuAddFile && menuAddFile.parentElement === addMenu) addMenu.insertBefore(geoBtn, menuAddFile);
+    else addMenu.appendChild(geoBtn);
+  }
+  menuAddGeo = geoBtn;
+  geoBtn.hidden = false;
+  geoBtn.disabled = false;
+  geoBtn.style.display = "";
+  geoBtn.style.visibility = "visible";
+  geoBtn.style.opacity = "1";
+  bindMenuAddGeoButton(geoBtn);
 
   if(!menuAddSubpuchok){
     const btn = document.createElement("button");
@@ -843,6 +888,7 @@ function typeLabel(it){
   if(it.type==="audio") return { text:"Голос", cls:"tagText tagAudio" };
   if(it.type==="code")  return { text:"Код", cls:"tagText tagCode" };
   if(it.type==="link")  return { text:"Ссылка", cls:"tagText tagLink" };
+  if(it.type==="geo")   return { text:"Карта", cls:"tagText tagLink" };
   return { text:"Текст", cls:"tagText" };
 }
 
@@ -853,6 +899,7 @@ function rowTypeLabel(type){
   if(t === "audio") return { text:"Аудио-ряд", cls:"tagText tagAudio", ico:"audio" };
   if(t === "code")  return { text:"Код-ряд", cls:"tagText tagCode", ico:"code" };
   if(t === "link")  return { text:"Ссылки-ряд", cls:"tagText tagLink", ico:"link" };
+  if(t === "geo")   return { text:"Гео-ряд", cls:"tagText tagLink", ico:"link" };
   if(t === "file")  return { text:"Файлы-ряд", cls:"tagText tagFile", ico:"file" };
   if(t === "text")  return { text:"Текст-ряд", cls:"tagText", ico:"text" };
   return { text: (type || "Ряд"), cls:"tagText", ico:"file" };
@@ -5257,7 +5304,7 @@ function buildInlineRowContent(p, cached){
     card.dataset.rowTileRowId = row.id;
     card.dataset.rowTileItemId = it.id;
     applyActiveTileStyles(card, activeCarouselRowId === row.id && activeCarouselItemId === it.id);
-    if(it.type !== "audio"){
+    if(it.type !== "audio" && it.type !== "geo"){
       card.addEventListener("click", () => openItemFromRow(row.id, it.id));
     }
 
@@ -5285,8 +5332,45 @@ function buildInlineRowContent(p, cached){
 
     const isPhotoTile = it.type === "image";
     const isAudioTile = it.type === "audio";
+    const isGeoTile = it.type === "geo";
     if(isAudioTile){
       buildAudioTileCard(card, row.id, it);
+    }else if(isGeoTile){
+      const embedUrl = (it.meta && typeof it.meta === "object" ? (it.meta.embedUrl || "") : "").toString().trim();
+      const originalUrl = (it.meta && typeof it.meta === "object" ? (it.meta.originalUrl || "") : "").toString().trim();
+      const geoPreview = embedUrl
+        ? `<div style="height:168px;border-radius:14px;overflow:hidden;background:rgba(17,19,23,.06);">
+             <iframe
+               src="${escapeHTML(embedUrl)}"
+               loading="lazy"
+               referrerpolicy="no-referrer-when-downgrade"
+               style="display:block;width:100%;height:100%;border:0;background:#f3f4f6;"
+               allowfullscreen>
+             </iframe>
+           </div>`
+        : `<div style="height:168px;border-radius:14px;overflow:hidden;background:rgba(17,19,23,.06);display:flex;align-items:center;justify-content:center;padding:12px;">
+             <div class="itemDesc">Geo preview unavailable</div>
+           </div>`;
+      const openLinkHtml = originalUrl
+        ? `<a href="${escapeHTML(originalUrl)}" target="_blank" rel="noopener noreferrer"
+             class="itemDesc"
+             style="display:inline-flex;align-items:center;gap:6px;text-decoration:none;color:#3566e8;width:max-content;">Открыть</a>`
+        : `<div class="itemDesc">—</div>`;
+
+      card.style.cursor = "default";
+      card.innerHTML = `
+        <div class="itemText" style="min-width:0;padding-right:42px;">
+          <div class="itemTitle">${escapeHTML(it.title || "Карта")}</div>
+        </div>
+        <div class="rowTilePreviewHost" style="min-height:204px;display:flex;flex-direction:column;gap:10px;">
+          ${geoPreview}
+          ${openLinkHtml}
+        </div>
+      `;
+      const geoLink = card.querySelector('a[target="_blank"]');
+      if(geoLink){
+        geoLink.addEventListener("click", (e)=> e.stopPropagation());
+      }
     }else if(isPhotoTile){
       card.innerHTML = `
         <div class="itemText" style="min-width:0;padding-right:42px;">
@@ -5373,6 +5457,29 @@ function buildInlineRowContent(p, cached){
         openAudioFilePickerForRow(row.id);
       });
     }
+  }else if((row.type || "").toLowerCase() === "geo"){
+    addCard.style.cursor = "pointer";
+    addCard.setAttribute("role", "button");
+    addCard.setAttribute("tabindex", "0");
+    addCard.innerHTML = `
+      <div style="width:56px;height:56px;border-radius:16px;display:flex;align-items:center;justify-content:center;background:rgba(17,19,23,.08);font-size:34px;line-height:1;">+</div>
+      <div class="itemText" style="align-items:center;text-align:center;">
+        <div class="itemTitle">Добавить карту</div>
+        <div class="itemDesc">Google Maps</div>
+      </div>
+    `;
+    addCard.addEventListener("click", async (e)=>{
+      e.preventDefault();
+      e.stopPropagation();
+      await handleAddGeoPrompt(row.id);
+    });
+    addCard.addEventListener("keydown", async (e)=>{
+      if(e.key === "Enter" || e.key === " "){
+        e.preventDefault();
+        e.stopPropagation();
+        await handleAddGeoPrompt(row.id);
+      }
+    });
   }else{
     addCard.style.cursor = "pointer";
     addCard.setAttribute("role", "button");
@@ -5608,7 +5715,7 @@ function getCurrentRowType(){
 }
 
 function isRowAddTileSupported(rowType){
-  return ["photo","video","text","code","file","link","audio"].includes((rowType || "").toLowerCase());
+  return ["photo","video","text","code","file","link","audio","geo"].includes((rowType || "").toLowerCase());
 }
 
 function openFilePickerForRow(rowId){
@@ -5856,6 +5963,11 @@ async function addItemViaRowTile(rowId){
     return;
   }
 
+  if(rowType === "geo"){
+    await handleAddGeoPrompt(rowId);
+    return;
+  }
+
   if(rowType === "audio"){
     try{
       const it = await createAudioItemInSpecificRow(rowId);
@@ -6074,28 +6186,28 @@ async function addLinkItemsToCurrent(rawInput){
   }
 }
 
-async function handleAddGeoPrompt(){
+async function handleAddGeoPrompt(rowId){
+  if(!rowId) return;
+
   const url = prompt("Вставь ссылку Google Maps");
   if(!url) return;
 
   try{
-    const p = ensureCurrentPuchok();
-    if(!p) return;
-
     const data = await geoParse(url);
-    const rowId = await resolveTargetRowForCreate(p, "link");
 
     await createItemInRow(rowId, {
       type: "geo",
       title: "",
       content: "",
-      meta: JSON.stringify({
+      meta: {
         embedUrl: data.embedUrl,
         originalUrl: url
-      })
+      }
     });
 
-    await loadPuchokWithEntries(currentPuchokId);
+    expandRowInline(rowId);
+    viewMode = "puchok";
+    await refreshRowAndKeepUI(rowId);
   }catch(e){
     alert("GEO ERROR: " + e.message);
   }
