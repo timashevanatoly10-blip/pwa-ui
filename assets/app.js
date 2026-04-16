@@ -5336,8 +5336,20 @@ function buildInlineRowContent(p, cached){
     if(isAudioTile){
       buildAudioTileCard(card, row.id, it);
     }else if(isGeoTile){
-      const embedUrl = (it.meta && typeof it.meta === "object" ? (it.meta.embedUrl || "") : "").toString().trim();
-      const originalUrl = (it.meta && typeof it.meta === "object" ? (it.meta.originalUrl || "") : "").toString().trim();
+      const geoMeta = (it.meta && typeof it.meta === "object") ? it.meta : {};
+      const embedUrl = (geoMeta.embedUrl || "").toString().trim();
+      const originalUrl = (geoMeta.originalUrl || "").toString().trim();
+      const geoType = (geoMeta.geoType || "place").toString().trim().toLowerCase() || "place";
+      const geoLabel =
+        geoType === "directions" ? "Маршрут" :
+        geoType === "streetview" ? "Street View" :
+        "Карта";
+      const geoTitle =
+        (it.title || "").toString().trim() ||
+        (geoType === "directions" ? "Маршрут" :
+         geoType === "streetview" ? "Street View" :
+         "Карта");
+
       const geoPreview = embedUrl
         ? `<div style="position:relative;overflow:hidden;border-radius:14px;min-height:240px;height:240px;background:rgba(17,19,23,.06);">
              <iframe
@@ -5359,8 +5371,9 @@ function buildInlineRowContent(p, cached){
 
       card.style.cursor = "default";
       card.innerHTML = `
-        <div class="itemText" style="min-width:0;padding-right:42px;">
-          <div class="itemTitle">${escapeHTML(it.title || "Карта")}</div>
+        <div class="itemText" style="min-width:0;padding-right:42px;display:flex;flex-direction:column;gap:4px;">
+          <div class="itemTitle">${escapeHTML(geoTitle)}</div>
+          <div class="itemDesc">${escapeHTML(geoLabel)}</div>
         </div>
         <div class="rowTilePreviewHost" style="min-height:276px;display:flex;flex-direction:column;gap:10px;">
           ${geoPreview}
@@ -6196,14 +6209,23 @@ async function handleAddGeoPrompt(rowId){
 
   try{
     const data = await geoParse(url);
+    const geoType = (data?.type || data?.geoType || "place").toString().trim().toLowerCase() || "place";
+    const defaultTitle =
+      geoType === "directions" ? "Маршрут" :
+      geoType === "streetview" ? "Street View" :
+      "";
 
     await createItemInRow(rowId, {
       type: "geo",
-      title: "",
+      title: defaultTitle,
       content: "",
       meta: {
         embedUrl: data.embedUrl,
-        originalUrl: url
+        originalUrl: url,
+        geoType,
+        query: (data?.query || "").toString(),
+        lat: (data?.lat || "").toString(),
+        lng: (data?.lng || "").toString()
       }
     });
 
