@@ -854,6 +854,14 @@ function urlTitle(u){
     return t.length > 60 ? t.slice(0,60) + "…" : (t || "Ссылка");
   }
 }
+function getItemOpenUrl(item){
+  return (
+    item?.meta?.sourceUrl ||
+    item?.url ||
+    item?.meta?.embedUrl ||
+    ""
+  );
+}
 
 function icoSVG(kind){
   const common = `class="ico" viewBox="0 0 24 24" fill="none"`;
@@ -5344,6 +5352,7 @@ function buildInlineRowContent(p, cached){
       const geoMeta = (it.meta && typeof it.meta === "object") ? it.meta : {};
       const embedUrl = (geoMeta.embedUrl || "").toString().trim();
       const originalUrl = (geoMeta.originalUrl || "").toString().trim();
+      const openUrl = getItemOpenUrl(it);
       const geoType = (geoMeta.geoType || "place").toString().trim().toLowerCase() || "place";
       const geoLabel =
         geoType === "directions" ? "Маршрут" :
@@ -5368,8 +5377,8 @@ function buildInlineRowContent(p, cached){
         : `<div style="position:relative;overflow:hidden;border-radius:14px;min-height:240px;height:240px;background:rgba(17,19,23,.06);display:flex;align-items:center;justify-content:center;padding:12px;">
              <div class="itemDesc">Geo preview unavailable</div>
            </div>`;
-      const openLinkHtml = originalUrl
-        ? `<a href="${escapeHTML(originalUrl)}" target="_blank" rel="noopener noreferrer"
+      const openLinkHtml = openUrl
+        ? `<a href="${escapeHTML(openUrl)}" target="_blank" rel="noopener noreferrer"
              class="itemDesc"
              style="display:inline-flex;align-items:center;gap:6px;text-decoration:none;color:#3566e8;width:max-content;">Открыть</a>`
         : `<div class="itemDesc">—</div>`;
@@ -6234,6 +6243,7 @@ async function handleAddGeoPrompt(rowId, provider = "google"){
       title: defaultTitle,
       content: "",
       meta: {
+        sourceUrl: (data?.sourceUrl || "").toString(),
         embedUrl: data.embedUrl,
         originalUrl: url,
         geoType,
@@ -6938,7 +6948,7 @@ async function openItemFromRow(rowId, itemId){
 
   if(it.type === "link"){
     modalHint.textContent = "Ссылка хранится в облаке (D1).";
-    const url = it.url || "";
+    const url = getItemOpenUrl(it);
     modalViewer.innerHTML = `
       <div class="fileRow">
         <div class="fileMeta">
