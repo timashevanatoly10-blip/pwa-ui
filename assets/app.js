@@ -1770,13 +1770,18 @@ async function apiJson(path, opts){
   }
   return data;
 }
-async function geoParse(url){
+async function geoParse(url, provider = "google"){
   const cleanUrl = (url || "").toString().trim();
   if(!cleanUrl) throw new Error("GEO_URL_REQUIRED");
 
+  const cleanProvider = (provider || "google").toString().trim().toLowerCase() || "google";
+
   const data = await apiJson(geoParsePath(), {
     method: "POST",
-    json: { url: cleanUrl }
+    json: {
+      url: cleanUrl,
+      provider: cleanProvider
+    }
   });
 
   return data;
@@ -5473,28 +5478,35 @@ function buildInlineRowContent(p, cached){
       });
     }
   }else if((row.type || "").toLowerCase() === "geo"){
-    addCard.style.cursor = "pointer";
-    addCard.setAttribute("role", "button");
-    addCard.setAttribute("tabindex", "0");
+    addCard.style.cursor = "default";
+    addCard.removeAttribute("role");
+    addCard.removeAttribute("tabindex");
     addCard.innerHTML = `
-      <div style="width:56px;height:56px;border-radius:16px;display:flex;align-items:center;justify-content:center;background:rgba(17,19,23,.08);font-size:34px;line-height:1;">+</div>
       <div class="itemText" style="align-items:center;text-align:center;">
         <div class="itemTitle">Добавить карту</div>
-        <div class="itemDesc">Google Maps</div>
+        <div class="itemDesc">Выбери провайдера</div>
+      </div>
+      <div style="display:flex;align-items:center;justify-content:center;gap:10px;flex-wrap:wrap;width:100%;">
+        <button type="button" class="btnGhost" data-add-geo-google style="min-width:96px;">+ Google</button>
+        <button type="button" class="btnGhost" data-add-geo-yandex style="min-width:96px;">+ Yandex</button>
       </div>
     `;
-    addCard.addEventListener("click", async (e)=>{
-      e.preventDefault();
-      e.stopPropagation();
-      await handleAddGeoPrompt(row.id);
-    });
-    addCard.addEventListener("keydown", async (e)=>{
-      if(e.key === "Enter" || e.key === " "){
+    const addGoogleBtn = addCard.querySelector("[data-add-geo-google]");
+    const addYandexBtn = addCard.querySelector("[data-add-geo-yandex]");
+    if(addGoogleBtn){
+      addGoogleBtn.addEventListener("click", async (e)=>{
         e.preventDefault();
         e.stopPropagation();
-        await handleAddGeoPrompt(row.id);
-      }
-    });
+        await handleAddGeoPrompt(row.id, "google");
+      });
+    }
+    if(addYandexBtn){
+      addYandexBtn.addEventListener("click", async (e)=>{
+        e.preventDefault();
+        e.stopPropagation();
+        await handleAddGeoPrompt(row.id, "yandex");
+      });
+    }
   }else{
     addCard.style.cursor = "pointer";
     addCard.setAttribute("role", "button");
@@ -6201,14 +6213,16 @@ async function addLinkItemsToCurrent(rawInput){
   }
 }
 
-async function handleAddGeoPrompt(rowId){
+async function handleAddGeoPrompt(rowId, provider = "google"){
   if(!rowId) return;
 
-  const url = prompt("Вставь ссылку Google Maps");
+  const cleanProvider = (provider || "google").toString().trim().toLowerCase() || "google";
+  const promptLabel = cleanProvider === "yandex" ? "Вставь ссылку Yandex Maps" : "Вставь ссылку Google Maps";
+  const url = prompt(promptLabel);
   if(!url) return;
 
   try{
-    const data = await geoParse(url);
+    const data = await geoParse(url, cleanProvider);
     const geoType = (data?.type || data?.geoType || "place").toString().trim().toLowerCase() || "place";
     const defaultTitle =
       geoType === "directions" ? "Маршрут" :
