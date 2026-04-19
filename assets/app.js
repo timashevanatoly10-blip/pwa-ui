@@ -721,6 +721,12 @@ let audioFilePicker = null;
 let activeAudioFileTargetRowId = null;
 let activeAudioFileTargetPuchokId = null;
 
+let isPublicMode = false;
+let publicLinkId = null;
+let publicRowData = null;
+let publicRowItems = [];
+let publicModeError = "";
+
 // In-memory store:
 // - db.puchki: root containers list + cached containers
 // - db.rows: cached rows
@@ -1673,6 +1679,201 @@ function finishXfer({ ok=true, title=null, sub=null, autoHideMs=900 } = {}){
 /** ===========================
  *  XHR HELPERS (progress for uploads)
  *  =========================== */
+function parsePublicRoute(pathname){
+  const path = (pathname || "").toString().trim();
+  const match = path.match(/(?:^|\/)public\/([^/?#]+)/i);
+  if(!match) return { isPublic:false, publicId:"" };
+  try{
+    return {
+      isPublic: true,
+      publicId: decodeURIComponent(match[1] || "").trim()
+    };
+  }catch{
+    return {
+      isPublic: true,
+      publicId: (match[1] || "").trim()
+    };
+  }
+}
+
+function syncPublicModeFromLocation(){
+  const parsed = parsePublicRoute(window.location.pathname || "");
+  isPublicMode = !!parsed.isPublic;
+  publicLinkId = parsed.publicId || null;
+  return parsed;
+}
+
+function publicRowFetch(path, { method="GET", headers={}, body=null } = {}){
+  const url = WORKER_URL + path;
+  return fetch(url, {
+    method,
+    headers: {
+      ...headers,
+    },
+    body: body != null ? body : undefined,
+  });
+}
+
+async function publicRowJson(path, opts){
+  const resp = await publicRowFetch(path, opts);
+  const raw = await resp.text().catch(()=>"");
+  let data = {};
+  try{ data = JSON.parse(raw); }catch{}
+  if(!resp.ok || !data || data.ok === false){
+    const msg = (data && data.error) ? data.error : (raw || `HTTP ${resp.status}`);
+    throw new Error(msg);
+  }
+  return data;
+}
+
+function normalizePublicRowPayload(data, publicId){
+  const sourceRow = data?.row || data?.publicRow || data?.publishedRow || data?.result?.row || data?.data?.row || null;
+  const sourceItems = data?.items || data?.row_items || data?.rowItems || data?.publicItems || data?.result?.items || data?.data?.items || [];
+  const sourceLink = data?.publicLink || data?.public_link || data?.link || data?.result?.publicLink || data?.data?.publicLink || null;
+
+  const row = sourceRow ? mapRowRow(sourceRow) : {
+    id: publicId,
+    puchokId: null,
+    type: (sourceLink?.row_type || sourceLink?.type || data?.type || "text"),
+    title: sourceLink?.title || data?.title || "Public row",
+    createdAt: sourceLink?.created_at || data?.created_at || nowISO(),
+    updatedAt: sourceLink?.updated_at || data?.updated_at || nowISO(),
+  };
+
+  const items = Array.isArray(sourceItems) ? sourceItems.map(mapItemRow).filter(Boolean) : [];
+
+  if(sourceLink?.row_title && !row.title) row.title = sourceLink.row_title;
+  if(sourceLink?.row_type && !row.type) row.type = sourceLink.row_type;
+  if(!row.id) row.id = publicId;
+  if(!row.type) row.type = "text";
+  if(!row.title) row.title = "Public row";
+
+  return {
+    row,
+    items,
+    publicLink: sourceLink || null,
+    raw: data || null,
+  };
+}
+
+async function loadPublicRow(publicId){
+  if(!publicId) throw new Error("PUBLIC_ID_REQUIRED");
+  const data = await publicRowJson(`/public/${encodeURIComponent(publicId)}`, { method:"GET" });
+  const normalized = normalizePublicRowPayload(data, publicId);
+
+  publicRowData = normalized.row;
+  publicRowItems = normalized.items;
+  publicModeError = "";
+
+  db.rows[normalized.row.id] = {
+    row: normalized.row,
+    items: normalized.items,
+    updatedAt: normalized.row.updatedAt || nowISO(),
+  };
+
+  currentPuchokId = null;
+  currentRowId = normalized.row.id;
+  expandedRowIds.clear();
+  expandedRowIds.add(normalized.row.id);
+  return normalized;
+}
+
+function isReadOnlyRow(rowId){
+  return !!(isPublicMode && publicRowData && rowId === publicRowData.id);
+}
+
+function setPublicModeChrome(){
+  closeAddMenu();
+  if(backBtn) backBtn.style.display = "none";
+  if(newPuchokBtn) newPuchokBtn.style.display = "none";
+  if(editPuchokBtn) editPuchokBtn.style.display = "none";
+  if(addMenuBtn) addMenuBtn.style.display = "none";
+  if(refreshBtn) refreshBtn.style.display = "none";
+  if(deletePuchokHeaderBtn) deletePuchokHeaderBtn.style.display = "none";
+  if(addMenu) addMenu.style.display = "none";
+  if(chatDock) chatDock.style.display = "none";
+}
+
+function setHeaderForPublicMode(){
+  setPublicModeChrome();
+  headTitle.textContent = "ПУЧКИ";
+  const rowTitle = (publicRowData?.title || "Public row").toString().trim();
+  headCrumb.textContent = rowTitle ? `Public • ${rowTitle}` : "Public";
+}
+
+function renderPublicMode(){
+  setHeaderForPublicMode();
+  mainPanel.innerHTML = "";
+
+  const wrap = document.createElement("div");
+  wrap.className = "list";
+
+  if(publicModeError){
+    const empty = document.createElement("div");
+    empty.className = "empty";
+    empty.textContent = publicModeError;
+    wrap.appendChild(empty);
+    mainPanel.appendChild(wrap);
+    return;
+  }
+
+  if(!publicRowData){
+    const empty = document.createElement("div");
+    empty.className = "empty";
+    empty.textContent = "Публичный ряд не найден.";
+    wrap.appendChild(empty);
+    mainPanel.appendChild(wrap);
+    return;
+  }
+
+  const pseudoPuchok = { id: "public", title: "Public", entries: [] };
+  const rt = rowTypeLabel(publicRowData.type || "row");
+
+  const block = document.createElement("div");
+  block.className = "rowInlineBlock";
+  block.dataset.rowInlineId = publicRowData.id;
+  block.style.display = "flex";
+  block.style.flexDirection = "column";
+  block.style.gap = "12px";
+
+  const header = document.createElement("div");
+  header.className = "itemRow";
+
+  const left = document.createElement("div");
+  left.className = "itemLeft";
+
+  const thumb = document.createElement("div");
+  thumb.className = "thumb";
+  thumb.innerHTML = icoSVG(rt.ico);
+
+  const textWrap = document.createElement("div");
+  textWrap.className = "itemText";
+
+  const title = document.createElement("div");
+  title.className = "itemTitle";
+  title.textContent = publicRowData.title || rt.text;
+
+  const desc = document.createElement("div");
+  desc.className = "itemDesc";
+  desc.textContent = `Public row • элементов: ${(publicRowItems || []).length}`;
+
+  const right = document.createElement("div");
+  right.className = rt.cls;
+  right.textContent = rt.text.replace("-ряд", "");
+
+  textWrap.appendChild(title);
+  textWrap.appendChild(desc);
+  left.appendChild(thumb);
+  left.appendChild(textWrap);
+  header.appendChild(left);
+  header.appendChild(right);
+
+  block.appendChild(header);
+  block.appendChild(buildInlineRowContent(pseudoPuchok, db.rows[publicRowData.id]));
+  wrap.appendChild(block);
+  mainPanel.appendChild(wrap);
+}
+
 function xhrRequest({ url, method="GET", headers={}, body=null, responseType="" , onUploadProgress=null, onDownloadProgress=null } = {}){
   return new Promise((resolve, reject)=>{
     const xhr = new XMLHttpRequest();
@@ -1734,8 +1935,14 @@ function xhrRequest({ url, method="GET", headers={}, body=null, responseType="" 
  *  =========================== */
 async function apiFetch(path, { method="GET", json=null, headers={}, retryAuth=true, body=null } = {}){
   const url = WORKER_URL + path;
+  const cleanMethod = (method || "GET").toString().toUpperCase();
+  const isPublicBlobRead = !!(
+    isPublicMode &&
+    cleanMethod === "GET" &&
+    /^\/items\/[^/]+\/blob(?:\?|$)/.test(path || "")
+  );
 
-  const needsToken = (
+  const needsToken = !isPublicBlobRead && (
     path === "/chat" ||
     path.startsWith("/db/") ||
     path.startsWith("/puchki") ||
@@ -2387,6 +2594,13 @@ function render(){
   ensureAddMenuExtras();
   mainPanel.innerHTML = "";
   window.currentPuchokId = currentPuchokId;
+
+  if(isPublicMode){
+    renderPublicMode();
+    return;
+  }
+
+  if(chatDock) chatDock.style.display = "";
 
   if(viewMode === "list"){
     setHeaderForList();
@@ -3633,6 +3847,7 @@ function renderAudioRow(p, e){
   const left = header.firstElementChild;
   const right = header.lastElementChild;
   const expanded = isRowExpanded(e.refId);
+  const rowReadOnly = isReadOnlyRow(e.refId);
 
   header.style.display = "flex";
   header.style.flexDirection = "column";
@@ -3839,7 +4054,7 @@ function renderAudioRow(p, e){
       }
     });
 
-    menuBtn.addEventListener("click", (ev)=>{
+    if(!rowReadOnly) menuBtn.addEventListener("click", (ev)=>{
       ev.preventDefault();
       ev.stopPropagation();
       openTileMenu(menuBtn, [
@@ -3968,7 +4183,7 @@ function renderAudioRow(p, e){
 
     right.appendChild(playBtn);
     right.appendChild(counterEl);
-    right.appendChild(menuBtn);
+    if(!rowReadOnly) right.appendChild(menuBtn);
 
     audioHeaderTransport.appendChild(backBtn);
     audioHeaderTransport.appendChild(currentTimeEl);
@@ -4034,6 +4249,7 @@ function renderPuchokInside(p){
         tag.className = "tagText";
         tag.textContent = "Папка";
 
+        const rowReadOnly = isPublicMode;
         const delBtn = document.createElement("button");
         delBtn.className = "btnGhost";
         delBtn.type = "button";
@@ -4047,7 +4263,7 @@ function renderPuchokInside(p){
         });
 
         right.appendChild(tag);
-        right.appendChild(delBtn);
+        if(!rowReadOnly) right.appendChild(delBtn);
 
         textWrap.appendChild(title);
         textWrap.appendChild(desc);
@@ -5084,7 +5300,8 @@ function ensureAudioRangeStyles(){
   document.head.appendChild(style);
 }
 
-function buildAudioTileCard(card, rowId, it){
+function buildAudioTileCard(card, rowId, it, options = {}){
+  const readOnly = !!options.readOnly;
   ensureAudioRangeStyles();
   card.style.cursor = "default";
   const kind = getAudioItemKind(it);
@@ -5094,9 +5311,10 @@ function buildAudioTileCard(card, rowId, it){
     ? getAudioFileMetaSummary(it)
     : `Сегментов: ${getAudioSegments(it).length}`;
 
-  card.innerHTML = isFileKind ? `
+  const audioCardMode = (isFileKind || readOnly) ? "readonly" : "voice";
+  card.innerHTML = audioCardMode === "readonly" ? `
     <div style="display:flex;flex-direction:column;gap:10px;width:100%;min-width:0;max-width:100%;box-sizing:border-box;overflow:hidden;">
-      <div style="display:flex;flex-direction:column;gap:2px;width:100%;min-width:0;max-width:100%;box-sizing:border-box;overflow:hidden;padding-right:42px;">
+      <div style="display:flex;flex-direction:column;gap:2px;width:100%;min-width:0;max-width:100%;box-sizing:border-box;overflow:hidden;padding-right:${readOnly ? "0" : "42px"};">
         <div class="itemTitle" style="display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;max-width:100%;">${escapeHTML(it.title || "Audio Tile")}</div>
         <div class="itemDesc" data-audio-seg-count style="display:block;min-width:0;max-width:100%;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;">${escapeHTML(metaInfoText)}</div>
       </div>
@@ -5179,9 +5397,10 @@ function buildAudioTileCard(card, rowId, it){
       </div>
     </div>
   `;
-
-  const menuBtn = createTileMenuButton(createDefaultTileMenuActions(rowId, it.id));
-  card.appendChild(menuBtn);
+  if(!readOnly){
+    const menuBtn = createTileMenuButton(createDefaultTileMenuActions(rowId, it.id));
+    card.appendChild(menuBtn);
+  }
 
   const btnRecord = card.querySelector("[data-audio-record]");
   const btnPlayToggle = card.querySelector("[data-audio-play-toggle]");
@@ -5284,6 +5503,7 @@ function buildAudioTileCard(card, rowId, it){
 function buildInlineRowContent(p, cached){
   const row = cached.row;
   const items = cached.items || [];
+  const rowReadOnly = isReadOnlyRow(row.id);
 
   const holder = document.createElement("div");
   holder.className = "rowInlineExpanded";
@@ -5347,7 +5567,7 @@ function buildInlineRowContent(p, cached){
     const isAudioTile = it.type === "audio";
     const isGeoTile = it.type === "geo";
     if(isAudioTile){
-      buildAudioTileCard(card, row.id, it);
+      buildAudioTileCard(card, row.id, it, { readOnly: rowReadOnly });
     }else if(isGeoTile){
       const geoMeta = (it.meta && typeof it.meta === "object") ? it.meta : {};
       const embedUrl = (geoMeta.embedUrl || "").toString().trim();
@@ -5428,7 +5648,7 @@ function buildInlineRowContent(p, cached){
       mountImageTilePreview(previewHost, it);
     }
 
-    if(!isAudioTile){
+    if(!isAudioTile && !rowReadOnly){
       const menuBtn = createTileMenuButton(createDefaultTileMenuActions(row.id, it.id));
       card.appendChild(menuBtn);
     }
@@ -5436,6 +5656,7 @@ function buildInlineRowContent(p, cached){
     rail.appendChild(card);
   }
 
+  if(!rowReadOnly){
   const addCard = document.createElement("div");
   addCard.className = "card";
   addCard.style.minWidth = "260px";
@@ -5535,6 +5756,7 @@ function buildInlineRowContent(p, cached){
     });
   }
   rail.appendChild(addCard);
+  }
 
   holder.appendChild(rail);
   setTimeout(()=> updateActiveRowTileUI(row.id), 0);
@@ -5545,6 +5767,7 @@ function buildInlineRowContent(p, cached){
  *  NAV
  *  =========================== */
 async function openPuchok(id){
+  if(isPublicMode) return;
   if(isBusy) return;
   isBusy = true;
   try{
@@ -5569,6 +5792,7 @@ async function openPuchok(id){
 
 async function openRow(rowId){
   if(isBusy || !rowId) return;
+  if(isPublicMode && publicRowData && rowId !== publicRowData.id) return;
   closeAddMenu();
 
   if(isRowExpanded(rowId)){
@@ -5592,6 +5816,7 @@ async function openRow(rowId){
 }
 
 function goBack(){
+  if(isPublicMode) return;
   closeAddMenu();
   closeCameraCaptureModal();
   closeVideoCaptureModal();
@@ -5611,7 +5836,7 @@ function goBack(){
  *  CRUD: Puchok (cloud)
  *  =========================== */
 async function createPuchok(){
-  if(isBusy) return;
+  if(isPublicMode || isBusy) return;
   const name = prompt("Название пучка:", "Новый пучок");
   if(name === null) return;
 
@@ -6910,7 +7135,7 @@ async function openItemFromRow(rowId, itemId){
   modalHint.textContent = "";
   modalViewer.innerHTML = "";
 
-  modalDelete.style.display = "";
+  modalDelete.style.display = isPublicMode ? "none" : "";
   modalSave.style.display = "none";
   modalCopy.style.display = "none";
   modalTextarea.classList.remove("codeTextarea");
@@ -6920,8 +7145,9 @@ async function openItemFromRow(rowId, itemId){
     modalTextarea.style.display = "block";
     modalViewer.style.display = "none";
     modalTextarea.value = it.content || "";
-    modalSave.style.display = "";
-    modalHint.textContent = "Текст хранится в облаке (D1).";
+    modalTextarea.readOnly = !!isPublicMode;
+    modalSave.style.display = isPublicMode ? "none" : "";
+    modalHint.textContent = isPublicMode ? "Public read-only viewer." : "Текст хранится в облаке (D1).";
     modalWrap.style.display = "flex";
     renderModalNav(rowId, itemId);
     setTimeout(()=> modalTextarea.focus(), 50);
@@ -6933,9 +7159,10 @@ async function openItemFromRow(rowId, itemId){
     modalViewer.style.display = "none";
     modalTextarea.value = it.content || "";
     modalTextarea.classList.add("codeTextarea");
-    modalSave.style.display = "";
+    modalTextarea.readOnly = !!isPublicMode;
+    modalSave.style.display = isPublicMode ? "none" : "";
     modalCopy.style.display = "";
-    modalHint.textContent = "Код хранится в облаке (D1).";
+    modalHint.textContent = isPublicMode ? "Public read-only viewer." : "Код хранится в облаке (D1).";
     modalWrap.style.display = "flex";
     renderModalNav(rowId, itemId);
     setTimeout(()=> modalTextarea.focus(), 50);
@@ -7052,6 +7279,7 @@ async function openItemFromRow(rowId, itemId){
  *  MODAL SAVE/DELETE/COPY
  *  =========================== */
 async function saveModal(){
+  if(isPublicMode) return;
   if(viewMode !== "row" || !currentRowId) return;
   const pack = db.rows[currentRowId];
   if(!pack) return;
@@ -7132,6 +7360,7 @@ async function copyModal(){
 }
 
 async function deleteModal(){
+  if(isPublicMode) return;
   if(viewMode !== "row" || !currentRowId) return;
   const pack = db.rows[currentRowId];
   if(!pack) return;
@@ -7631,6 +7860,21 @@ window.addEventListener("scroll", ()=>{
  *  =========================== */
 (async function init(){
   ensureAddMenuExtras();
+  syncPublicModeFromLocation();
+
+  if(isPublicMode){
+    viewMode = "public";
+    currentPuchokId = null;
+    currentRowId = null;
+    try{
+      await loadPublicRow(publicLinkId);
+    }catch(e){
+      publicModeError = "Ошибка загрузки public row: " + (e?.message || e);
+    }
+    render();
+    return;
+  }
+
   try{
     await loadPuchkiList();
   }catch(e){
