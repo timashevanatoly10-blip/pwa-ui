@@ -1782,6 +1782,116 @@ function isReadOnlyRow(rowId){
   return !!(isPublicMode && publicRowData && rowId === publicRowData.id);
 }
 
+function getAbsolutePublicUrl(url, publicId = ""){
+  const raw = (url || "").toString().trim();
+  if(raw){
+    if(/^https?:\/\//i.test(raw)) return raw;
+    try{
+      return new URL(raw, window.location.origin).toString();
+    }catch{}
+    return raw;
+  }
+  if(publicId){
+    try{
+      return new URL(`/public/${encodeURIComponent(publicId)}`, window.location.origin).toString();
+    }catch{}
+    return `/public/${encodeURIComponent(publicId)}`;
+  }
+  return "";
+}
+
+async function createPublicRowLink(rowId){
+  if(!rowId) throw new Error("ROW_ID_REQUIRED");
+  const data = await apiJson(`/public-links`, {
+    method:"POST",
+    json:{
+      target_type: "row",
+      target_id: rowId,
+    }
+  });
+
+  const id = (data?.id || data?.publicLink?.id || data?.public_link?.id || "").toString().trim();
+  const url = getAbsolutePublicUrl(
+    data?.url || data?.publicLink?.url || data?.public_link?.url || "",
+    id
+  );
+
+  return {
+    ...data,
+    id,
+    url,
+  };
+}
+
+async function presentPublicRowLink(linkData){
+  const url = getAbsolutePublicUrl(linkData?.url || "", linkData?.id || "");
+  if(!url) throw new Error("PUBLIC_URL_MISSING");
+
+  try{
+    if(navigator.clipboard && typeof navigator.clipboard.writeText === "function"){
+      await navigator.clipboard.writeText(url);
+      alert("Public link создан и скопирован");
+      return url;
+    }
+  }catch{}
+
+  prompt("Скопируй ссылку", url);
+  return url;
+}
+
+function canShowPublicLinkButton(rowId){
+  return !!rowId && !isPublicMode && !isReadOnlyRow(rowId);
+}
+
+function createPublicLinkButton(rowId){
+  if(!canShowPublicLinkButton(rowId)) return null;
+
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "btnGhost";
+  btn.textContent = "Public Link";
+  btn.title = "Создать public link";
+  btn.style.flex = "0 0 auto";
+  btn.style.whiteSpace = "nowrap";
+
+  btn.addEventListener("click", async (ev)=>{
+    ev.preventDefault();
+    ev.stopPropagation();
+    try{
+      const linkData = await createPublicRowLink(rowId);
+      await presentPublicRowLink(linkData);
+    }catch(err){
+      addMsg("Ошибка создания public link: " + (err?.message || err), "err");
+      alert("Ошибка создания public link: " + (err?.message || err));
+    }
+  });
+
+  return btn;
+}
+
+function createRowHeaderRightWrap(rowId, tagText, tagClassName = "tagText"){
+  const rightWrap = document.createElement("div");
+  rightWrap.className = "rowHeaderRightWrap";
+  rightWrap.style.display = "flex";
+  rightWrap.style.alignItems = "center";
+  rightWrap.style.justifyContent = "flex-end";
+  rightWrap.style.gap = "8px";
+  rightWrap.style.flex = "0 0 auto";
+  rightWrap.style.minWidth = "0";
+  rightWrap.style.flexWrap = "nowrap";
+
+  const tag = document.createElement("div");
+  tag.className = tagClassName || "tagText";
+  tag.textContent = (tagText || "").toString().trim();
+  tag.dataset.rowTypeTag = "1";
+  rightWrap.appendChild(tag);
+
+  const publicBtn = createPublicLinkButton(rowId);
+  if(publicBtn) rightWrap.appendChild(publicBtn);
+
+  return rightWrap;
+}
+
 function setPublicModeChrome(){
   closeAddMenu();
   if(backBtn) backBtn.style.display = "none";
@@ -3711,9 +3821,7 @@ function renderStandardRowEntry(p, e){
     desc.textContent = expanded ? "Загружаю ряд…" : "Нажми, чтобы раскрыть";
   }
 
-  const right = document.createElement("div");
-  right.className = rt.cls;
-  right.textContent = expanded ? "Свернуть" : rt.text.replace("-ряд","");
+  const right = createRowHeaderRightWrap(e.refId, rt.text.replace("-ряд",""), rt.cls);
 
   textWrap.appendChild(title);
   textWrap.appendChild(desc);
@@ -3749,6 +3857,7 @@ function renderPhotoRow(p, e){
   if(right){
     right.style.display = "flex";
     right.style.alignItems = "center";
+    right.style.justifyContent = "flex-end";
     right.style.gap = "8px";
 
     const rowExportBtns = document.createElement("div");
@@ -3806,6 +3915,7 @@ function renderVideoRow(p, e){
   if(right){
     right.style.display = "flex";
     right.style.alignItems = "center";
+    right.style.justifyContent = "flex-end";
     right.style.gap = "8px";
 
     const rowExportBtns = document.createElement("div");
@@ -4012,6 +4122,12 @@ function renderAudioRow(p, e){
     playBtn.style.minWidth = "32px";
     playBtn.style.padding = "6px 10px";
 
+    const publicLinkBtn = createPublicLinkButton(e.refId);
+    if(publicLinkBtn){
+      publicLinkBtn.style.minWidth = "auto";
+      publicLinkBtn.style.padding = "6px 10px";
+    }
+
     const menuBtn = document.createElement("button");
     menuBtn.className = "btnGhost";
     menuBtn.type = "button";
@@ -4183,6 +4299,7 @@ function renderAudioRow(p, e){
 
     right.appendChild(playBtn);
     right.appendChild(counterEl);
+    if(publicLinkBtn) right.appendChild(publicLinkBtn);
     if(!rowReadOnly) right.appendChild(menuBtn);
 
     audioHeaderTransport.appendChild(backBtn);
