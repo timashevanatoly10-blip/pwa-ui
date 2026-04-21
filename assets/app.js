@@ -1835,6 +1835,28 @@ async function presentPublicRowLink(linkData){
     }
   }catch{}
 
+  try{
+    const ta = document.createElement("textarea");
+    ta.value = url;
+    ta.setAttribute("readonly", "");
+    ta.style.position = "fixed";
+    ta.style.left = "-9999px";
+    ta.style.top = "0";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.select();
+    ta.setSelectionRange(0, url.length);
+
+    const copied = document.execCommand("copy");
+    ta.remove();
+
+    if(copied){
+      alert("Public link создан и скопирован");
+      return url;
+    }
+  }catch{}
+
   prompt("Скопируй ссылку", url);
   return url;
 }
