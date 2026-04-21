@@ -1823,6 +1823,161 @@ async function createPublicRowLink(rowId){
   };
 }
 
+function showPublicLinkDialog(url){
+  const value = (url || "").toString();
+  if(!value) return null;
+
+  const prev = document.getElementById("publicLinkDialogOverlay");
+  if(prev){
+    try{ prev.remove(); }catch{}
+  }
+
+  const overlay = document.createElement("div");
+  overlay.id = "publicLinkDialogOverlay";
+  overlay.style.position = "fixed";
+  overlay.style.inset = "0";
+  overlay.style.zIndex = "160000";
+  overlay.style.display = "flex";
+  overlay.style.alignItems = "center";
+  overlay.style.justifyContent = "center";
+  overlay.style.padding = "20px";
+  overlay.style.background = "rgba(10,12,16,.58)";
+
+  const dialog = document.createElement("div");
+  dialog.style.width = "min(560px, 100%)";
+  dialog.style.maxWidth = "100%";
+  dialog.style.borderRadius = "18px";
+  dialog.style.background = "#fff";
+  dialog.style.boxShadow = "0 20px 60px rgba(0,0,0,.24)";
+  dialog.style.padding = "18px";
+  dialog.style.display = "flex";
+  dialog.style.flexDirection = "column";
+  dialog.style.gap = "12px";
+
+  const title = document.createElement("div");
+  title.textContent = "Public link";
+  title.style.fontSize = "18px";
+  title.style.fontWeight = "700";
+  title.style.color = "#111317";
+
+  const hint = document.createElement("div");
+  hint.textContent = "Ссылка готова";
+  hint.style.fontSize = "14px";
+  hint.style.color = "rgba(17,19,23,.72)";
+
+  const field = document.createElement("textarea");
+  field.value = value;
+  field.readOnly = true;
+  field.setAttribute("aria-label", "Public link");
+  field.style.width = "100%";
+  field.style.minHeight = "96px";
+  field.style.resize = "none";
+  field.style.border = "1px solid rgba(17,19,23,.12)";
+  field.style.borderRadius = "14px";
+  field.style.padding = "12px 14px";
+  field.style.fontSize = "14px";
+  field.style.lineHeight = "1.4";
+  field.style.color = "#111317";
+  field.style.background = "#f7f8fa";
+  field.style.boxSizing = "border-box";
+  field.style.outline = "none";
+  field.style.webkitUserSelect = "text";
+  field.style.userSelect = "text";
+
+  const actions = document.createElement("div");
+  actions.style.display = "flex";
+  actions.style.flexWrap = "wrap";
+  actions.style.justifyContent = "flex-end";
+  actions.style.gap = "10px";
+
+  function makeBtn(label){
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.textContent = label;
+    btn.style.appearance = "none";
+    btn.style.border = "0";
+    btn.style.borderRadius = "12px";
+    btn.style.padding = "10px 14px";
+    btn.style.fontSize = "14px";
+    btn.style.fontWeight = "600";
+    btn.style.cursor = "pointer";
+    btn.style.background = "#111317";
+    btn.style.color = "#fff";
+    return btn;
+  }
+
+  const copyBtn = makeBtn("Copy");
+  const openBtn = makeBtn("Open");
+  const closeBtn = makeBtn("Close");
+  closeBtn.style.background = "rgba(17,19,23,.12)";
+  closeBtn.style.color = "#111317";
+
+  function focusAndSelect(){
+    try{ field.focus({ preventScroll:true }); }catch{ try{ field.focus(); }catch{} }
+    try{ field.select(); }catch{}
+    try{ field.setSelectionRange(0, value.length); }catch{}
+  }
+
+  function closeDialog(){
+    try{ overlay.remove(); }catch{}
+  }
+
+  copyBtn.addEventListener("click", (ev)=>{
+    ev.preventDefault();
+    ev.stopPropagation();
+    focusAndSelect();
+    let copied = false;
+    try{
+      copied = !!document.execCommand("copy");
+    }catch{}
+    if(copied){
+      alert("Ссылка скопирована");
+      closeDialog();
+      return;
+    }
+    focusAndSelect();
+  });
+
+  openBtn.addEventListener("click", (ev)=>{
+    ev.preventDefault();
+    ev.stopPropagation();
+    try{ window.open(value, "_blank"); }catch{}
+  });
+
+  closeBtn.addEventListener("click", (ev)=>{
+    ev.preventDefault();
+    ev.stopPropagation();
+    closeDialog();
+  });
+
+  overlay.addEventListener("click", (ev)=>{
+    if(ev.target === overlay){
+      closeDialog();
+    }
+  });
+
+  dialog.addEventListener("click", (ev)=>{
+    ev.stopPropagation();
+  });
+
+  actions.appendChild(copyBtn);
+  actions.appendChild(openBtn);
+  actions.appendChild(closeBtn);
+
+  dialog.appendChild(title);
+  dialog.appendChild(hint);
+  dialog.appendChild(field);
+  dialog.appendChild(actions);
+  overlay.appendChild(dialog);
+  document.body.appendChild(overlay);
+
+  requestAnimationFrame(()=>{
+    focusAndSelect();
+  });
+
+  return overlay;
+}
+
 async function presentPublicRowLink(linkData){
   const url = getAbsolutePublicUrl(linkData?.url || "", linkData?.id || "");
   if(!url) throw new Error("PUBLIC_URL_MISSING");
@@ -1835,29 +1990,7 @@ async function presentPublicRowLink(linkData){
     }
   }catch{}
 
-  try{
-    const ta = document.createElement("textarea");
-    ta.value = url;
-    ta.setAttribute("readonly", "");
-    ta.style.position = "fixed";
-    ta.style.left = "-9999px";
-    ta.style.top = "0";
-    ta.style.opacity = "0";
-    document.body.appendChild(ta);
-    ta.focus();
-    ta.select();
-    ta.setSelectionRange(0, url.length);
-
-    const copied = document.execCommand("copy");
-    ta.remove();
-
-    if(copied){
-      alert("Public link создан и скопирован");
-      return url;
-    }
-  }catch{}
-
-  prompt("Скопируй ссылку", url);
+  showPublicLinkDialog(url);
   return url;
 }
 
