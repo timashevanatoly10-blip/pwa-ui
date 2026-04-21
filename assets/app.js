@@ -1922,19 +1922,33 @@ function showPublicLinkDialog(url){
     try{ overlay.remove(); }catch{}
   }
 
-  copyBtn.addEventListener("click", (ev)=>{
+  copyBtn.addEventListener("click", async (ev)=>{
     ev.preventDefault();
     ev.stopPropagation();
     focusAndSelect();
+
     let copied = false;
+
     try{
-      copied = !!document.execCommand("copy");
+      if(navigator.clipboard && typeof navigator.clipboard.writeText === "function"){
+        await navigator.clipboard.writeText(value);
+        copied = true;
+      }
     }catch{}
+
+    if(!copied){
+      focusAndSelect();
+      try{
+        copied = !!document.execCommand("copy");
+      }catch{}
+    }
+
     if(copied){
       alert("Ссылка скопирована");
       closeDialog();
       return;
     }
+
     focusAndSelect();
   });
 
