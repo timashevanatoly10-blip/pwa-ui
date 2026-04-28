@@ -869,6 +869,31 @@ function getItemOpenUrl(item){
   );
 }
 
+function getLinkTileDisplayData(it){
+  const rawUrl = (getItemOpenUrl(it) || it?.url || "").toString().trim();
+  const openUrl = rawUrl ? normalizeUrl(rawUrl) : "";
+  const fallbackTitle = (it?.title || "").toString().trim() || "Ссылка";
+
+  if(!openUrl){
+    return { rawUrl, openUrl:"", title:fallbackTitle, domain:"Ссылка", path:"" };
+  }
+
+  try{
+    const parsed = new URL(openUrl);
+    const rawPath = `${parsed.pathname || ""}${parsed.search || ""}`;
+    const cleanPath = (!rawPath || rawPath === "/") ? "" : rawPath;
+    return {
+      rawUrl,
+      openUrl,
+      title: (it?.title || "").toString().trim() || urlTitle(openUrl),
+      domain: parsed.host || rawUrl || "Ссылка",
+      path: cleanPath.length > 80 ? cleanPath.slice(0, 80) + "…" : cleanPath,
+    };
+  }catch{
+    return { rawUrl, openUrl, title:fallbackTitle, domain:rawUrl || "Ссылка", path:"" };
+  }
+}
+
 function icoSVG(kind){
   const common = `class="ico" viewBox="0 0 24 24" fill="none"`;
   if(kind==="file"){
@@ -5823,7 +5848,18 @@ function buildInlineRowContent(p, cached){
     card.dataset.rowTileRowId = row.id;
     card.dataset.rowTileItemId = it.id;
     applyActiveTileStyles(card, activeCarouselRowId === row.id && activeCarouselItemId === it.id);
-    if(it.type !== "audio" && it.type !== "geo"){
+    if(it.type === "link"){
+      card.style.cursor = "pointer";
+      card.style.overflow = "hidden";
+      card.style.boxSizing = "border-box";
+      card.addEventListener("click", ()=>{
+        const rawUrl = getItemOpenUrl(it) || it.url || "";
+        if(!rawUrl) return;
+        const openUrl = normalizeUrl(rawUrl);
+        if(!openUrl) return;
+        try{ window.open(openUrl, "_blank", "noopener,noreferrer"); }catch{}
+      });
+    }else if(it.type !== "audio" && it.type !== "geo"){
       card.addEventListener("click", () => openItemFromRow(row.id, it.id));
     }
 
@@ -5835,7 +5871,17 @@ function buildInlineRowContent(p, cached){
     }else if(it.type === "code"){
       previewHTML = `<pre style="margin:0;white-space:pre-wrap;font-family:monospace;font-size:12px;">${escapeHTML((it.content || "").toString().slice(0,220) || "Пусто")}</pre>`;
     }else if(it.type === "link"){
-      previewHTML = `<div class="itemDesc" style="word-break:break-all">${escapeHTML(it.url || "—")}</div>`;
+      const linkData = getLinkTileDisplayData(it);
+      const pathHtml = linkData.path
+        ? `<div class="itemDesc" style="display:block;max-width:100%;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHTML(linkData.path)}</div>`
+        : "";
+      previewHTML = `
+        <div style="width:100%;max-width:100%;min-width:0;overflow:hidden;box-sizing:border-box;display:flex;flex-direction:column;gap:6px;">
+          <div class="itemTitle" style="display:block;max-width:100%;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHTML(linkData.title)}</div>
+          <div class="itemDesc" style="display:block;max-width:100%;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHTML(linkData.domain)}</div>
+          ${pathHtml}
+          <div class="itemDesc" style="display:block;max-width:100%;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#3566e8;">↗ Открыть</div>
+        </div>`;
     }else if(it.type === "image"){
       previewHTML = `<div class="itemDesc">${fmtBytes(it.size)} • фото</div>`;
     }else if(it.type === "video"){
