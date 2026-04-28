@@ -5873,14 +5873,14 @@ function buildInlineRowContent(p, cached){
     }else if(it.type === "link"){
       const linkData = getLinkTileDisplayData(it);
       const pathHtml = linkData.path
-        ? `<div class="itemDesc" style="display:block;max-width:100%;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHTML(linkData.path)}</div>`
+        ? `<div class="itemDesc" style="display:block;width:100%;max-width:100%;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHTML(linkData.path)}</div>`
         : "";
       previewHTML = `
-        <div style="width:100%;max-width:100%;min-width:0;overflow:hidden;box-sizing:border-box;display:flex;flex-direction:column;gap:6px;">
-          <div class="itemTitle" style="display:block;max-width:100%;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHTML(linkData.title)}</div>
-          <div class="itemDesc" style="display:block;max-width:100%;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHTML(linkData.domain)}</div>
+        <div style="display:flex;flex-direction:column;flex:1 1 auto;width:100%;max-width:100%;min-width:0;overflow:hidden;box-sizing:border-box;gap:6px;">
+          <div class="itemTitle" style="display:block;width:100%;max-width:100%;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHTML(linkData.title)}</div>
+          <div class="itemDesc" style="display:block;width:100%;max-width:100%;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHTML(linkData.domain)}</div>
           ${pathHtml}
-          <div class="itemDesc" style="display:block;max-width:100%;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#3566e8;">↗ Открыть</div>
+          <div class="itemDesc" style="display:block;width:100%;max-width:100%;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#3566e8;">↗ Открыть</div>
         </div>`;
     }else if(it.type === "image"){
       previewHTML = `<div class="itemDesc">${fmtBytes(it.size)} • фото</div>`;
