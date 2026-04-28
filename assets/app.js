@@ -5948,18 +5948,14 @@ function buildInlineRowContent(p, cached){
       const linkData = getLinkTileDisplayData(it);
       card.innerHTML = `
         <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;padding-right:${rowReadOnly ? "0" : "42px"};min-width:0;width:100%;max-width:100%;overflow:hidden;box-sizing:border-box;">
-          <div style="display:flex;align-items:flex-start;gap:10px;min-width:0;flex:1 1 auto;overflow:hidden;">
-            <div class="thumb" style="flex:0 0 auto;">${icoSVG("link")}</div>
-            <div class="itemText" style="min-width:0;flex:1 1 auto;overflow:hidden;">
-              <div class="itemTitle" style="display:block;width:100%;max-width:100%;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
-                ${escapeHTML(linkData.title || "Ссылка")}
-              </div>
-              <div class="itemDesc" style="display:block;width:100%;max-width:100%;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
-                ${escapeHTML(linkData.domain || "Ссылка")}
-              </div>
+          <div class="itemText" style="min-width:0;flex:1 1 auto;overflow:hidden;">
+            <div class="itemTitle" style="display:block;width:100%;max-width:100%;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
+              ${escapeHTML(linkData.title || "Ссылка")}
+            </div>
+            <div class="itemDesc" style="display:block;width:100%;max-width:100%;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
+              ${escapeHTML(linkData.domain || "Ссылка")}
             </div>
           </div>
-          <div class="tagText tagLink" style="flex:0 0 auto;">Ссылка</div>
         </div>
         <div class="rowTilePreviewHost" style="min-height:72px;display:flex;flex-direction:column;gap:6px;min-width:0;width:100%;max-width:100%;overflow:hidden;box-sizing:border-box;">
           ${linkData.path ? `<div class="itemDesc" style="display:block;width:100%;max-width:100%;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHTML(linkData.path)}</div>` : ""}
