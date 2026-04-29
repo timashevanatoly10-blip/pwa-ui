@@ -851,6 +851,62 @@ function normalizeUrl(raw){
   if(/^tel:/i.test(s)) return s;
   return "https://" + s;
 }
+function cleanTrackingUrl(raw){
+  const normalized = normalizeUrl(raw);
+  if(!normalized) return "";
+  if(/^mailto:/i.test(normalized) || /^tel:/i.test(normalized)) return normalized;
+
+  try{
+    const url = new URL(normalized);
+    if(url.protocol !== "http:" && url.protocol !== "https:") return normalized;
+
+    const exactJunk = new Set([
+      "utm_source",
+      "utm_medium",
+      "utm_campaign",
+      "utm_term",
+      "utm_content",
+      "utm_name",
+      "utm_cid",
+      "utm_reader",
+      "utm_viz_id",
+      "utm_pubreferrer",
+      "utm_swu",
+      "utm_referrer",
+      "fbclid",
+      "gclid",
+      "dclid",
+      "gbraid",
+      "wbraid",
+      "yclid",
+      "mc_cid",
+      "mc_eid",
+      "igshid",
+      "ref",
+      "ref_src",
+      "spm",
+      "from",
+      "feature",
+    ]);
+
+    const names = Array.from(url.searchParams.keys());
+    for(const name of names){
+      const key = (name || "").toString().trim().toLowerCase();
+      if(
+        exactJunk.has(key) ||
+        key.startsWith("utm_") ||
+        key.startsWith("fbclid") ||
+        key.startsWith("gclid")
+      ){
+        url.searchParams.delete(name);
+      }
+    }
+
+    return url.toString();
+  }catch{
+    return normalized;
+  }
+}
 function urlTitle(u){
   try{
     const url = new URL(u);
@@ -916,6 +972,51 @@ function getLinkPreviewData(it){
   return preview;
 }
 
+function isProbablyJunkLinkPath(path){
+  const raw = (path || "").toString().trim();
+  if(!raw || raw === "/") return true;
+
+  const queryIndex = raw.indexOf("?");
+  const pathPart = queryIndex >= 0 ? raw.slice(0, queryIndex) : raw;
+  const queryPart = queryIndex >= 0 ? raw.slice(queryIndex + 1) : "";
+
+  if(pathPart && pathPart !== "/" && pathPart !== "") return false;
+  if(!queryPart) return true;
+
+  try{
+    const params = new URLSearchParams(queryPart);
+    const keys = Array.from(params.keys()).map(k => (k || "").toString().trim().toLowerCase()).filter(Boolean);
+    if(keys.length === 0) return true;
+
+    const junkKeys = new Set([
+      "fbclid",
+      "gclid",
+      "dclid",
+      "gbraid",
+      "wbraid",
+      "yclid",
+      "ref",
+      "ref_src",
+      "hl",
+      "zx",
+      "ved",
+      "ei",
+      "sa",
+      "source",
+      "feature",
+    ]);
+
+    return keys.every(key =>
+      key.startsWith("utm_") ||
+      key.startsWith("fbclid") ||
+      key.startsWith("gclid") ||
+      junkKeys.has(key)
+    );
+  }catch{
+    return false;
+  }
+}
+
 function getLinkTileDisplayData(it){
   const rawUrl = (getItemOpenUrl(it) || it?.url || "").toString().trim();
   const openUrl = rawUrl ? normalizeUrl(rawUrl) : "";
@@ -937,14 +1038,33 @@ function getLinkTileDisplayData(it){
 
   try{
     const parsed = new URL(openUrl);
-    const rawPath = `${parsed.pathname || ""}${parsed.search || ""}`;
-    const cleanPath = (!rawPath || rawPath === "/") ? "" : rawPath;
+    let path = "";
+
+    if(!preview?.image){
+      try{
+        const displayUrl = new URL(cleanTrackingUrl(openUrl));
+        let displayPath = displayUrl.pathname || "";
+        if(displayPath === "/") displayPath = "";
+        const cleanSearch = displayUrl.search || "";
+        const pathSource = displayPath + cleanSearch;
+        if(!isProbablyJunkLinkPath(pathSource)){
+          path = pathSource.length > 80 ? pathSource.slice(0, 80) + "…" : pathSource;
+        }
+      }catch{
+        const rawPath = (parsed.pathname || "") + (parsed.search || "");
+        const cleanPath = (!rawPath || rawPath === "/") ? "" : rawPath;
+        if(!isProbablyJunkLinkPath(cleanPath)){
+          path = cleanPath.length > 80 ? cleanPath.slice(0, 80) + "…" : cleanPath;
+        }
+      }
+    }
+
     return {
       rawUrl,
       openUrl,
       title: (preview?.title || preview?.siteName || preview?.host || parsed.host || "Ссылка").toString().trim(),
       domain: (preview?.siteName || preview?.host || parsed.host || "Ссылка").toString().trim(),
-      path: preview?.image ? "" : (cleanPath.length > 80 ? cleanPath.slice(0, 80) + "…" : cleanPath),
+      path,
       description: (preview?.description || "").toString().trim(),
       image: (preview?.image || "").toString().trim(),
       favicon: (preview?.favicon || "").toString().trim(),
@@ -6049,15 +6169,17 @@ function buildInlineRowContent(p, cached){
         `;
       }else{
         card.innerHTML = `
-          <div class="rowTilePreviewHost" style="min-height:126px;display:flex;flex-direction:column;gap:7px;min-width:0;width:100%;max-width:100%;overflow:hidden;box-sizing:border-box;padding-right:${rowReadOnly ? "0" : "42px"};">
-            <div class="itemTitle" style="display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;line-height:1.25;font-weight:700;min-width:0;width:100%;max-width:100%;">
-              ${escapeHTML(linkData.title || "Ссылка")}
+          <div class="rowTilePreviewHost" style="display:flex;flex-direction:column;justify-content:flex-start;gap:10px;min-height:220px;width:100%;max-width:100%;min-width:0;overflow:hidden;box-sizing:border-box;border-radius:14px;background:rgba(17,19,23,.035);padding:14px 12px;padding-right:${rowReadOnly ? "12px" : "48px"};">
+            <div class="itemTitle" style="display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;line-height:1.2;font-weight:800;min-width:0;width:100%;max-width:100%;">
+              ${escapeHTML(linkData.title || linkData.domain || "Ссылка")}
             </div>
-            ${linkData.description ? `<div class="itemDesc" style="display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;line-height:1.35;min-width:0;width:100%;max-width:100%;">${escapeHTML(linkData.description)}</div>` : ""}
-            <div class="itemDesc" style="display:block;width:100%;max-width:100%;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
-              ${escapeHTML(linkData.domain || "Ссылка")}
+            ${linkData.description ? `<div class="itemDesc" style="display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;line-height:1.3;min-width:0;width:100%;max-width:100%;">${escapeHTML(linkData.description)}</div>` : ""}
+            <div style="margin-top:auto;display:flex;flex-direction:column;gap:4px;min-width:0;width:100%;max-width:100%;overflow:hidden;box-sizing:border-box;">
+              <div class="itemDesc" style="display:block;width:100%;max-width:100%;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
+                ${escapeHTML(linkData.domain || "")}
+              </div>
+              ${linkData.path ? `<div class="itemDesc" style="display:block;width:100%;max-width:100%;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;opacity:.75;">${escapeHTML(linkData.path)}</div>` : ""}
             </div>
-            ${linkData.path ? `<div class="itemDesc" style="display:block;width:100%;max-width:100%;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHTML(linkData.path)}</div>` : ""}
           </div>
         `;
       }
@@ -6501,7 +6623,7 @@ async function addLinkItemsToSpecificRow(rowId, rawInput){
   isBusy = true;
   try{
     for(const line of lines){
-      const u = normalizeUrl(line);
+      const u = cleanTrackingUrl(line);
       if(!u) continue;
 
       let previewMeta = null;
@@ -6886,7 +7008,7 @@ async function addLinkItemsToCurrent(rawInput){
   try{
     const rowId = await resolveTargetRowForCreate(p, "link");
     for(const line of lines){
-      const u = normalizeUrl(line);
+      const u = cleanTrackingUrl(line);
       if(!u) continue;
 
       let previewMeta = null;
