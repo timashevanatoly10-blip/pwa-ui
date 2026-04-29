@@ -44,6 +44,9 @@ function itemBlobCompletePath(itemId){ return `/items/${encodeURIComponent(itemI
 function geoParsePath(){
   return `/geo/parse`;
 }
+function linkPreviewPath(){
+  return `/link/preview`;
+}
 
 /** ===========================
  *  TOKEN HELPERS
@@ -869,12 +872,67 @@ function getItemOpenUrl(item){
   );
 }
 
+function buildLinkPreviewMeta(preview, originalUrl){
+  if(!preview || typeof preview !== "object") return null;
+  const str = (v)=> (v == null ? "" : v).toString().trim();
+  const url = str(preview.url || originalUrl);
+  const finalUrl = str(preview.finalUrl || preview.url || originalUrl);
+  const host = str(preview.host || "");
+  const title = str(preview.title || preview.siteName || preview.host || "");
+  const description = str(preview.description || "");
+  const image = str(preview.image || "");
+  const siteName = str(preview.siteName || preview.host || "");
+  const favicon = str(preview.favicon || "");
+  const fetchedAt = str(preview.fetchedAt || nowISO());
+  const error = str(preview.error || "");
+
+  return {
+    url,
+    finalUrl,
+    host,
+    title,
+    description,
+    image,
+    siteName,
+    favicon,
+    fetchedAt,
+    error,
+  };
+}
+
+function getLinkPreviewData(it){
+  let meta = it?.meta || null;
+  if(meta && typeof meta === "string"){
+    try{ meta = JSON.parse(meta); }catch{ meta = null; }
+  }
+  if(!meta || typeof meta !== "object") return null;
+  const preview = meta.linkPreview;
+  if(!preview || typeof preview !== "object") return null;
+
+  const title = (preview.title || "").toString().trim();
+  const description = (preview.description || "").toString().trim();
+  const image = (preview.image || "").toString().trim();
+  if(!title && !description && !image) return null;
+  return preview;
+}
+
 function getLinkTileDisplayData(it){
   const rawUrl = (getItemOpenUrl(it) || it?.url || "").toString().trim();
   const openUrl = rawUrl ? normalizeUrl(rawUrl) : "";
+  const preview = getLinkPreviewData(it);
 
   if(!openUrl){
-    return { rawUrl, openUrl:"", title:"Ссылка", domain:"Ссылка", path:"" };
+    return {
+      rawUrl,
+      openUrl:"",
+      title: preview?.title || preview?.siteName || preview?.host || "Ссылка",
+      domain: preview?.siteName || preview?.host || "Ссылка",
+      path:"",
+      description: preview?.description || "",
+      image: preview?.image || "",
+      favicon: preview?.favicon || "",
+      hasPreview: !!preview,
+    };
   }
 
   try{
@@ -884,12 +942,26 @@ function getLinkTileDisplayData(it){
     return {
       rawUrl,
       openUrl,
-      title: parsed.host || "Ссылка",
-      domain: parsed.host || rawUrl || "Ссылка",
-      path: cleanPath.length > 80 ? cleanPath.slice(0, 80) + "…" : cleanPath,
+      title: (preview?.title || preview?.siteName || preview?.host || parsed.host || "Ссылка").toString().trim(),
+      domain: (preview?.siteName || preview?.host || parsed.host || "Ссылка").toString().trim(),
+      path: preview?.image ? "" : (cleanPath.length > 80 ? cleanPath.slice(0, 80) + "…" : cleanPath),
+      description: (preview?.description || "").toString().trim(),
+      image: (preview?.image || "").toString().trim(),
+      favicon: (preview?.favicon || "").toString().trim(),
+      hasPreview: !!preview,
     };
   }catch{
-    return { rawUrl, openUrl, title:"Ссылка", domain:rawUrl || "Ссылка", path:"" };
+    return {
+      rawUrl,
+      openUrl,
+      title: (preview?.title || preview?.siteName || preview?.host || "Ссылка").toString().trim(),
+      domain: (preview?.siteName || preview?.host || rawUrl || "Ссылка").toString().trim(),
+      path:"",
+      description: (preview?.description || "").toString().trim(),
+      image: (preview?.image || "").toString().trim(),
+      favicon: (preview?.favicon || "").toString().trim(),
+      hasPreview: !!preview,
+    };
   }
 }
 
@@ -2247,6 +2319,7 @@ async function apiFetch(path, { method="GET", json=null, headers={}, retryAuth=t
 
   const needsToken = !isPublicBlobRead && (
     path === "/chat" ||
+    path === "/link/preview" ||
     path.startsWith("/db/") ||
     path.startsWith("/puchki") ||
     path.startsWith("/rows") ||
@@ -2300,6 +2373,18 @@ async function geoParse(url, provider = "google"){
       url: cleanUrl,
       provider: cleanProvider
     }
+  });
+
+  return data;
+}
+
+async function linkPreview(url){
+  const cleanUrl = (url || "").toString().trim();
+  if(!cleanUrl) throw new Error("LINK_URL_REQUIRED");
+
+  const data = await apiJson(linkPreviewPath(), {
+    method: "POST",
+    json: { url: cleanUrl }
   });
 
   return data;
@@ -5946,22 +6031,45 @@ function buildInlineRowContent(p, cached){
       }
     }else if(isLinkTile){
       const linkData = getLinkTileDisplayData(it);
-      card.innerHTML = `
-        <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;padding-right:${rowReadOnly ? "0" : "42px"};min-width:0;width:100%;max-width:100%;overflow:hidden;box-sizing:border-box;">
-          <div class="itemText" style="min-width:0;flex:1 1 auto;overflow:hidden;">
-            <div class="itemTitle" style="display:block;width:100%;max-width:100%;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
+      const hasImage = !!linkData.image;
+
+      if(hasImage){
+        card.innerHTML = `
+          <div class="rowTilePreviewHost" style="display:flex;flex-direction:column;gap:0;min-width:0;width:100%;max-width:100%;overflow:hidden;box-sizing:border-box;border-radius:14px;background:rgba(17,19,23,.04);">
+            <div data-link-preview-image-wrap="1" style="height:180px;border-radius:14px 14px 10px 10px;overflow:hidden;background:rgba(17,19,23,.06);min-width:0;width:100%;max-width:100%;box-sizing:border-box;">
+              <img data-link-preview-image="1" src="${escapeHTML(linkData.image)}" alt="${escapeHTML(linkData.title || "Ссылка")}" loading="lazy" style="display:block;width:100%;height:100%;object-fit:cover;">
+            </div>
+            <div style="padding:10px 2px 0 2px;min-width:0;width:100%;max-width:100%;box-sizing:border-box;overflow:hidden;padding-right:${rowReadOnly ? "0" : "42px"};">
+              <div class="itemTitle" style="display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;line-height:1.25;font-weight:700;min-width:0;width:100%;max-width:100%;">
+                ${escapeHTML(linkData.title || "Ссылка")}
+              </div>
+              ${linkData.description ? `<div class="itemDesc" style="display:block;width:100%;max-width:100%;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-top:4px;">${escapeHTML(linkData.description)}</div>` : ""}
+            </div>
+          </div>
+        `;
+      }else{
+        card.innerHTML = `
+          <div class="rowTilePreviewHost" style="min-height:126px;display:flex;flex-direction:column;gap:7px;min-width:0;width:100%;max-width:100%;overflow:hidden;box-sizing:border-box;padding-right:${rowReadOnly ? "0" : "42px"};">
+            <div class="itemTitle" style="display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;line-height:1.25;font-weight:700;min-width:0;width:100%;max-width:100%;">
               ${escapeHTML(linkData.title || "Ссылка")}
             </div>
+            ${linkData.description ? `<div class="itemDesc" style="display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;line-height:1.35;min-width:0;width:100%;max-width:100%;">${escapeHTML(linkData.description)}</div>` : ""}
             <div class="itemDesc" style="display:block;width:100%;max-width:100%;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
               ${escapeHTML(linkData.domain || "Ссылка")}
             </div>
+            ${linkData.path ? `<div class="itemDesc" style="display:block;width:100%;max-width:100%;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHTML(linkData.path)}</div>` : ""}
           </div>
-        </div>
-        <div class="rowTilePreviewHost" style="min-height:72px;display:flex;flex-direction:column;gap:6px;min-width:0;width:100%;max-width:100%;overflow:hidden;box-sizing:border-box;">
-          ${linkData.path ? `<div class="itemDesc" style="display:block;width:100%;max-width:100%;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHTML(linkData.path)}</div>` : ""}
-          <div class="itemDesc" style="display:block;width:100%;max-width:100%;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">↗ Открыть</div>
-        </div>
-      `;
+        `;
+      }
+
+      const img = card.querySelector("[data-link-preview-image]");
+      if(img){
+        img.addEventListener("error", ()=>{
+          const imageWrap = card.querySelector("[data-link-preview-image-wrap]");
+          if(imageWrap) imageWrap.style.display = "none";
+          try{ img.removeAttribute("src"); }catch{}
+        });
+      }
     }else if(isPhotoTile){
       card.innerHTML = `
         <div class="itemText" style="min-width:0;padding-right:42px;">
@@ -6395,8 +6503,20 @@ async function addLinkItemsToSpecificRow(rowId, rawInput){
     for(const line of lines){
       const u = normalizeUrl(line);
       if(!u) continue;
-      const title = urlTitle(u);
-      await createItemInRow(rowId, { type:"link", title, url: u });
+
+      let previewMeta = null;
+      try{
+        const preview = await linkPreview(u);
+        previewMeta = buildLinkPreviewMeta(preview, u);
+      }catch{}
+
+      const title = previewMeta?.title || urlTitle(u);
+      await createItemInRow(rowId, {
+        type:"link",
+        title,
+        url: u,
+        meta: previewMeta ? { linkPreview: previewMeta } : null
+      });
     }
 
     expandRowInline(rowId);
@@ -6769,8 +6889,19 @@ async function addLinkItemsToCurrent(rawInput){
       const u = normalizeUrl(line);
       if(!u) continue;
 
-      const title = urlTitle(u);
-      await createItemInRow(rowId, { type:"link", title, url: u });
+      let previewMeta = null;
+      try{
+        const preview = await linkPreview(u);
+        previewMeta = buildLinkPreviewMeta(preview, u);
+      }catch{}
+
+      const title = previewMeta?.title || urlTitle(u);
+      await createItemInRow(rowId, {
+        type:"link",
+        title,
+        url: u,
+        meta: previewMeta ? { linkPreview: previewMeta } : null
+      });
     }
 
     await refreshRowAndKeepUI(rowId);
