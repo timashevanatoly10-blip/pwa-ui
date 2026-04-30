@@ -5,18 +5,15 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ПУЧКИ</title>
 
-  <!-- BASE FIX (GitHub + Cloudflare) -->
+  <!-- BASE FIX (GitHub Pages + Cloudflare Pages) -->
   <script>
   (function() {
-    const isGithub = location.hostname.includes("github.io");
-    const base = document.createElement("base");
-
-    if (isGithub) {
+    var base = document.createElement("base");
+    if (location.hostname.indexOf("github.io") !== -1) {
       base.href = "/pwa-ui/";
     } else {
       base.href = "/";
     }
-
     document.head.appendChild(base);
   })();
   </script>
@@ -34,7 +31,7 @@
   <link rel="icon" href="icon-192.png">
   <link rel="apple-touch-icon" href="icon-192.png">
 
-  <!-- CSS -->
+  <!-- CSS moved out -->
   <link rel="stylesheet" href="assets/app.css">
 </head>
 
@@ -53,17 +50,19 @@
         <button id="newPuchokBtn">+ Пучок</button>
 
         <button id="editPuchokBtn" class="iconBtn iconBtnGhost" style="display:none;" title="Переименовать">
-          <svg viewBox="0 0 24 24" fill="none">
-            <path d="M4 20h4l10.5-10.5a2 2 0 0 0 0-3L16.5 4.5a2 2 0 0 0-3 0L3 15v5Z" stroke="#111317" stroke-width="2"/>
-            <path d="M13.5 6.5l4 4" stroke="#111317" stroke-width="2"/>
+          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M4 20h4l10.5-10.5a2 2 0 0 0 0-3L16.5 4.5a2 2 0 0 0-3 0L3 15v5Z" stroke="#111317" stroke-width="2" stroke-linejoin="round"/>
+            <path d="M13.5 6.5l4 4" stroke="#111317" stroke-width="2" stroke-linecap="round"/>
           </svg>
         </button>
 
-        <button id="addMenuBtn" class="iconBtn iconBtnPrimary" style="display:none;">
-          +
+        <button id="addMenuBtn" class="iconBtn iconBtnPrimary" style="display:none;" title="+">
+          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M12 5v14M5 12h14" stroke="white" stroke-width="2.4" stroke-linecap="round"/>
+          </svg>
         </button>
 
-        <div id="addMenu" class="menu">
+        <div id="addMenu" class="menu" role="menu" aria-hidden="true">
           <button id="menuAddText">Текст</button>
           <button id="menuAddFile">Файл</button>
           <button id="menuAddAudio">Аудио</button>
@@ -81,31 +80,64 @@
       <div class="dockHead">
         <div>
           <div class="dockTitle">Чат</div>
-          <div class="dockSmall" id="chatHint">Пишешь — отправляю в Worker</div>
+          <div class="dockSmall" id="chatHint">Пишешь — отправляю в Worker (/chat). Ответ можно сохранить “В пучок”.</div>
         </div>
         <button id="clearChatBtn" class="btnGhost">Очистить</button>
       </div>
 
       <div class="dockBody" id="chat"></div>
 
-      <div class="collapseBar" id="collapseBar">
+      <div class="collapseBar" id="collapseBar" title="Свернуть чат">
         <div class="collapsePill"></div>
       </div>
 
       <div class="composer">
-        <input id="input" type="text" placeholder="Напиши сообщение..." />
-        <button id="send">→</button>
+        <input id="input" type="text" placeholder="Напиши сообщение..." autocomplete="off" />
+        <button id="send" class="sendBtn" title="Отправить">
+          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M4.5 12L19 5.5L13 19L11.8 13.7L4.5 12Z" stroke="white" stroke-width="2" stroke-linejoin="round"/>
+          </svg>
+        </button>
       </div>
     </div>
   </div>
 
+  <!-- One picker for everything -->
   <input id="filePicker" type="file" style="display:none" />
-  <input id="audioPicker" type="file" accept="audio/*,video/*" style="display:none" />
+  <!-- Audio fallback -->
+  <input id="audioPicker" type="file" accept="audio/*,video/*" capture="microphone" style="display:none" />
 
-  <div id="modalWrap"></div>
+  <!-- Modal -->
+  <div class="modalWrap" id="modalWrap">
+    <div class="modal">
+      <div class="modalHead">
+        <div class="modalTitle" id="modalTitle">Элемент</div>
+        <div class="actions">
+          <button id="modalClose" class="btnGhost">Закрыть</button>
+        </div>
+      </div>
+      <div class="modalBody">
+        <textarea id="modalTextarea" spellcheck="false"></textarea>
+        <div class="viewer" id="modalViewer"></div>
 
+        <div class="row" id="modalRow">
+          <button id="modalDelete" class="btnDanger">Удалить</button>
+          <button id="modalCopy" class="btnGhost" style="display:none;">Copy</button>
+          <button id="modalSave" class="btnOk">Сохранить</button>
+        </div>
+
+        <div class="hint" id="modalHint">—</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- STORAGE -->
   <script src="assets/storage.js"></script>
+
+  <!-- APP -->
   <script src="assets/app.js"></script>
+
+  <!-- AUDIO -->
   <script src="assets/audio.js"></script>
 </body>
 </html>
