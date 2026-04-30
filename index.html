@@ -6,7 +6,7 @@
   <title>ПУЧКИ</title>
 
   <!-- PWA -->
-  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="manifest" href="manifest.webmanifest">
   <meta name="theme-color" content="#f5f6f8">
 
   <!-- iOS standalone -->
@@ -15,11 +15,11 @@
   <meta name="apple-mobile-web-app-title" content="ПУЧКИ">
 
   <!-- Icons -->
-  <link rel="icon" href="/icon-192.png">
-  <link rel="apple-touch-icon" href="/icon-192.png">
+  <link rel="icon" href="icon-192.png">
+  <link rel="apple-touch-icon" href="icon-192.png">
 
   <!-- CSS moved out -->
-  <link rel="stylesheet" href="/assets/app.css">
+  <link rel="stylesheet" href="assets/app.css">
 </head>
 
 <body>
@@ -91,7 +91,7 @@
 
   <!-- One picker for everything -->
   <input id="filePicker" type="file" style="display:none" />
-  <!-- Audio fallback (iOS / no MediaRecorder) -->
+  <!-- Audio fallback -->
   <input id="audioPicker" type="file" accept="audio/*,video/*" capture="microphone" style="display:none" />
 
   <!-- Modal -->
@@ -118,17 +118,13 @@
     </div>
   </div>
 
-  <!-- STORAGE (external) -->
-  <script src="/assets/storage.js"></script>
+  <!-- STORAGE -->
+  <script src="assets/storage.js"></script>
 
-  <!-- Libraries for export -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
+  <!-- APP -->
+  <script src="assets/app.js"></script>
 
-  <!-- APP (external) -->
-  <script src="/assets/app.js"></script>
-
-  <!-- AUDIO (external) -->
-  <script src="/assets/audio.js"></script>
+  <!-- AUDIO -->
+  <script src="assets/audio.js"></script>
 </body>
 </html>
