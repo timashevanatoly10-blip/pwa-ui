@@ -972,6 +972,79 @@ function getLinkPreviewData(it){
   return preview;
 }
 
+function isBadLinkPreviewTitle(title){
+  const s = (title || "").toString().trim().toLowerCase();
+  if(!s) return true;
+
+  const exact = new Set([
+    "just a moment",
+    "just a moment...",
+    "attention required",
+    "access denied",
+    "forbidden",
+    "403 forbidden",
+    "404 not found",
+    "checking your browser",
+    "please wait",
+    "one more step",
+    "robot check",
+    "captcha",
+    "verify you are human",
+    "security check",
+    "cloudflare challenge",
+  ]);
+  if(exact.has(s)) return true;
+
+  const badPhrases = [
+    "just a moment",
+    "checking your browser",
+    "attention required",
+    "access denied",
+    "verify you are human",
+    "security check",
+    "robot check",
+    "captcha",
+  ];
+  return badPhrases.some(phrase => s.includes(phrase));
+}
+
+function getKnownSiteName(host){
+  const h = (host || "").toString().trim().toLowerCase().replace(/^www\./, "");
+  if(!h) return "";
+
+  const known = {
+    "dash.cloudflare.com": "Cloudflare",
+    "cloudflare.com": "Cloudflare",
+    "github.com": "GitHub",
+    "youtube.com": "YouTube",
+    "youtu.be": "YouTube",
+    "docs.google.com": "Google Docs",
+    "drive.google.com": "Google Drive",
+    "sheets.google.com": "Google Sheets",
+    "mail.google.com": "Gmail",
+    "google.com": "Google",
+    "notion.so": "Notion",
+    "wikipedia.org": "Wikipedia",
+    "rbc.ru": "РБК",
+    "azbyka.ru": "Азбука",
+    "microsoft.com": "Microsoft",
+    "apple.com": "Apple",
+  };
+
+  if(known[h]) return known[h];
+  if(h.endsWith(".youtube.com")) return "YouTube";
+  if(h.endsWith(".google.com")) return "Google";
+  if(h.endsWith(".cloudflare.com")) return "Cloudflare";
+  if(h.endsWith(".github.com")) return "GitHub";
+  return "";
+}
+
+function getInitialFromHost(host){
+  const h = (host || "").toString().trim().toLowerCase().replace(/^www\./, "");
+  const first = (h.split(".").find(Boolean) || "").charAt(0);
+  return first ? first.toUpperCase() : "↗";
+}
+
 function isProbablyJunkLinkPath(path){
   const raw = (path || "").toString().trim();
   if(!raw || raw === "/") return true;
@@ -1021,26 +1094,48 @@ function getLinkTileDisplayData(it){
   const rawUrl = (getItemOpenUrl(it) || it?.url || "").toString().trim();
   const openUrl = rawUrl ? normalizeUrl(rawUrl) : "";
   const preview = getLinkPreviewData(it);
+  const previewTitle = (preview?.title || "").toString().trim();
+  const previewSiteName = (preview?.siteName || "").toString().trim();
+  const previewHost = (preview?.host || "").toString().trim();
+  const previewImage = (preview?.image || "").toString().trim();
+  const badTitle = isBadLinkPreviewTitle(previewTitle);
 
   if(!openUrl){
+    const knownSiteName = getKnownSiteName(previewHost);
+    const cleanHost = previewHost.replace(/^www\./i, "");
+    const fallbackName = knownSiteName || previewSiteName || previewHost || cleanHost || "Ссылка";
+    const displayTitle = !badTitle && previewTitle ? previewTitle : fallbackName;
     return {
       rawUrl,
       openUrl:"",
-      title: preview?.title || preview?.siteName || preview?.host || "Ссылка",
-      domain: preview?.siteName || preview?.host || "Ссылка",
+      title: displayTitle || "Ссылка",
+      domain: fallbackName || "Ссылка",
       path:"",
       description: preview?.description || "",
-      image: preview?.image || "",
+      image: previewImage,
       favicon: preview?.favicon || "",
       hasPreview: !!preview,
+      siteName: knownSiteName || previewSiteName || "",
+      cleanHost,
+      badTitle,
+      initial: getInitialFromHost(previewHost),
     };
   }
 
   try{
     const parsed = new URL(openUrl);
+    const host = parsed.host || "";
+    const cleanHost = host.replace(/^www\./i, "");
+    const knownSiteName = getKnownSiteName(host);
+    const siteName = knownSiteName || previewSiteName || "";
+    const fallbackName = knownSiteName || previewSiteName || previewHost || cleanHost || "Ссылка";
+    const displayTitle = (!badTitle && previewTitle) ? previewTitle : fallbackName;
+    const displayDomain = (fallbackName === displayTitle && cleanHost)
+      ? cleanHost
+      : (fallbackName || cleanHost || "Ссылка");
     let path = "";
 
-    if(!preview?.image){
+    if(!previewImage){
       try{
         const displayUrl = new URL(cleanTrackingUrl(openUrl));
         let displayPath = displayUrl.pathname || "";
@@ -1062,25 +1157,37 @@ function getLinkTileDisplayData(it){
     return {
       rawUrl,
       openUrl,
-      title: (preview?.title || preview?.siteName || preview?.host || parsed.host || "Ссылка").toString().trim(),
-      domain: (preview?.siteName || preview?.host || parsed.host || "Ссылка").toString().trim(),
+      title: (displayTitle || "Ссылка").toString().trim(),
+      domain: (displayDomain || "Ссылка").toString().trim(),
       path,
       description: (preview?.description || "").toString().trim(),
-      image: (preview?.image || "").toString().trim(),
+      image: previewImage,
       favicon: (preview?.favicon || "").toString().trim(),
       hasPreview: !!preview,
+      siteName,
+      cleanHost,
+      badTitle,
+      initial: getInitialFromHost(host),
     };
   }catch{
+    const knownSiteName = getKnownSiteName(previewHost || rawUrl);
+    const cleanHost = (previewHost || rawUrl || "").toString().trim().replace(/^www\./i, "");
+    const fallbackName = knownSiteName || previewSiteName || previewHost || cleanHost || "Ссылка";
+    const displayTitle = (!badTitle && previewTitle) ? previewTitle : fallbackName;
     return {
       rawUrl,
       openUrl,
-      title: (preview?.title || preview?.siteName || preview?.host || "Ссылка").toString().trim(),
-      domain: (preview?.siteName || preview?.host || rawUrl || "Ссылка").toString().trim(),
+      title: (displayTitle || "Ссылка").toString().trim(),
+      domain: (fallbackName || rawUrl || "Ссылка").toString().trim(),
       path:"",
       description: (preview?.description || "").toString().trim(),
-      image: (preview?.image || "").toString().trim(),
+      image: previewImage,
       favicon: (preview?.favicon || "").toString().trim(),
       hasPreview: !!preview,
+      siteName: knownSiteName || previewSiteName || "",
+      cleanHost,
+      badTitle,
+      initial: getInitialFromHost(previewHost || rawUrl),
     };
   }
 }
@@ -6152,36 +6259,72 @@ function buildInlineRowContent(p, cached){
     }else if(isLinkTile){
       const linkData = getLinkTileDisplayData(it);
       const hasImage = !!linkData.image;
+      const safeTitle = linkData.badTitle
+        ? (linkData.siteName || linkData.domain || "Ссылка")
+        : (linkData.title || linkData.siteName || linkData.domain || "Ссылка");
 
       if(hasImage){
         card.innerHTML = `
           <div class="rowTilePreviewHost" style="display:flex;flex-direction:column;gap:0;min-width:0;width:100%;max-width:100%;overflow:hidden;box-sizing:border-box;border-radius:14px;background:rgba(17,19,23,.04);">
             <div data-link-preview-image-wrap="1" style="height:180px;border-radius:14px 14px 10px 10px;overflow:hidden;background:rgba(17,19,23,.06);min-width:0;width:100%;max-width:100%;box-sizing:border-box;">
-              <img data-link-preview-image="1" src="${escapeHTML(linkData.image)}" alt="${escapeHTML(linkData.title || "Ссылка")}" loading="lazy" style="display:block;width:100%;height:100%;object-fit:cover;">
+              <img data-link-preview-image="1" src="${escapeHTML(linkData.image)}" alt="${escapeHTML(safeTitle || "Ссылка")}" loading="lazy" style="display:block;width:100%;height:100%;object-fit:cover;">
             </div>
             <div style="padding:10px 2px 0 2px;min-width:0;width:100%;max-width:100%;box-sizing:border-box;overflow:hidden;padding-right:${rowReadOnly ? "0" : "42px"};">
               <div class="itemTitle" style="display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;line-height:1.25;font-weight:700;min-width:0;width:100%;max-width:100%;">
-                ${escapeHTML(linkData.title || "Ссылка")}
+                ${escapeHTML(safeTitle || "Ссылка")}
               </div>
               ${linkData.description ? `<div class="itemDesc" style="display:block;width:100%;max-width:100%;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-top:4px;">${escapeHTML(linkData.description)}</div>` : ""}
             </div>
           </div>
         `;
       }else{
+        const primaryTitle = linkData.badTitle
+          ? (linkData.siteName || linkData.domain || "Ссылка")
+          : (linkData.siteName || linkData.title || linkData.domain || "Ссылка");
+        const domainText = linkData.cleanHost || linkData.domain || "";
+        const secondaryText = (
+          !linkData.badTitle &&
+          linkData.title &&
+          linkData.title !== primaryTitle &&
+          linkData.title !== domainText
+        ) ? linkData.title : "";
+        const descriptionText = (
+          linkData.description &&
+          linkData.description !== primaryTitle &&
+          linkData.description !== domainText &&
+          linkData.description !== secondaryText
+        ) ? linkData.description : "";
+        const initial = linkData.initial || getInitialFromHost(domainText);
+        const faviconHtml = linkData.favicon
+          ? `<img data-link-favicon-img="1" src="${escapeHTML(linkData.favicon)}" alt="" loading="lazy" style="display:block;width:26px;height:26px;object-fit:contain;position:relative;z-index:2;">`
+          : "";
+
         card.innerHTML = `
-          <div class="rowTilePreviewHost" style="display:flex;flex-direction:column;justify-content:flex-start;gap:10px;min-height:220px;width:100%;max-width:100%;min-width:0;overflow:hidden;box-sizing:border-box;border-radius:14px;background:rgba(17,19,23,.035);padding:14px 12px;padding-right:${rowReadOnly ? "12px" : "48px"};">
-            <div class="itemTitle" style="display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;line-height:1.2;font-weight:800;min-width:0;width:100%;max-width:100%;">
-              ${escapeHTML(linkData.title || linkData.domain || "Ссылка")}
-            </div>
-            ${linkData.description ? `<div class="itemDesc" style="display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;line-height:1.3;min-width:0;width:100%;max-width:100%;">${escapeHTML(linkData.description)}</div>` : ""}
-            <div style="margin-top:auto;display:flex;flex-direction:column;gap:4px;min-width:0;width:100%;max-width:100%;overflow:hidden;box-sizing:border-box;">
-              <div class="itemDesc" style="display:block;width:100%;max-width:100%;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
-                ${escapeHTML(linkData.domain || "")}
+          <div class="rowTilePreviewHost" style="display:flex;flex-direction:column;justify-content:flex-start;gap:12px;min-height:220px;width:100%;max-width:100%;min-width:0;overflow:hidden;box-sizing:border-box;border-radius:14px;background:rgba(17,19,23,.035);padding:14px 12px;padding-right:${rowReadOnly ? "12px" : "48px"};">
+            <div style="display:flex;align-items:center;gap:10px;min-width:0;width:100%;max-width:100%;overflow:hidden;box-sizing:border-box;">
+              <div data-link-favicon-box="1" style="position:relative;width:44px;height:44px;border-radius:12px;background:rgba(17,19,23,.06);border:1px solid rgba(17,19,23,.08);display:flex;align-items:center;justify-content:center;overflow:hidden;flex:0 0 auto;box-sizing:border-box;">
+                <span data-link-favicon-initial="1" style="display:flex;align-items:center;justify-content:center;width:100%;height:100%;font-weight:800;font-size:17px;color:rgba(17,19,23,.72);">${escapeHTML(initial)}</span>
+                ${faviconHtml}
               </div>
-              ${linkData.path ? `<div class="itemDesc" style="display:block;width:100%;max-width:100%;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;opacity:.75;">${escapeHTML(linkData.path)}</div>` : ""}
+              <div style="min-width:0;flex:1 1 auto;overflow:hidden;">
+                <div class="itemTitle" style="display:block;width:100%;max-width:100%;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:800;line-height:1.2;">
+                  ${escapeHTML(primaryTitle || "Ссылка")}
+                </div>
+                ${domainText ? `<div class="itemDesc" style="display:block;width:100%;max-width:100%;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-top:3px;">${escapeHTML(domainText)}</div>` : ""}
+              </div>
             </div>
+            ${secondaryText ? `<div class="itemTitle" style="display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;line-height:1.25;font-weight:700;min-width:0;width:100%;max-width:100%;">${escapeHTML(secondaryText)}</div>` : ""}
+            ${descriptionText ? `<div class="itemDesc" style="display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;line-height:1.3;min-width:0;width:100%;max-width:100%;">${escapeHTML(descriptionText)}</div>` : ""}
+            ${linkData.path ? `<div class="itemDesc" style="margin-top:auto;display:block;width:100%;max-width:100%;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;opacity:.7;">${escapeHTML(linkData.path)}</div>` : ""}
           </div>
         `;
+      }
+
+      const faviconImg = card.querySelector("[data-link-favicon-img]");
+      if(faviconImg){
+        faviconImg.addEventListener("error", ()=>{
+          try{ faviconImg.style.display = "none"; }catch{}
+        });
       }
 
       const img = card.querySelector("[data-link-preview-image]");
