@@ -1045,6 +1045,112 @@ function getInitialFromHost(host){
   return first ? first.toUpperCase() : "↗";
 }
 
+
+function humanizeUrlSegment(segment){
+  let s = (segment || "").toString();
+  if(!s) return "";
+  try{ s = decodeURIComponent(s); }catch{}
+  s = s.replace(/[-_+]+/g, " ").replace(/\s+/g, " ").trim();
+  if(s.length > 48) s = s.slice(0, 48) + "…";
+  return s;
+}
+
+function titleCaseSmall(text){
+  const s = (text || "").toString().replace(/\s+/g, " ").trim();
+  if(!s) return "";
+  const special = { d1:"D1", db:"DB", api:"API", url:"URL", ai:"AI", id:"ID", ui:"UI", pwa:"PWA", r2:"R2" };
+  return s.split(" ").map((word)=>{
+    const lower = word.toLowerCase();
+    if(special[lower]) return special[lower];
+    if(word.length <= 1) return word;
+    return word.charAt(0).toUpperCase() + word.slice(1);
+  }).join(" ").trim();
+}
+
+function getLinkPageLabel(openUrl, host){
+  try{
+    const url = new URL(openUrl);
+    const cleanHost = (host || url.host || "").toString().trim().toLowerCase().replace(/^www\./, "");
+    const parts = (url.pathname || "").split("/").filter(Boolean);
+    const hasPart = (name)=> parts.some(p => p.toLowerCase() === name.toLowerCase());
+    const starts = (prefix)=> (url.pathname || "").toLowerCase().startsWith(prefix.toLowerCase());
+    const limit = (value)=>{
+      const v = (value || "").toString().replace(/\s+/g, " ").trim();
+      return v.length > 80 ? v.slice(0, 80) + "…" : v;
+    };
+    const usefulParts = ()=> parts.filter(part => {
+      const x = (part || "").toString().trim().toLowerCase();
+      if(!x) return false;
+      return !new Set(["d", "id", "edit", "view", "public", "share", "auth", "login", "callback"]).has(x);
+    });
+
+    if(cleanHost === "docs.google.com"){
+      if(starts("/spreadsheets/")) return "Google Spreadsheet";
+      if(starts("/document/")) return "Google Document";
+      if(starts("/presentation/")) return "Google Slides";
+      if(starts("/forms/")) return "Google Form";
+      if(starts("/drawings/")) return "Google Drawing";
+      return "Google Docs";
+    }
+    if(cleanHost === "drive.google.com"){
+      const path = (url.pathname || "").toLowerCase();
+      if(path.includes("/file/")) return "Google Drive File";
+      if(path.includes("/drive/folders/")) return "Google Drive Folder";
+      return "Google Drive";
+    }
+    if(cleanHost === "mail.google.com") return "Gmail";
+
+    if(cleanHost === "dash.cloudflare.com"){
+      if(hasPart("workers") && hasPart("d1") && hasPart("databases")) return "Workers / D1 Database";
+      if(hasPart("workers") && hasPart("services")) return "Worker Service";
+      if(hasPart("workers")) return "Workers";
+      if(hasPart("r2")) return "R2 Object Storage";
+      if(hasPart("pages")) return "Cloudflare Pages";
+      if(hasPart("analytics")) return "Analytics";
+      return "Cloudflare Dashboard";
+    }
+
+    if(cleanHost === "github.com" || cleanHost.endsWith(".github.com")){
+      if(parts.length >= 2){
+        const base = `${humanizeUrlSegment(parts[0])} / ${humanizeUrlSegment(parts[1])}`.trim();
+        if(hasPart("issues")) return limit(base ? `${base} / Issues` : "Issues");
+        if(hasPart("pull")) return limit(base ? `${base} / Pull Request` : "Pull Request");
+        if(hasPart("tree")) return limit(base ? `${base} / Branch` : "Branch");
+        if(hasPart("blob")) return limit(base ? `${base} / File` : "File");
+        return limit(base);
+      }
+      if(parts.length === 1) return titleCaseSmall(humanizeUrlSegment(parts[0]));
+      return "";
+    }
+
+    if(cleanHost === "youtube.com" || cleanHost.endsWith(".youtube.com") || cleanHost === "youtu.be"){
+      const path = (url.pathname || "").toLowerCase();
+      if(cleanHost === "youtu.be") return "YouTube Video";
+      if(path.startsWith("/watch")) return "YouTube Video";
+      if(path.includes("/playlist")) return "YouTube Playlist";
+      if(path.includes("/channel") || path.includes("/@")) return "YouTube Channel";
+      return "YouTube";
+    }
+
+    if(cleanHost === "rbc.ru" || cleanHost.endsWith(".rbc.ru")){
+      if(parts.length > 0) return limit(titleCaseSmall(humanizeUrlSegment(parts[parts.length - 1] || "")));
+      return "Главная страница";
+    }
+
+    if(cleanHost === "azbyka.ru" || cleanHost.endsWith(".azbyka.ru")){
+      const useful = usefulParts();
+      if(useful.length > 0) return limit(useful.slice(-2).map(x => titleCaseSmall(humanizeUrlSegment(x))).filter(Boolean).join(" / "));
+      return "Азбука";
+    }
+
+    const useful = usefulParts();
+    if(useful.length > 0) return limit(useful.slice(-2).map(x => titleCaseSmall(humanizeUrlSegment(x))).filter(Boolean).join(" / "));
+    return "";
+  }catch{
+    return "";
+  }
+}
+
 function isProbablyJunkLinkPath(path){
   const raw = (path || "").toString().trim();
   if(!raw || raw === "/") return true;
@@ -1119,6 +1225,7 @@ function getLinkTileDisplayData(it){
       cleanHost,
       badTitle,
       initial: getInitialFromHost(previewHost),
+      pageLabel: "",
     };
   }
 
@@ -1126,6 +1233,7 @@ function getLinkTileDisplayData(it){
     const parsed = new URL(openUrl);
     const host = parsed.host || "";
     const cleanHost = host.replace(/^www\./i, "");
+    const pageLabel = getLinkPageLabel(openUrl, host);
     const knownSiteName = getKnownSiteName(host);
     const siteName = knownSiteName || previewSiteName || "";
     const fallbackName = knownSiteName || previewSiteName || previewHost || cleanHost || "Ссылка";
@@ -1168,10 +1276,12 @@ function getLinkTileDisplayData(it){
       cleanHost,
       badTitle,
       initial: getInitialFromHost(host),
+      pageLabel: pageLabel || "",
     };
   }catch{
     const knownSiteName = getKnownSiteName(previewHost || rawUrl);
     const cleanHost = (previewHost || rawUrl || "").toString().trim().replace(/^www\./i, "");
+    const pageLabel = getLinkPageLabel(openUrl, previewHost || rawUrl);
     const fallbackName = knownSiteName || previewSiteName || previewHost || cleanHost || "Ссылка";
     const displayTitle = (!badTitle && previewTitle) ? previewTitle : fallbackName;
     return {
@@ -1188,6 +1298,7 @@ function getLinkTileDisplayData(it){
       cleanHost,
       badTitle,
       initial: getInitialFromHost(previewHost || rawUrl),
+      pageLabel: pageLabel || "",
     };
   }
 }
@@ -6260,8 +6371,8 @@ function buildInlineRowContent(p, cached){
       const linkData = getLinkTileDisplayData(it);
       const hasImage = !!linkData.image;
       const safeTitle = linkData.badTitle
-        ? (linkData.siteName || linkData.domain || "Ссылка")
-        : (linkData.title || linkData.siteName || linkData.domain || "Ссылка");
+        ? (linkData.pageLabel || linkData.siteName || linkData.domain || "Ссылка")
+        : (linkData.title || linkData.pageLabel || linkData.siteName || linkData.domain || "Ссылка");
 
       if(hasImage){
         card.innerHTML = `
@@ -6278,22 +6389,26 @@ function buildInlineRowContent(p, cached){
           </div>
         `;
       }else{
-        const primaryTitle = linkData.badTitle
-          ? (linkData.siteName || linkData.domain || "Ссылка")
-          : (linkData.siteName || linkData.title || linkData.domain || "Ссылка");
+        const primaryTitle = linkData.siteName || linkData.domain || linkData.title || "Ссылка";
         const domainText = linkData.cleanHost || linkData.domain || "";
-        const secondaryText = (
-          !linkData.badTitle &&
+        let centralText = "";
+
+        if(
           linkData.title &&
+          !linkData.badTitle &&
           linkData.title !== primaryTitle &&
           linkData.title !== domainText
-        ) ? linkData.title : "";
-        const descriptionText = (
-          linkData.description &&
-          linkData.description !== primaryTitle &&
-          linkData.description !== domainText &&
-          linkData.description !== secondaryText
-        ) ? linkData.description : "";
+        ){
+          centralText = linkData.title;
+        }else if(linkData.description){
+          centralText = linkData.description;
+        }else if(linkData.pageLabel){
+          centralText = linkData.pageLabel;
+        }else if(linkData.path){
+          centralText = linkData.path;
+        }
+
+        const bottomPath = (linkData.path && linkData.path !== centralText) ? linkData.path : "";
         const initial = linkData.initial || getInitialFromHost(domainText);
         const faviconHtml = linkData.favicon
           ? `<img data-link-favicon-img="1" src="${escapeHTML(linkData.favicon)}" alt="" loading="lazy" style="display:block;width:26px;height:26px;object-fit:contain;position:relative;z-index:2;">`
@@ -6313,9 +6428,8 @@ function buildInlineRowContent(p, cached){
                 ${domainText ? `<div class="itemDesc" style="display:block;width:100%;max-width:100%;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-top:3px;">${escapeHTML(domainText)}</div>` : ""}
               </div>
             </div>
-            ${secondaryText ? `<div class="itemTitle" style="display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;line-height:1.25;font-weight:700;min-width:0;width:100%;max-width:100%;">${escapeHTML(secondaryText)}</div>` : ""}
-            ${descriptionText ? `<div class="itemDesc" style="display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;line-height:1.3;min-width:0;width:100%;max-width:100%;">${escapeHTML(descriptionText)}</div>` : ""}
-            ${linkData.path ? `<div class="itemDesc" style="margin-top:auto;display:block;width:100%;max-width:100%;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;opacity:.7;">${escapeHTML(linkData.path)}</div>` : ""}
+            ${centralText ? `<div class="itemTitle" style="display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;line-height:1.28;font-weight:700;font-size:15px;color:#111317;min-width:0;width:100%;max-width:100%;margin-top:8px;">${escapeHTML(centralText)}</div>` : ""}
+            ${bottomPath ? `<div class="itemDesc" style="margin-top:auto;display:block;width:100%;max-width:100%;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;opacity:.65;font-size:13px;">${escapeHTML(bottomPath)}</div>` : ""}
           </div>
         `;
       }
